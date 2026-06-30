@@ -44,3 +44,9 @@ OPERACOES/*/config.json
 # Build do executável (gerado via build_exe.bat)
 **/*.spec
 *.exe
+
+# Heranca do .gitignore-semente do repositorio remoto
+EFD/
+NF/
+*.zip
+.claude/settings.local.json

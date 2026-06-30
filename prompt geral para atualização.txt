@@ -1,0 +1,92 @@
+## Controle de Evolução, Documentação e Versionamento
+
+### Registro Diário de Atividades
+
+Ao término de cada ciclo de trabalho, sessão de desenvolvimento ou conjunto relevante de alterações, deverá ser gerado um documento Markdown (*.md*) contendo o histórico consolidado das modificações realizadas.
+
+O documento deverá registrar, no mínimo:
+
+* Funcionalidades implementadas.
+* Correções efetuadas.
+* Refatorações realizadas.
+* Alterações de arquitetura.
+* Ajustes de infraestrutura.
+* Dependências adicionadas, removidas ou atualizadas.
+* Scripts criados ou modificados.
+* Problemas identificados e respectivas soluções.
+* Pendências para os próximos ciclos de desenvolvimento.
+
+### Estrutura do Documento de Atualização
+
+O arquivo deverá seguir padrão semelhante a:
+
+```md
+# Atualização YYYY-MM-DD
+
+## Funcionalidades Implementadas
+
+## Correções Realizadas
+
+## Melhorias Técnicas
+
+## Alterações de Banco de Dados
+
+## Alterações de Infraestrutura
+
+## Dependências Atualizadas
+
+## Pendências
+
+## Próximos Passos
+```
+
+O objetivo é manter rastreabilidade completa da evolução do sistema, facilitando manutenção, auditoria técnica e transferência de conhecimento.
+
+---
+
+### Controle de Versão
+
+Todas as alterações aprovadas deverão ser versionadas em repositório Git.
+
+Ao final de cada ciclo de desenvolvimento:
+
+1. Validar a integridade do código.
+2. Atualizar a documentação correspondente.
+3. Gerar o arquivo Markdown de atualização.
+4. Executar commit contendo exclusivamente alterações relacionadas ao ciclo concluído.
+5. Realizar envio (push) para o repositório remoto.
+
+---
+
+### Padrão de Commit
+
+Os commits deverão seguir convenção padronizada para facilitar auditoria e rastreamento.
+
+Exemplos:
+
+```text
+feat: implementa importação automática de arquivos CSV
+
+fix: corrige falha de autenticação em ambiente de produção
+
+refactor: reorganiza camada de serviços
+
+docs: atualiza documentação operacional
+
+perf: otimiza consulta de processamento
+
+infra: adiciona configuração de monitoramento
+```
+
+---
+
+### Política de Documentação
+
+Nenhuma funcionalidade será considerada concluída sem:
+
+* Código atualizado.
+* Documentação técnica correspondente.
+* Registro no histórico de atualizações.
+* Commit devidamente registrado no Git.
+
+A documentação faz parte da entrega e deverá evoluir conjuntamente com o código-fonte durante todo o ciclo de vida da aplicação.
