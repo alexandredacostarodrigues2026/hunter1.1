@@ -50,3 +50,7 @@ EFD/
 NF/
 *.zip
 .claude/settings.local.json
+
+# Arquivos temporarios do Office (lock files)
+~$*.xlsx
+~$*.docx

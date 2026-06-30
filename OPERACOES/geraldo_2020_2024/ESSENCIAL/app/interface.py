@@ -75,6 +75,11 @@ def render_carga_operacao() -> None:
             f"{pend['previsao_rejeitado']} não identificado(s)"
         )
 
+    ja_carregado = st.session_state.get("dados_carregados", False)
+    if ja_carregado and pend["quantidade"] == 0:
+        st.success("✅ Dados carregados.")
+        return
+
     if not st.button("Carregar dados", key="btn_carregar_dados"):
         return
 
