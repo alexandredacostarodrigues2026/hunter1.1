@@ -28,11 +28,11 @@ def main() -> None:
     st.title("Equalizador de Produtos")
     st.subheader(f"Operação ativa: {loader.nome_operacao()}")
     st.divider()
-    if st.session_state.get("dados_carregados"):
-        interface.render_entidade_auditada()
-        st.divider()
     interface.render_carga_operacao()
     st.info("Demais módulos (carregamento completo, matching e equalização) ainda não implementados.")
+    if st.session_state.get("dados_carregados"):
+        st.divider()
+        interface.render_entidade_auditada()
 
 
 if __name__ == "__main__":

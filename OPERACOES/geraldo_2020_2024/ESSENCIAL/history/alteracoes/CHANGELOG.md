@@ -101,3 +101,8 @@ Próxima etapa: a definir (provavelmente `matching.py` — cruzamento XML × DEC
 - A barra de progresso já desaparecia sozinha após `st.rerun()` (não persiste entre execuções do script); o que faltava era o botão "Carregar dados" continuar aparecendo mesmo depois de concluído.
 - `app/interface.py`: `render_carga_operacao()` agora verifica `st.session_state.get("dados_carregados")` — se já carregado **e** não houver XML novo pendente, mostra `st.success("✅ Dados carregados.")` no lugar do botão. Se chegarem XML novos depois (pend > 0), o botão volta a aparecer — preserva a funcionalidade de carregar arquivos que cheguem mais tarde na mesma sessão, em vez de travar o fluxo permanentemente.
 - Validado com Playwright: confirmado que o texto "Carregar dados" desaparece da página depois do clique, substituído pela confirmação de sucesso; "Entidade auditada" continua aparecendo acima normalmente. Sem erros de console.
+
+## PS14 — Reordena "Entidade auditada" para o final da página (2026-06-30)
+- Pedido do usuário (com screenshot de referência): a ordem visual deve ser "Carga de XML" (sempre visível, com as contagens ET/EP/SPED) → aviso de módulos pendentes → "Entidade auditada" por último, embaixo de tudo, só quando liberada.
+- `app/main.py`: só reordenação das chamadas — `interface.render_carga_operacao()` e o `st.info(...)` agora vêm antes do bloco condicional de `interface.render_entidade_auditada()`. Nenhuma mudança de lógica (a condição `st.session_state.get("dados_carregados")` já existia desde o PS12/PS13).
+- Validado com Playwright: ordem confirmada visualmente igual ao screenshot de referência do usuário — Carga de XML, "✅ Dados carregados.", aviso de módulos, Entidade auditada no rodapé. Sem erros de console.
