@@ -24,34 +24,11 @@ st.set_page_config(
 )
 
 
-def _render_entidade_auditada() -> None:
-    st.subheader("Entidade auditada")
-    with st.spinner("Identificando entidade auditada (CNPJ/Razão Social)..."):
-        info = loader.garantir_entidade_auditada()
-
-    if not info.get("cnpj"):
-        st.warning("Entidade auditada não pôde ser identificada: " + "; ".join(info.get("erros", [])))
-        return
-
-    col1, col2 = st.columns(2)
-    col1.metric("CNPJ", info["cnpj"])
-    col2.metric("Ocorrências", f"{info['ocorrencias']:,}".replace(",", "."))
-    st.markdown(f"**Razão Social:** {info['razao_social']}")
-
-    fonte = info.get("por_fonte") or {}
-    total = info.get("total_linhas_analisadas")
-    if total:
-        st.caption(
-            f"Base: {total:,}".replace(",", ".")
-            + f" itens de NF-e analisados (ET={fonte.get('ET', 0):,} | EP={fonte.get('EP', 0):,})".replace(",", ".")
-        )
-    if info.get("erros"):
-        st.caption("Avisos: " + "; ".join(info["erros"]))
-
-
 def main() -> None:
     st.title("Equalizador de Produtos")
-    _render_entidade_auditada()
+    st.subheader(f"Operação ativa: {loader.nome_operacao()}")
+    st.divider()
+    interface.render_entidade_auditada()
     st.divider()
     interface.render_carga_operacao()
     st.info("Demais módulos (carregamento completo, matching e equalização) ainda não implementados.")

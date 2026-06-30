@@ -19,13 +19,43 @@ _STATUS_RENDER = {
 }
 
 
+def render_entidade_auditada() -> None:
+    """Painel de entidade auditada — nada é calculado/exibido até o usuário
+    pedir explicitamente (consistente com a carga: sem dado "pronto" na tela
+    sem uma ação do usuário confirmando)."""
+    st.subheader("Entidade auditada")
+    if not st.button("Consultar entidade auditada", key="btn_consultar_entidade"):
+        return
+
+    with st.spinner("Identificando entidade auditada (CNPJ/Razão Social)..."):
+        info = loader.garantir_entidade_auditada()
+
+    if not info.get("cnpj"):
+        st.warning("Entidade auditada não pôde ser identificada: " + "; ".join(info.get("erros", [])))
+        return
+
+    col1, col2 = st.columns(2)
+    col1.metric("CNPJ", info["cnpj"])
+    col2.metric("Ocorrências", f"{info['ocorrencias']:,}".replace(",", "."))
+    st.markdown(f"**Razão Social:** {info['razao_social']}")
+
+    fonte = info.get("por_fonte") or {}
+    total = info.get("total_linhas_analisadas")
+    if total:
+        st.caption(
+            f"Base: {total:,}".replace(",", ".")
+            + f" itens de NF-e analisados (ET={fonte.get('ET', 0):,} | EP={fonte.get('EP', 0):,})".replace(",", ".")
+        )
+    if info.get("erros"):
+        st.caption("Avisos: " + "; ".join(info["erros"]))
+
+
 def render_carga_operacao() -> None:
     """Prévia + confirmação manual: mostra quantos arquivos existem em cada
     pasta (ET/EP/declarações) e quantos XML estão pendentes (com previsão de
     classificação), e só processa depois que o usuário confirmar. Cargas podem
     ser grandes — o progresso é exibido arquivo a arquivo, não escondido."""
-    st.subheader("Carga de XML — operação ativa")
-    st.caption(f"Operação: **{loader.nome_operacao()}**")
+    st.subheader("Carga de XML")
 
     with st.spinner("Verificando pastas..."):
         resumo = loader.pre_visualizar_carga()
