@@ -20,13 +20,10 @@ _STATUS_RENDER = {
 
 
 def render_entidade_auditada() -> None:
-    """Painel de entidade auditada — nada é calculado/exibido até o usuário
-    pedir explicitamente (consistente com a carga: sem dado "pronto" na tela
-    sem uma ação do usuário confirmando)."""
+    """Mostra os dados da entidade auditada. Só é chamada por main.py quando
+    st.session_state['dados_carregados'] é True (liberado pelo botão
+    "Carregar dados" em render_carga_operacao) — sem botão próprio aqui."""
     st.subheader("Entidade auditada")
-    if not st.button("Consultar entidade auditada", key="btn_consultar_entidade"):
-        return
-
     with st.spinner("Identificando entidade auditada (CNPJ/Razão Social)..."):
         info = loader.garantir_entidade_auditada()
 
@@ -51,10 +48,11 @@ def render_entidade_auditada() -> None:
 
 
 def render_carga_operacao() -> None:
-    """Prévia + confirmação manual: mostra quantos arquivos existem em cada
-    pasta (ET/EP/declarações) e quantos XML estão pendentes (com previsão de
-    classificação), e só processa depois que o usuário confirmar. Cargas podem
-    ser grandes — o progresso é exibido arquivo a arquivo, não escondido."""
+    """Prévia + botão único "Carregar dados": mostra quantos arquivos existem
+    em cada pasta (ET/EP/declarações) e quantos XML estão pendentes (com
+    previsão de classificação). O clique processa os pendentes (se houver,
+    com progresso arquivo a arquivo) e libera a exibição da seção "Entidade
+    auditada" em main.py — nada acontece sem essa confirmação explícita."""
     st.subheader("Carga de XML")
 
     with st.spinner("Verificando pastas..."):
@@ -70,28 +68,31 @@ def render_carga_operacao() -> None:
     pend = resumo["pendentes"]
     if pend["quantidade"] == 0:
         st.info("Nenhum XML pendente em 1-DOCFISCAIS/nf/ (fora de ET/EP).")
+    else:
+        st.markdown(
+            f"- **{pend['quantidade']}** XML pendente(s) em `{pend['caminho']}` — previsão: "
+            f"{pend['previsao_et']} para ET, {pend['previsao_ep']} para EP, "
+            f"{pend['previsao_rejeitado']} não identificado(s)"
+        )
+
+    if not st.button("Carregar dados", key="btn_carregar_dados"):
         return
 
-    st.markdown(
-        f"- **{pend['quantidade']}** XML pendente(s) em `{pend['caminho']}` — previsão: "
-        f"{pend['previsao_et']} para ET, {pend['previsao_ep']} para EP, "
-        f"{pend['previsao_rejeitado']} não identificado(s)"
-    )
+    if pend["quantidade"] > 0:
+        barra = st.progress(0.0, text="Iniciando carga...")
+        resultados_area = st.container()
 
-    if not st.button("Efetuar carga", key="btn_efetuar_carga"):
-        return
+        def _progresso(indice: int, total: int, resultado: dict) -> None:
+            barra.progress(indice / total, text=f"Processando {indice}/{total}: {resultado['arquivo']}")
+            render = _STATUS_RENDER.get(resultado["status"])
+            with resultados_area:
+                if render:
+                    render(resultado)
+                else:
+                    st.error(f"❌ {resultado['arquivo']}: status desconhecido ({resultado['status']}).")
 
-    barra = st.progress(0.0, text="Iniciando carga...")
-    resultados_area = st.container()
+        loader.carregar_operacao(progresso=_progresso)
+        barra.progress(1.0, text="Concluído.")
 
-    def _progresso(indice: int, total: int, resultado: dict) -> None:
-        barra.progress(indice / total, text=f"Processando {indice}/{total}: {resultado['arquivo']}")
-        render = _STATUS_RENDER.get(resultado["status"])
-        with resultados_area:
-            if render:
-                render(resultado)
-            else:
-                st.error(f"❌ {resultado['arquivo']}: status desconhecido ({resultado['status']}).")
-
-    loader.carregar_operacao(progresso=_progresso)
-    barra.progress(1.0, text="Concluído.")
+    st.session_state["dados_carregados"] = True
+    st.rerun()
