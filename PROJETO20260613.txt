@@ -1,0 +1,283 @@
+PROJETO COMPLETO — EQUALIZAÇÃO INTELIGENTE XML × DECLARAÇÃO
+VERSÃO MASTER UNIFICADA
+
+
+Objetivos:
+- consolidar produtos;
+- identificar produtos semelhantes;
+- permitir validação humana;
+- persistir equalizações;
+- reaproveitar histórico;
+- manter histórico completo;
+- permitir retomada automática por qualquer IA;
+- funcionar localmente em qualquer computador Windows;
+- ser totalmente portátil.
+
+==================================================
+ARQUITETURA PRINCIPAL
+==================================================
+
+A aplicação funcionará em:
+- uma única interface;
+- dinâmica;
+- integrada;
+- sem múltiplas páginas.
+
+Tudo acontecerá dentro da mesma tela principal.
+
+==================================================
+PORTABILIDADE OBRIGATÓRIA
+==================================================
+
+Toda arquitetura deve ser criada pensando em:
+
+- execução local;
+- múltiplos usuários;
+- usuários não técnicos;
+- distribuição simples;
+- funcionamento sem terminal.
+
+==================================================
+EXPERIÊNCIA DO USUÁRIO FINAL
+==================================================
+
+O usuário deverá:
+- abrir a pasta ESSENCIAL;
+- clicar em iniciar_sistema.exe;
+- utilizar normalmente.
+
+Sem necessidade de:
+- CMD;
+- PowerShell;
+- terminal;
+- Python instalado;
+- pip install;
+- streamlit run;
+- configuração manual.
+
+==================================================
+PASTA ESSENCIAL
+==================================================
+
+A pasta:
+
+ESSENCIAL/
+
+será o núcleo portátil completo da aplicação.
+
+==================================================
+SUGESTÃO DE ESTRUTURA DA PASTA ESSENCIAL
+==================================================
+
+ESSENCIAL/
+│
+├── app/
+│   ├── main.py
+│   ├── interface.py
+│   ├── loader.py
+│   ├── matching.py
+│   ├── persistencia.py
+│   ├── scoring.py
+│   ├── filtros.py
+│   ├── logs.py
+│   ├── contexto.py
+│   └── utils.py
+│
+├── banco/
+│   ├── equalizador.duckdb
+│   └── equalizacao.db
+│
+├── config/
+│   └── config.json
+│
+├── runtime/
+│
+├── launcher/
+│
+├── logs/
+│
+├── history/
+│   ├── prompts/
+│   ├── sessoes/
+│   ├── alteracoes/
+│   ├── arquitetura/
+│   └── snapshots/
+│
+├── exports/
+│
+├── qlik/
+│
+├── temp/
+│
+├── executavel/
+│
+├── assets/
+│
+├── iniciar_sistema.exe
+├── iniciar_sistema.bat
+├── README_USUARIO.txt
+└── requirements.txt
+
+==================================================
+EXECUTÁVEL
+==================================================
+
+O executável ficará dentro da pasta:
+ESSENCIAL/
+
+Ao clicar em:
+iniciar_sistema.exe
+
+o sistema deverá:
+- detectar automaticamente usuário Windows;
+- detectar automaticamente operação;
+- localizar CSVs;
+- validar estrutura;
+- criar bancos automaticamente;
+- iniciar aplicação;
+- abrir navegador automaticamente.
+
+==================================================
+DETECÇÃO AUTOMÁTICA
+==================================================
+
+A aplicação deverá detectar automaticamente:
+
+1. usuário Windows
+2. operação atual
+3. pasta atual
+4. CSVs disponíveis
+
+==================================================
+ENDEREÇO PADRÃO
+==================================================
+
+A aplicação funcionará em estrutura semelhante a:
+
+C:\Users\<usuario>\Desktop\QLIKSENSE3\GECOF\OPERAÇÕES\<operacao>\ESSENCIAL\
+
+==================================================
+EXEMPLO
+==================================================
+
+C:\Users\alexandre.rodrigues\Desktop\QLIKSENSE3\GECOF\OPERAÇÕES\geraldo_2020_2024_5\ESSENCIAL\
+
+==================================================
+VARIÁVEIS DINÂMICAS
+==================================================
+
+Variável 1:
+<usuario>
+
+Exemplo:
+alexandre.rodrigues
+
+Variável 2:
+<operacao>
+
+Exemplo:
+geraldo_2020_2024_5
+
+==================================================
+IMPLEMENTAÇÃO OBRIGATÓRIA
+==================================================
+
+Utilizar:
+- pathlib
+- Path(__file__)
+- os.getlogin()
+- os.environ
+- autodetecção diretórios
+- caminhos relativos
+
+==================================================
+NÃO UTILIZAR
+==================================================
+
+- caminhos absolutos fixos;
+- usuário hardcoded;
+- operação hardcoded.
+
+==================================================
+ORIGEM DOS DADOS
+==================================================
+
+O sistema deverá nascer única e exclusivamente dos arquivos:
+
+DE ARQUIVOS TXTS ALOCADOS MANUALMENTE PELO USUÁRIO FINAL
+
+localizados automaticamente dentro da operação ativa.
+
+==================================================
+OBJETIVO DO SISTEMA
+==================================================
+
+A aplicação deverá:
+- carregar TXTs;
+- consolidar produtos;
+- permitir escolha produto eleito;
+- realizar equalização;
+- persistir validações;
+- reaproveitar histórico;
+- exportar resultado Qlik.
+
+==================================================
+PERSISTÊNCIA TOTAL DE CONTEXTO
+==================================================
+
+Toda ação deverá ser persistida.
+
+Objetivo:
+Permitir retomada automática por:
+- Claude
+- ChatGPT
+- Codex
+- Cursor
+- Windsurf
+- outras IAs
+
+==================================================
+PERSISTIR
+==================================================
+
+Persistir:
+- prompts;
+- respostas IA;
+- histórico sessões;
+- logs;
+- filtros;
+- contexto;
+- arquitetura;
+- alterações;
+- decisões;
+- versões;
+- erros;
+- eventos;
+- matching;
+- validações;
+- ações usuário.
+
+==================================================
+OBJETIVO FINAL
+==================================================
+
+Gerar uma aplicação:
+- corporativa;
+- modular;
+- portátil;
+- rastreável;
+- auditável;
+- integrada ao Qlik;
+- preparada para IA;
+- preparada para continuidade automática;
+- preparada para múltiplos usuários;
+- amigável para usuários não técnicos;
+- pronta para distribuição local;
+- pronta para futura geração EXE standalone.
+
+
+
+------------------------------FIM
+
+
+

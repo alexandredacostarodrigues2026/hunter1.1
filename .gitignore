@@ -1,0 +1,46 @@
+# Runtime Python (binário, regenerável via launcher/setup_ambiente.bat)
+**/runtime/
+**/runtime_OLD_venv_backup/
+
+# Cache/bytecode Python
+__pycache__/
+*.pyc
+
+# Logs e temporários
+**/logs/
+**/temp/
+**/_pyinstaller_work/
+**/_pyinstaller_spec/
+**/_SNAPSHOTS/
+
+# Bancos de dados locais (binários, regeneráveis)
+**/banco/*.db
+**/banco/*.duckdb
+
+# Dados fiscais brutos e sensíveis (CNPJ, valores financeiros) — não
+# versionados por padrão (volume grande + dado sensível de cliente).
+# Revisar com o usuário se isso deve mudar.
+**/1-DOCFISCAIS/
+**/2-DECLARACAO/
+**/qlik/*.csv
+**/exports/
+DADOS/
+
+# Arquivos avulsos vazios na raiz (resíduo de algum comando, sem extensão/uso identificado)
+/Python
+/venv
+
+# config.json de operações reais contém CNPJ/Razão Social do cliente
+# auditado — excluído por padrão. O config.json do MODELO (sem dado real)
+# fica versionado normalmente.
+OPERACOES/*/ESSENCIAL/config/config.json
+OPERACOES/*/config.json
+!OPERACOES/_MODELO_OPERACAO/config.json
+
+# Repositórios git aninhados (histórico próprio, fora deste repo)
+/ANTIGO_geraldo_2020_2024_5/
+/DADOS_HUNTER_1a/
+
+# Build do executável (gerado via build_exe.bat)
+**/*.spec
+*.exe
