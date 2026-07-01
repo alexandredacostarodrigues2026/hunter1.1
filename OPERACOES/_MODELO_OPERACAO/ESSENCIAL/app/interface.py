@@ -1,5 +1,6 @@
 """Componentes de interface (painéis, tabs, cards) do Equalizador de Produtos."""
 import sys
+import time
 from pathlib import Path
 
 _APP_DIR = Path(__file__).parent
@@ -17,6 +18,9 @@ _STATUS_RENDER = {
     "cnpj_nao_identificado": lambda r: st.error(f"❌ {r['arquivo']}: {r['mensagem']}"),
     "erro": lambda r: st.error(f"❌ {r['arquivo']}: {r['mensagem']}"),
 }
+
+_TABELAS_BANCO = ["nfe_entradas", "nfe_saidas", "sped_itens", "sped_produtos", "sped_estoque"]
+_DELAY_BANCO = 0.25  # segundos por tabela — garante visibilidade da barra mesmo em cargas rápidas
 
 
 def render_entidade_auditada() -> None:
@@ -47,12 +51,39 @@ def render_entidade_auditada() -> None:
         st.caption("Avisos: " + "; ".join(info["erros"]))
 
 
+def _render_banco(barra, legenda) -> bool:
+    """Persiste dados em DuckDB exibindo barra de progresso por tabela.
+    Retorna True em sucesso, False em erro."""
+    n_tabelas = len(_TABELAS_BANCO)
+    idx = [0]
+
+    def _cb(etapa: str, n: int) -> None:
+        idx[0] += 1
+        frac = idx[0] / n_tabelas
+        barra.progress(frac, text=f"{etapa}: {n:,} registros".replace(",", "."))
+        legenda.caption(
+            f"Tabela {idx[0]}/{n_tabelas} — {etapa} ({n:,} registros)".replace(",", ".")
+        )
+        time.sleep(_DELAY_BANCO)
+
+    res = loader.persistir_banco(callback=_cb)
+
+    if "erro" in res:
+        barra.empty()
+        legenda.error(f"Erro ao atualizar banco: {res['erro']}")
+        return False
+
+    total = sum(v for k, v in res.items() if k != "erro")
+    barra.progress(1.0, text=f"Banco atualizado — {total:,} registros no total".replace(",", "."))
+    legenda.empty()
+    return True
+
+
 def render_carga_operacao() -> None:
-    """Prévia + botão único "Carregar dados": mostra quantos arquivos existem
-    em cada pasta (ET/EP/declarações) e quantos XML estão pendentes (com
-    previsão de classificação). O clique processa os pendentes (se houver,
-    com progresso arquivo a arquivo) e libera a exibição da seção "Entidade
-    auditada" em main.py — nada acontece sem essa confirmação explícita."""
+    """Prévia + botão de carga: mostra quantos arquivos existem em ET/EP/SPED
+    e quantos XML estão pendentes. O clique processa pendentes (progresso por
+    arquivo) e persiste tudo em DuckDB (barra por tabela). Quando já carregado
+    e sem pendentes, exibe "Carregar novamente" para atualização da base."""
     st.subheader("Carga de XML")
 
     with st.spinner("Verificando pastas..."):
@@ -76,19 +107,25 @@ def render_carga_operacao() -> None:
         )
 
     ja_carregado = st.session_state.get("dados_carregados", False)
-    if ja_carregado and pend["quantidade"] == 0:
+    sem_pendentes = pend["quantidade"] == 0
+
+    if ja_carregado and sem_pendentes:
         st.success("✅ Dados carregados.")
+        clicou = st.button("Carregar novamente", key="btn_recarregar",
+                           help="Reprocessa toda a base (ET/EP/.txt + SPED) e atualiza o banco de dados.")
+    else:
+        clicou = st.button("Carregar dados", key="btn_carregar_dados")
+
+    if not clicou:
         return
 
-    if not st.button("Carregar dados", key="btn_carregar_dados"):
-        return
-
+    # ── Fase 1: classificação de XML pendentes ────────────────────────────────
     if pend["quantidade"] > 0:
-        barra = st.progress(0.0, text="Iniciando carga...")
+        barra_xml = st.progress(0.0, text="Iniciando carga...")
         resultados_area = st.container()
 
         def _progresso(indice: int, total: int, resultado: dict) -> None:
-            barra.progress(indice / total, text=f"Processando {indice}/{total}: {resultado['arquivo']}")
+            barra_xml.progress(indice / total, text=f"Processando {indice}/{total}: {resultado['arquivo']}")
             render = _STATUS_RENDER.get(resultado["status"])
             with resultados_area:
                 if render:
@@ -97,22 +134,14 @@ def render_carga_operacao() -> None:
                     st.error(f"❌ {resultado['arquivo']}: status desconhecido ({resultado['status']}).")
 
         loader.carregar_operacao(progresso=_progresso)
-        barra.progress(1.0, text="Concluído.")
+        barra_xml.progress(1.0, text="XML concluído.")
 
-    with st.status("Atualizando banco de dados...", expanded=True) as _status_banco:
-        def _cb_banco(etapa: str, n: int) -> None:
-            st.write(f"✓ {etapa}: {n:,} registros".replace(",", "."))
+    # ── Fase 2: persistência em DuckDB ────────────────────────────────────────
+    st.markdown("**Atualizando banco de dados...**")
+    barra_banco = st.progress(0.0, text="Preparando...")
+    legenda_banco = st.empty()
 
-        _res_banco = loader.persistir_banco(callback=_cb_banco)
-        if "erro" in _res_banco:
-            _status_banco.update(label=f"Erro ao atualizar banco: {_res_banco['erro']}", state="error")
-        else:
-            _total_banco = sum(v for k, v in _res_banco.items() if k != "erro")
-            _status_banco.update(
-                label=f"Banco atualizado — {_total_banco:,} registros".replace(",", "."),
-                state="complete",
-                expanded=False,
-            )
+    _render_banco(barra_banco, legenda_banco)
 
     st.session_state["dados_carregados"] = True
     st.rerun()
