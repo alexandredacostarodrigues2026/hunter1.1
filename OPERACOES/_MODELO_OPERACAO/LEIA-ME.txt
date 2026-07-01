@@ -9,7 +9,7 @@ COMO USAR PARA UMA OPERACAO/CLIENTE NOVO
 2. Renomeie a copia para o nome da operacao/cliente
    (ex.: OPERACOES\nome_do_cliente\)
 3. Abra ESSENCIAL\config\config.json e confira:
-   - "port": ajuste se necessario (padrao 8601 no modelo)
+   - "port": ajuste se necessario (padrao 8600)
    - "entidade_auditada": null (sera identificado automaticamente
      apos a primeira carga)
 4. Coloque os XML de NF-e recebidos direto em:
