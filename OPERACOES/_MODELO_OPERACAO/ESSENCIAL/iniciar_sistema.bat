@@ -1,16 +1,11 @@
 @echo off
+setlocal enabledelayedexpansion
 title Equalizador de Produtos - GECOF/OPERACOES
 
 set "ROOT=%~dp0"
 cd /d "%ROOT%"
 
-:: Isola o runtime portatil do perfil do usuario do Windows
-:: (%APPDATA%\Python\...) -- sem isso, o app pode rodar nesta maquina mas
-:: falhar numa maquina diferente.
 set "PYTHONNOUSERSITE=1"
-
-:: Garante que cada operacao usa seus proprios dados, mesmo que o ambiente
-:: herde HUNTER_OPERACAO_DIR de uma sessao anterior (ex.: terminal de dev).
 set "HUNTER_OPERACAO_DIR="
 
 echo.
@@ -18,7 +13,30 @@ echo  ======================================================
 echo    EQUALIZADOR DE PRODUTOS - GECOF / OPERACOES
 echo  ======================================================
 
-:: ---- Prioridade 1: Runtime portatil (venv criado por setup_ambiente.bat) ----
+:: Verifica se ha operacao ativa na porta 8600
+netstat -ano 2>nul | findstr ":8600 " | findstr "LISTENING" >nul 2>&1
+if %errorlevel% equ 0 (
+    echo.
+    echo  [AVISO] Ha uma operacao ativa na porta 8600.
+    echo.
+    set /p RESP="  Deseja encerrar a operacao atual e abrir esta? (S/N): "
+    if /i "!RESP!"=="S" (
+        for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":8600"') do (
+            taskkill /F /PID %%a >nul 2>&1
+        )
+        timeout /t 2 /nobreak >nul
+        echo  Operacao anterior encerrada.
+    ) else (
+        echo.
+        echo  Operacao atual mantida. Nenhuma alteracao foi feita.
+        echo.
+        pause
+        exit /b 0
+    )
+)
+
+echo.
+
 if exist "runtime\Scripts\python.exe" (
     echo  Ambiente: runtime portatil
     echo.
@@ -26,7 +44,6 @@ if exist "runtime\Scripts\python.exe" (
     goto FIM
 )
 
-:: ---- Prioridade 2: Python embarcado em runtime\ ----
 if exist "runtime\python.exe" (
     echo  Ambiente: Python embarcado
     echo.
@@ -34,7 +51,6 @@ if exist "runtime\python.exe" (
     goto FIM
 )
 
-:: ---- Prioridade 3: Python do sistema ----
 python --version >nul 2>&1
 if %errorlevel% equ 0 (
     echo  Ambiente: Python do sistema
@@ -43,7 +59,6 @@ if %errorlevel% equ 0 (
     goto FIM
 )
 
-:: ---- Nenhum Python encontrado ----
 echo.
 echo  ======================================================
 echo   [ERRO] Python nao encontrado.
