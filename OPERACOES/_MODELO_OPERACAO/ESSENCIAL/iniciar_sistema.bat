@@ -9,6 +9,10 @@ cd /d "%ROOT%"
 :: falhar numa maquina diferente.
 set "PYTHONNOUSERSITE=1"
 
+:: Garante que cada operacao usa seus proprios dados, mesmo que o ambiente
+:: herde HUNTER_OPERACAO_DIR de uma sessao anterior (ex.: terminal de dev).
+set "HUNTER_OPERACAO_DIR="
+
 echo.
 echo  ======================================================
 echo    EQUALIZADOR DE PRODUTOS - GECOF / OPERACOES
