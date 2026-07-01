@@ -29,7 +29,7 @@ podendo ser implantado em qualquer PC Windows sem Python instalado e
 sem depender de outra operacao.
 
 Runtime: ESSENCIAL\runtime\python.exe (Python 3.12 embeddable)
-Porta padrao: 8601 (geraldo_2020_2024 usa 8600 - evita conflito)
+Porta padrao: 8600 (padrao unico de todas as operacoes - o auditor abre uma por vez)
 
 
 ONDE FICAM OS DADOS GERADOS
