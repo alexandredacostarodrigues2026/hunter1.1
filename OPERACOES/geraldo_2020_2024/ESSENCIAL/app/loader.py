@@ -552,20 +552,13 @@ def processar_arquivo_pendente(caminho: Path) -> dict:
     return resultado
 
 
-def persistir_banco(callback=None) -> dict:
-    """Lê todos os dados brutos (NF-e .txt + SPED) e persiste em DuckDB.
-
-    Substitui completamente as tabelas a cada chamada (idempotente).
-    callback(etapa: str, n_registros: int) e chamado apos cada tabela gravada.
-    Retorna dict {nome_tabela: n_linhas}.
-    """
-    config = load_config()
+def persistir_nfe(callback=None) -> dict:
+    """Persiste NF-e (ET/*.txt + EP/*.txt) em DuckDB: tabelas nfe_entradas e nfe_saidas.
+    callback(etapa, n) chamado apos cada tabela. Retorna {tabela: n_linhas}."""
     _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
     resultado = {}
-
     try:
         with duckdb.connect(str(_BANCO_PATH)) as con:
-
             df_et, _ = _carregar_nfe("0", "ENTRADAS")
             if not df_et.empty:
                 con.register("_df_et", df_et)
@@ -581,9 +574,21 @@ def persistir_banco(callback=None) -> dict:
             resultado["nfe_saidas"] = len(df_ep)
             if callback:
                 callback("nfe_saidas", resultado["nfe_saidas"])
+    except Exception as exc:
+        logger.exception("Erro ao persistir NF-e: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
 
-            arquivos_sped = _localizar_arquivos_sped(config)
 
+def persistir_sped(callback=None) -> dict:
+    """Persiste SPED (C100+C170, 0200, H010) em DuckDB: tabelas sped_itens,
+    sped_produtos e sped_estoque. callback(etapa, n) chamado apos cada tabela."""
+    config = load_config()
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    resultado = {}
+    try:
+        arquivos_sped = _localizar_arquivos_sped(config)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
             df_sped_itens = _parse_itens_c170_com_c100(arquivos_sped)
             if not df_sped_itens.empty:
                 con.register("_df_sped_itens", df_sped_itens)
@@ -607,12 +612,18 @@ def persistir_banco(callback=None) -> dict:
             resultado["sped_estoque"] = len(df_sped_est)
             if callback:
                 callback("sped_estoque", resultado["sped_estoque"])
-
     except Exception as exc:
-        logger.exception("Erro ao persistir banco DuckDB: %s", exc)
+        logger.exception("Erro ao persistir SPED: %s", exc)
         resultado["erro"] = str(exc)
-
     return resultado
+
+
+def persistir_banco(callback=None) -> dict:
+    """Persiste NF-e + SPED em sequência. Mantido para uso no CLI (__main__)."""
+    res = {}
+    res.update(persistir_nfe(callback))
+    res.update(persistir_sped(callback))
+    return res
 
 
 def carregar_operacao(progresso=None) -> list:

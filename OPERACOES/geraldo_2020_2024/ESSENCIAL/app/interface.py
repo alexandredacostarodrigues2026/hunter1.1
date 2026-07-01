@@ -12,21 +12,19 @@ import streamlit as st
 import loader
 
 _STATUS_RENDER = {
-    "salvo": lambda r: st.success(f"✅ {r['arquivo']} → {r['pasta']}/ ({r['mensagem']})"),
-    "duplicado": lambda r: st.warning(f"⚠️ {r['arquivo']}: {r['mensagem']}"),
-    "erro_esquema": lambda r: st.error(f"❌ {r['arquivo']}: {r['mensagem']}"),
+    "salvo":                 lambda r: st.success(f"✅ {r['arquivo']} → {r['pasta']}/ ({r['mensagem']})"),
+    "duplicado":             lambda r: st.warning(f"⚠️ {r['arquivo']}: {r['mensagem']}"),
+    "erro_esquema":          lambda r: st.error(f"❌ {r['arquivo']}: {r['mensagem']}"),
     "cnpj_nao_identificado": lambda r: st.error(f"❌ {r['arquivo']}: {r['mensagem']}"),
-    "erro": lambda r: st.error(f"❌ {r['arquivo']}: {r['mensagem']}"),
+    "erro":                  lambda r: st.error(f"❌ {r['arquivo']}: {r['mensagem']}"),
 }
 
-_TABELAS_BANCO = ["nfe_entradas", "nfe_saidas", "sped_itens", "sped_produtos", "sped_estoque"]
-_DELAY_BANCO = 0.25  # segundos por tabela — garante visibilidade da barra mesmo em cargas rápidas
+_DELAY = 0.25   # segundos por passo — garante visibilidade da barra mesmo em cargas rápidas
 
 
 def render_entidade_auditada() -> None:
     """Mostra os dados da entidade auditada. Só é chamada por main.py quando
-    st.session_state['dados_carregados'] é True (liberado pelo botão
-    "Carregar dados" em render_carga_operacao) — sem botão próprio aqui."""
+    st.session_state['dados_carregados'] é True."""
     st.subheader("Entidade auditada")
     with st.spinner("Identificando entidade auditada (CNPJ/Razão Social)..."):
         info = loader.garantir_entidade_auditada()
@@ -51,39 +49,41 @@ def render_entidade_auditada() -> None:
         st.caption("Avisos: " + "; ".join(info["erros"]))
 
 
-def _render_banco(barra, legenda) -> bool:
-    """Persiste dados em DuckDB exibindo barra de progresso por tabela.
+def _barra_progresso(titulo: str, n_passos: int, fn_persistir) -> bool:
+    """Exibe título + barra de progresso para uma fase de carga.
+    fn_persistir(callback) deve chamar callback(etapa, n) a cada passo.
     Retorna True em sucesso, False em erro."""
-    n_tabelas = len(_TABELAS_BANCO)
-    idx = [0]
+    st.markdown(f"**{titulo}**")
+    barra  = st.progress(0.0, text="Aguardando...")
+    status = st.empty()
+    idx    = [0]
 
     def _cb(etapa: str, n: int) -> None:
         idx[0] += 1
-        frac = idx[0] / n_tabelas
+        frac = idx[0] / n_passos
         barra.progress(frac, text=f"{etapa}: {n:,} registros".replace(",", "."))
-        legenda.caption(
-            f"Tabela {idx[0]}/{n_tabelas} — {etapa} ({n:,} registros)".replace(",", ".")
-        )
-        time.sleep(_DELAY_BANCO)
+        status.caption(f"Passo {idx[0]}/{n_passos} — {etapa} ({n:,} registros)".replace(",", "."))
+        time.sleep(_DELAY)
 
-    res = loader.persistir_banco(callback=_cb)
+    res = fn_persistir(_cb)
 
     if "erro" in res:
         barra.empty()
-        legenda.error(f"Erro ao atualizar banco: {res['erro']}")
+        status.error(f"Erro: {res['erro']}")
         return False
 
     total = sum(v for k, v in res.items() if k != "erro")
-    barra.progress(1.0, text=f"Banco atualizado — {total:,} registros no total".replace(",", "."))
-    legenda.empty()
+    barra.progress(1.0, text=f"Concluído — {total:,} registros".replace(",", "."))
+    status.empty()
     return True
 
 
 def render_carga_operacao() -> None:
-    """Prévia + botão de carga: mostra quantos arquivos existem em ET/EP/SPED
-    e quantos XML estão pendentes. O clique processa pendentes (progresso por
-    arquivo) e persiste tudo em DuckDB (barra por tabela). Quando já carregado
-    e sem pendentes, exibe "Carregar novamente" para atualização da base."""
+    """Prévia + botão de carga: 3 barras de progresso independentes.
+      1. XML pendentes  — classificação arquivo a arquivo
+      2. NF-e           — nfe_entradas + nfe_saidas no DuckDB
+      3. SPED           — sped_itens + sped_produtos + sped_estoque no DuckDB
+    Quando já carregado e sem pendentes, exibe "Carregar novamente"."""
     st.subheader("Carga de XML")
 
     with st.spinner("Verificando pastas..."):
@@ -111,37 +111,46 @@ def render_carga_operacao() -> None:
 
     if ja_carregado and sem_pendentes:
         st.success("✅ Dados carregados.")
-        clicou = st.button("Carregar novamente", key="btn_recarregar",
-                           help="Reprocessa toda a base (ET/EP/.txt + SPED) e atualiza o banco de dados.")
+        clicou = st.button(
+            "Carregar novamente",
+            key="btn_recarregar",
+            help="Reprocessa toda a base (NF-e + SPED) e atualiza o banco de dados.",
+        )
     else:
         clicou = st.button("Carregar dados", key="btn_carregar_dados")
 
     if not clicou:
         return
 
-    # ── Fase 1: classificação de XML pendentes ────────────────────────────────
+    # ── Barra 1: XML pendentes ────────────────────────────────────────────────
     if pend["quantidade"] > 0:
-        barra_xml = st.progress(0.0, text="Iniciando carga...")
-        resultados_area = st.container()
+        st.markdown("**1. Classificação de XML**")
+        barra_xml    = st.progress(0.0, text="Iniciando...")
+        area_xml     = st.container()
 
-        def _progresso(indice: int, total: int, resultado: dict) -> None:
-            barra_xml.progress(indice / total, text=f"Processando {indice}/{total}: {resultado['arquivo']}")
+        def _prog_xml(indice: int, total: int, resultado: dict) -> None:
+            barra_xml.progress(indice / total, text=f"{indice}/{total}: {resultado['arquivo']}")
             render = _STATUS_RENDER.get(resultado["status"])
-            with resultados_area:
+            with area_xml:
                 if render:
                     render(resultado)
                 else:
                     st.error(f"❌ {resultado['arquivo']}: status desconhecido ({resultado['status']}).")
 
-        loader.carregar_operacao(progresso=_progresso)
+        loader.carregar_operacao(progresso=_prog_xml)
         barra_xml.progress(1.0, text="XML concluído.")
+        fase_nfe  = "**2. NF-e (base)**"
+        fase_sped = "**3. SPED (declaração)**"
+    else:
+        fase_nfe  = "**1. NF-e (base)**"
+        fase_sped = "**2. SPED (declaração)**"
 
-    # ── Fase 2: persistência em DuckDB ────────────────────────────────────────
-    st.markdown("**Atualizando banco de dados...**")
-    barra_banco = st.progress(0.0, text="Preparando...")
-    legenda_banco = st.empty()
+    # ── Barra 2: NF-e ─────────────────────────────────────────────────────────
+    ok_nfe = _barra_progresso(fase_nfe, n_passos=2, fn_persistir=loader.persistir_nfe)
 
-    _render_banco(barra_banco, legenda_banco)
+    # ── Barra 3: SPED ─────────────────────────────────────────────────────────
+    ok_sped = _barra_progresso(fase_sped, n_passos=3, fn_persistir=loader.persistir_sped)
 
-    st.session_state["dados_carregados"] = True
-    st.rerun()
+    if ok_nfe and ok_sped:
+        st.session_state["dados_carregados"] = True
+        st.rerun()
