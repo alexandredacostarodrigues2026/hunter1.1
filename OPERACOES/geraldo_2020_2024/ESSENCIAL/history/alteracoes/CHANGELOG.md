@@ -63,7 +63,14 @@
 - Nova `OPERACOES/_MODELO_OPERACAO/`: árvore completa pré-criada (`1-DOCFISCAIS/nf/{ET,EP}`, `2-DECLARACAO/{SPED,ESTOQUE}`, `logs/`), `config.json` com `entidade_auditada: null` e o `carregar_xml.bat` já dentro + `LEIA-ME.txt` com o passo a passo (copiar a pasta, renomear para o cliente, colocar XML em `1-DOCFISCAIS/nf/`, rodar o `.bat`) e a ressalva de que a entidade auditada precisa ser fixada manualmente no `config.json` antes da primeira carga de uma operação nova (não há automação para isso ainda).
 - Validado: `carregar_xml.bat` dentro de `geraldo_2020_2024/` (motor próprio) classificou XML de teste em `EP/` corretamente; o mesmo script copiado para `_MODELO_OPERACAO/` (sem `ESSENCIAL` própria) detectou o motor emprestado corretamente e reportou "entidade auditada não foi fixada" para o `config.json` em branco do modelo — exatamente o comportamento documentado. Artefatos de teste removidos depois.
 
-Próxima etapa: a definir (provavelmente `matching.py` — cruzamento XML × DECLARAÇÃO, ou criar a primeira operação real além de Geraldo a partir do modelo).
+## PS15 — _MODELO_OPERACAO ganha ESSENCIAL própria e fica standalone (2026-07-01)
+- Por decisão do usuário, `_MODELO_OPERACAO` passou de "template leve sem runtime" para "operação completamente autônoma" — agora tem sua própria `ESSENCIAL/` com Python 3.12 embeddable (~200MB), código e configuração zerados, pronta para ser copiada/renomeada para qualquer novo cliente sem depender de geraldo_2020_2024.
+- Cópia feita em dois passos (PowerShell timed out a primeira passagem → robocopy completou o restante em ~1min35).
+- `ESSENCIAL/config/config.json` do modelo: porta 8601 (sem conflito com geraldo em 8600), `entidade_auditada: null`.
+- `LEIA-ME.txt` do modelo atualizado para documentar que agora é standalone.
+- Validado: runtime próprio do modelo importou streamlit/pandas/duckdb/rapidfuzz corretamente; painel subiu na porta 8601 mostrando "Operação ativa: _MODELO_OPERACAO", 0 arquivos, sem erros. Rodou simultâneo com geraldo (8600) sem conflito.
+
+Próxima etapa: a definir (usar `_MODELO_OPERACAO` com dados reais de uma nova operação, ou `matching.py` — cruzamento XML × DECLARAÇÃO).
 
 ## PS9 — runtime/ trocado por Python embeddable real, sem dependência de Anaconda (2026-06-27)
 - **Achado crítico**: o usuário exigiu que a aplicação funcione numa máquina sem Python/VS Code instalado. Ao verificar, `ESSENCIAL/runtime/` (usado desde o PS0) era um `venv` criado a partir do Anaconda local (`pyvenv.cfg` apontava para `C:\Users\...\anaconda3`; `runtime\Lib\` só tinha `site-packages`, sem a biblioteca padrão) — **não era portátil de verdade**. Confirmado na prática: o processo do venv resolvia para `anaconda3\python.exe` em tempo de execução (visto via `Get-CimInstance Win32_Process`).

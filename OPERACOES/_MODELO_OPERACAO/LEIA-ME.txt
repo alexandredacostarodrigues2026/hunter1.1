@@ -1,50 +1,53 @@
 ======================================================
-  MODELO DE OPERAÇÃO — Equalizador de Produtos
+  MODELO DE OPERACAO - Equalizador de Produtos
 ======================================================
 
-COMO USAR PARA UMA OPERAÇÃO/CLIENTE NOVO
+COMO USAR PARA UMA OPERACAO/CLIENTE NOVO
 ------------------------------------------------------
 
 1. Copie esta pasta inteira (_MODELO_OPERACAO) para dentro de OPERACOES\
-2. Renomeie a cópia para o nome da operação/cliente
+2. Renomeie a copia para o nome da operacao/cliente
    (ex.: OPERACOES\nome_do_cliente\)
-3. Coloque os XML de NF-e recebidos direto em:
+3. Abra ESSENCIAL\config\config.json e confira:
+   - "port": ajuste se necessario (padrao 8601 no modelo)
+   - "entidade_auditada": null (sera identificado automaticamente
+     apos a primeira carga)
+4. Coloque os XML de NF-e recebidos direto em:
      1-DOCFISCAIS\nf\
-   (não coloque em ET\ ou EP\ manualmente — o sistema classifica
-   automaticamente)
-4. Dê duplo clique em:
+   (o sistema classifica automaticamente em ET\ ou EP\)
+5. Para abrir o painel no navegador, clique em:
+     ESSENCIAL\iniciar_sistema.bat
+6. Para carregar os XML via linha de comando (sem abrir o painel):
      carregar_xml.bat
-   Ele classifica cada XML em ET\ (entrada) ou EP\ (emissão própria)
-   conforme o CNPJ da empresa auditada, e grava um log em logs\.
 
 
-ANTES DA PRIMEIRA CARGA — FIXAR A EMPRESA AUDITADA
+DIFERENCA DESTA VERSAO DO MODELO
 ------------------------------------------------------
 
-O carregar_xml.bat só classifica XML depois que o CNPJ/Razão Social
-da empresa auditada estiverem fixados no config.json desta operação
-(campo "entidade_auditada", hoje gravado como null no modelo).
+Este modelo possui ESSENCIAL\ propria (Python + Streamlit embarcados),
+podendo ser implantado em qualquer PC Windows sem Python instalado e
+sem depender de outra operacao.
 
-Hoje isso é feito automaticamente pelo painel do Equalizador (que
-calcula o CNPJ mais frequente a partir dos XML já recebidos) — então,
-se esta for uma operação nova sem ESSENCIAL própria, edite o
-config.json manualmente uma vez, preenchendo:
-
-  "entidade_auditada": {
-      "cnpj": "<14 dígitos, só números>",
-      "razao_social": "<nome da empresa>",
-      "ocorrencias": 0,
-      "total_linhas_analisadas": 0,
-      "por_fonte": {"ET": 0, "EP": 0}
-  }
-
-Sem isso, o carregar_xml.bat vai reportar "entidade auditada não foi
-fixada" para cada XML, sem classificar nada.
+Runtime: ESSENCIAL\runtime\python.exe (Python 3.12 embeddable)
+Porta padrao: 8601 (geraldo_2020_2024 usa 8600 - evita conflito)
 
 
-ONDE FICA O MOTOR
+ONDE FICAM OS DADOS GERADOS
 ------------------------------------------------------
 
-Esta pasta não tem Python/Streamlit próprios — o carregar_xml.bat
-reaproveita o motor já instalado em OPERACOES\geraldo_2020_2024\ESSENCIAL\.
-Não mova nem renomeie a pasta geraldo_2020_2024.
+   ESSENCIAL\banco\                 banco de dados local
+   ESSENCIAL\logs\                  logs de execucao
+   ESSENCIAL\history\               contexto e snapshots
+   1-DOCFISCAIS\nf\ET\              XML de entrada (recebidos)
+   1-DOCFISCAIS\nf\EP\              XML de saida (emitidos)
+
+
+SE ALGO DER ERRADO
+------------------------------------------------------
+
+1. Verifique: ESSENCIAL\logs\launcher.log
+2. Verifique: ESSENCIAL\logs\streamlit.log
+3. Para reconfigurar o runtime:
+     ESSENCIAL\launcher\setup_ambiente.bat
+
+======================================================
