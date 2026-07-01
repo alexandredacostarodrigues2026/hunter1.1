@@ -99,5 +99,20 @@ def render_carga_operacao() -> None:
         loader.carregar_operacao(progresso=_progresso)
         barra.progress(1.0, text="Concluído.")
 
+    with st.status("Atualizando banco de dados...", expanded=True) as _status_banco:
+        def _cb_banco(etapa: str, n: int) -> None:
+            st.write(f"✓ {etapa}: {n:,} registros".replace(",", "."))
+
+        _res_banco = loader.persistir_banco(callback=_cb_banco)
+        if "erro" in _res_banco:
+            _status_banco.update(label=f"Erro ao atualizar banco: {_res_banco['erro']}", state="error")
+        else:
+            _total_banco = sum(v for k, v in _res_banco.items() if k != "erro")
+            _status_banco.update(
+                label=f"Banco atualizado — {_total_banco:,} registros".replace(",", "."),
+                state="complete",
+                expanded=False,
+            )
+
     st.session_state["dados_carregados"] = True
     st.rerun()

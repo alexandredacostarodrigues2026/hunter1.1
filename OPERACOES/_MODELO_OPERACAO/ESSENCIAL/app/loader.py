@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 import streamlit as st
 
@@ -43,6 +44,8 @@ if _OPERACAO_DIR_OVERRIDE:
 else:
     _OPERACAO_DIR = _ROOT_DIR.parent     # pasta da operação (geraldo_2020_2024/)
     CONFIG_PATH = _ROOT_DIR / "config" / "config.json"
+
+_BANCO_PATH = _ROOT_DIR / "banco" / "hunter.duckdb"
 
 _CANDIDATOS_PROD = [
     "Descricao_do_Produto_ou_servicos",
@@ -549,6 +552,69 @@ def processar_arquivo_pendente(caminho: Path) -> dict:
     return resultado
 
 
+def persistir_banco(callback=None) -> dict:
+    """Lê todos os dados brutos (NF-e .txt + SPED) e persiste em DuckDB.
+
+    Substitui completamente as tabelas a cada chamada (idempotente).
+    callback(etapa: str, n_registros: int) e chamado apos cada tabela gravada.
+    Retorna dict {nome_tabela: n_linhas}.
+    """
+    config = load_config()
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    resultado = {}
+
+    try:
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+
+            df_et, _ = _carregar_nfe("0", "ENTRADAS")
+            if not df_et.empty:
+                con.register("_df_et", df_et)
+                con.execute("CREATE OR REPLACE TABLE nfe_entradas AS SELECT * FROM _df_et")
+            resultado["nfe_entradas"] = len(df_et)
+            if callback:
+                callback("nfe_entradas", resultado["nfe_entradas"])
+
+            df_ep, _ = _carregar_nfe("1", "SAIDAS")
+            if not df_ep.empty:
+                con.register("_df_ep", df_ep)
+                con.execute("CREATE OR REPLACE TABLE nfe_saidas AS SELECT * FROM _df_ep")
+            resultado["nfe_saidas"] = len(df_ep)
+            if callback:
+                callback("nfe_saidas", resultado["nfe_saidas"])
+
+            arquivos_sped = _localizar_arquivos_sped(config)
+
+            df_sped_itens = _parse_itens_c170_com_c100(arquivos_sped)
+            if not df_sped_itens.empty:
+                con.register("_df_sped_itens", df_sped_itens)
+                con.execute("CREATE OR REPLACE TABLE sped_itens AS SELECT * FROM _df_sped_itens")
+            resultado["sped_itens"] = len(df_sped_itens)
+            if callback:
+                callback("sped_itens", resultado["sped_itens"])
+
+            df_sped_prod = _parse_registros_sped(arquivos_sped, "0200", _CAMPOS_0200)
+            if not df_sped_prod.empty:
+                con.register("_df_sped_prod", df_sped_prod)
+                con.execute("CREATE OR REPLACE TABLE sped_produtos AS SELECT * FROM _df_sped_prod")
+            resultado["sped_produtos"] = len(df_sped_prod)
+            if callback:
+                callback("sped_produtos", resultado["sped_produtos"])
+
+            df_sped_est = _parse_registros_sped(arquivos_sped, "H010", _CAMPOS_H010)
+            if not df_sped_est.empty:
+                con.register("_df_sped_est", df_sped_est)
+                con.execute("CREATE OR REPLACE TABLE sped_estoque AS SELECT * FROM _df_sped_est")
+            resultado["sped_estoque"] = len(df_sped_est)
+            if callback:
+                callback("sped_estoque", resultado["sped_estoque"])
+
+    except Exception as exc:
+        logger.exception("Erro ao persistir banco DuckDB: %s", exc)
+        resultado["erro"] = str(exc)
+
+    return resultado
+
+
 def carregar_operacao(progresso=None) -> list:
     """Ponto de entrada único da carga: escaneia nfe_path/ por XML pendentes e
     classifica cada um em ET/EP. Usuário só precisa apontar a operação (já
@@ -667,4 +733,16 @@ if __name__ == "__main__":
         _emitir(f"[{indice}/{total}] {resultado}")
 
     carregar_operacao(progresso=_progresso)
+
+    _emitir("Atualizando banco de dados...")
+
+    def _cb_banco(etapa: str, n: int) -> None:
+        _emitir(f"  {etapa}: {n} registros")
+
+    _res_banco = persistir_banco(callback=_cb_banco)
+    if "erro" in _res_banco:
+        _emitir(f"ERRO ao atualizar banco: {_res_banco['erro']}")
+    else:
+        _total = sum(v for k, v in _res_banco.items() if k != "erro")
+        _emitir(f"Banco atualizado: {_total} registros no total.")
     _emitir(f"Log salvo em: {_log_path}")
