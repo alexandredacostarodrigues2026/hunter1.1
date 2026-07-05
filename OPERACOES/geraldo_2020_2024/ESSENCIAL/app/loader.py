@@ -201,6 +201,7 @@ _CAMPOS_H010 = [
     "COD_ITEM", "UNID", "QTD", "VL_UNIT", "VL_ITEM", "IND_PROP",
     "COD_PART", "TXT_COMPL", "COD_CTA", "VL_ITEM_IR",
 ]
+_CAMPOS_0190 = ["UNID", "DESCR"]
 _CAMPOS_0000 = [
     "COD_VER", "COD_FIN", "DT_INI", "DT_FIN", "NOME", "CNPJ", "CPF", "UF",
     "IE", "COD_MUN", "IM", "SUFRAMA", "IND_PERFIL", "IND_ATIV",
@@ -257,6 +258,17 @@ def _parse_registros_sped(arquivos: list, reg: str, campos_nomes: list) -> pd.Da
     return pd.DataFrame(linhas)
 
 
+def _forcar_colunas_string(df: pd.DataFrame, colunas: "list[str]") -> pd.DataFrame:
+    """Garante dtype=str nas colunas de ligação entre registros SPED (COD_ITEM,
+    UNID, CHV_NFE, ...) — evita que zeros à esquerda ou chaves de acesso longas
+    sejam corrompidos por inferência numérica automática do Pandas
+    (Regra Operacional R07)."""
+    for col in colunas:
+        if col in df.columns:
+            df[col] = df[col].astype(str)
+    return df
+
+
 def _parse_itens_c170_com_c100(arquivos: list) -> pd.DataFrame:
     """Percorre C100/C170 sequencialmente — cada C170 herda dados do C100 mais recente."""
     linhas = []
@@ -274,6 +286,7 @@ def _parse_itens_c170_com_c100(arquivos: list) -> pd.DataFrame:
                 valores += [""] * (len(_CAMPOS_C170) - len(valores))
                 linha = dict(zip(_CAMPOS_C170, valores))
                 linha["IND_OPER"]       = c100_atual.get("IND_OPER", "")
+                linha["IND_EMIT"]       = c100_atual.get("IND_EMIT", "")
                 linha["NUM_DOC"]        = c100_atual.get("NUM_DOC", "")
                 linha["CHV_NFE"]        = c100_atual.get("CHV_NFE", "")
                 linha["DT_DOC"]         = c100_atual.get("DT_DOC", "")
@@ -281,7 +294,8 @@ def _parse_itens_c170_com_c100(arquivos: list) -> pd.DataFrame:
                 linha["COMPETENCIA"]    = competencia
                 linha["ARQUIVO_ORIGEM"] = arquivo.name
                 linhas.append(linha)
-    return pd.DataFrame(linhas)
+    df = pd.DataFrame(linhas)
+    return _forcar_colunas_string(df, ["COD_ITEM", "UNID", "CHV_NFE", "NUM_ITEM"])
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -333,12 +347,99 @@ def load_declaracao_produtos() -> "tuple[pd.DataFrame, dict]":
         meta["erros"].append("Nenhum registro 0200 encontrado nos arquivos SPED.")
         return df, meta
 
+    df = _forcar_colunas_string(df, ["COD_ITEM", "UNID_INV", "COD_BARRA", "COD_NCM"])
     df["PRODUTO_RAW"]         = df["DESCR_ITEM"].astype(str)
     df["PRODUTO_NORMALIZADO"] = df["DESCR_ITEM"].apply(_normalizar_str)
 
     meta["total_linhas"]  = len(df)
     meta["total_colunas"] = len(df.columns)
     meta["colunas"]       = df.columns.tolist()
+    return df, meta
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_declaracao_unidades() -> "tuple[pd.DataFrame, dict]":
+    """Carrega o cadastro de unidades de medida da declaração (registro 0190) —
+    chave de ligação para o campo 06 (UNID) do C170 e o campo 06 (UNID_INV) do 0200."""
+    config   = load_config()
+    arquivos = _localizar_arquivos_sped(config)
+    meta: dict = {"arquivos": [str(a) for a in arquivos], "origem_dados": "DECLARACAO_UNIDADES", "erros": []}
+
+    if not arquivos:
+        meta["erros"].append(f"Nenhum arquivo SPED encontrado em {_resolver_path(config, 'sped_path', '2-DECLARACAO/SPED')}")
+        return pd.DataFrame(), meta
+
+    df = _parse_registros_sped(arquivos, "0190", _CAMPOS_0190)
+    if df.empty:
+        meta["erros"].append("Nenhum registro 0190 encontrado nos arquivos SPED.")
+        return df, meta
+
+    df = _forcar_colunas_string(df, ["UNID"])
+
+    meta["total_linhas"]  = len(df)
+    meta["total_colunas"] = len(df.columns)
+    meta["colunas"]       = df.columns.tolist()
+    return df, meta
+
+
+def _enriquecer_itens_com_cadastro(
+    df_itens: pd.DataFrame, df_produtos: pd.DataFrame, df_unidades: pd.DataFrame,
+) -> pd.DataFrame:
+    """Junta itens (C170) com o cadastro de produto (0200, por COD_ITEM) e com a
+    descrição da unidade de medida (0190, por UNID) — lógica de 'de-para':
+      C170 (campo 03 COD_ITEM) -> 0200 (campo 02 COD_ITEM)
+      C170 (campo 06 UNID)     -> 0190 (campo 02 UNID)
+    """
+    if df_itens.empty:
+        return df_itens
+
+    df = df_itens.copy()
+
+    if not df_produtos.empty and "COD_ITEM" in df_produtos.columns:
+        cols_0200 = ["COD_ITEM", "DESCR_ITEM", "COD_BARRA", "COD_NCM", "UNID_INV"]
+        cols_0200 = [c for c in cols_0200 if c in df_produtos.columns]
+        cadastro = df_produtos[cols_0200].drop_duplicates("COD_ITEM")
+        df = df.merge(cadastro, on="COD_ITEM", how="left", suffixes=("", "_0200"))
+
+    if not df_unidades.empty and "UNID" in df_unidades.columns:
+        cadastro_unid = (
+            df_unidades[["UNID", "DESCR"]]
+            .rename(columns={"DESCR": "DESCR_UNID"})
+            .drop_duplicates("UNID")
+        )
+        df = df.merge(cadastro_unid, on="UNID", how="left")
+
+    return df
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_declaracao_entradas_terceiros() -> "tuple[pd.DataFrame, dict]":
+    """Chaves de entrada de emissão de terceiros: C100 com IND_OPER=0 (entrada)
+    e IND_EMIT=1 (emitido por terceiros) + itens C170, enriquecidos com o
+    cadastro de produto (0200) e de unidade de medida (0190).
+    COD_ITEM, UNID e CHV_NFE tratados como string (Regra Operacional R07)."""
+    df_itens, meta_itens = load_declaracao_itens()
+    if df_itens.empty:
+        meta_itens["origem_dados"] = "DECLARACAO_ENTRADAS_TERCEIROS"
+        return df_itens, meta_itens
+
+    df = df_itens[
+        (df_itens["IND_OPER"].astype(str).str.strip() == "0")
+        & (df_itens["IND_EMIT"].astype(str).str.strip() == "1")
+    ].copy()
+
+    df_produtos, _  = load_declaracao_produtos()
+    df_unidades, _  = load_declaracao_unidades()
+    df = _enriquecer_itens_com_cadastro(df, df_produtos, df_unidades)
+    df = _forcar_colunas_string(df, ["COD_ITEM", "UNID", "CHV_NFE"])
+
+    meta = {
+        "origem_dados": "DECLARACAO_ENTRADAS_TERCEIROS",
+        "total_linhas":  len(df),
+        "total_colunas": len(df.columns),
+        "colunas":       df.columns.tolist(),
+        "erros": [],
+    }
     return df, meta
 
 
@@ -581,8 +682,10 @@ def persistir_nfe(callback=None) -> dict:
 
 
 def persistir_sped(callback=None) -> dict:
-    """Persiste SPED (C100+C170, 0200, H010) em DuckDB: tabelas sped_itens,
-    sped_produtos e sped_estoque. callback(etapa, n) chamado apos cada tabela."""
+    """Persiste SPED (C100+C170, 0200, 0190, H010) em DuckDB: tabelas sped_itens,
+    sped_produtos, sped_unidades, sped_estoque e sped_entradas_terceiros
+    (C100 IND_OPER=0 + IND_EMIT=1, já enriquecido com 0200/0190).
+    callback(etapa, n) chamado apos cada tabela."""
     config = load_config()
     _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
     resultado = {}
@@ -599,11 +702,21 @@ def persistir_sped(callback=None) -> dict:
 
             df_sped_prod = _parse_registros_sped(arquivos_sped, "0200", _CAMPOS_0200)
             if not df_sped_prod.empty:
+                df_sped_prod = _forcar_colunas_string(df_sped_prod, ["COD_ITEM", "UNID_INV", "COD_BARRA", "COD_NCM"])
                 con.register("_df_sped_prod", df_sped_prod)
                 con.execute("CREATE OR REPLACE TABLE sped_produtos AS SELECT * FROM _df_sped_prod")
             resultado["sped_produtos"] = len(df_sped_prod)
             if callback:
                 callback("sped_produtos", resultado["sped_produtos"])
+
+            df_sped_unid = _parse_registros_sped(arquivos_sped, "0190", _CAMPOS_0190)
+            if not df_sped_unid.empty:
+                df_sped_unid = _forcar_colunas_string(df_sped_unid, ["UNID"])
+                con.register("_df_sped_unid", df_sped_unid)
+                con.execute("CREATE OR REPLACE TABLE sped_unidades AS SELECT * FROM _df_sped_unid")
+            resultado["sped_unidades"] = len(df_sped_unid)
+            if callback:
+                callback("sped_unidades", resultado["sped_unidades"])
 
             df_sped_est = _parse_registros_sped(arquivos_sped, "H010", _CAMPOS_H010)
             if not df_sped_est.empty:
@@ -612,6 +725,19 @@ def persistir_sped(callback=None) -> dict:
             resultado["sped_estoque"] = len(df_sped_est)
             if callback:
                 callback("sped_estoque", resultado["sped_estoque"])
+
+            df_entradas_terceiros = df_sped_itens[
+                (df_sped_itens.get("IND_OPER", pd.Series(dtype=str)).astype(str).str.strip() == "0")
+                & (df_sped_itens.get("IND_EMIT", pd.Series(dtype=str)).astype(str).str.strip() == "1")
+            ].copy() if not df_sped_itens.empty else df_sped_itens
+            if not df_entradas_terceiros.empty:
+                df_entradas_terceiros = _enriquecer_itens_com_cadastro(df_entradas_terceiros, df_sped_prod, df_sped_unid)
+                df_entradas_terceiros = _forcar_colunas_string(df_entradas_terceiros, ["COD_ITEM", "UNID", "CHV_NFE"])
+                con.register("_df_entradas_terceiros", df_entradas_terceiros)
+                con.execute("CREATE OR REPLACE TABLE sped_entradas_terceiros AS SELECT * FROM _df_entradas_terceiros")
+            resultado["sped_entradas_terceiros"] = len(df_entradas_terceiros)
+            if callback:
+                callback("sped_entradas_terceiros", resultado["sped_entradas_terceiros"])
     except Exception as exc:
         logger.exception("Erro ao persistir SPED: %s", exc)
         resultado["erro"] = str(exc)
