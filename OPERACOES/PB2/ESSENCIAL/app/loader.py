@@ -57,14 +57,19 @@ _CANDIDATOS_PROD = [
 
 _REG_VALIDO = re.compile(r"^[0-9A-Z]{4}$")
 
-# ── Regras de negócio de filtragem NF-e/SPED (Regra Operacional R07) ─────────
-# CFOP que não representam operação de compra/venda a ser cruzada (baixa de
-# estoque / operação já registrada em ECF) — a chave de acesso inteira é
-# descartada (todos os itens), não só a linha do item com aquele CFOP. Regra
-# única (ET e EP), conforme "regra de negócios unificadas/CNPJ EMIT = CNPJ
-# DEST.txt": "permitir tudo e retirar somente cfops de baixa de estoque
-# 5927 e 6927".
-_CFOP_EXCLUIDOS_NFE = {"5927", "6927"}
+# ── Regras de negócio de filtragem NF-e (Regra Operacional R07) ──────────────
+# Exclusivo do lado XML — não se aplica ao EFD/SPED. Itens com CFOP na
+# watchlist NÃO são descartados: são segregados (por item, não por chave
+# inteira) para as tabelas de análise nfe_analise_et/nfe_analise_ep, mantendo
+# os datasets principais (nfe_entradas/nfe_saidas) limpos sem perder dado.
+_CFOP_WATCHLIST_GLOBAL = {  # aplicada a ET e EP
+    "1922", "2922", "5922", "6922",   # Faturamento para Entrega Futura
+    "1923", "2923", "5923", "6923",   # Venda à Ordem
+}
+_CFOP_WATCHLIST_ET = {"5927", "6927"}   # Emissão de Terceiros — baixa de estoque
+_CFOP_WATCHLIST_EP = {"5929", "6929"}   # Emissão Própria — lançamentos ECF
+# Nota: CFOP 5929 em registros de ET NÃO é segregado (segue para nfe_entradas/
+# nfe_saidas normalmente) — não está na watchlist global nem na de ET.
 
 # Situação da NF-e (fatonfe_informix_stnfeletronica): só documentos válidos
 # (A=Autorizada, O=demais situações regulares) — descarta canceladas (C),
@@ -74,6 +79,7 @@ _SITUACOES_NFE_VALIDAS = {"A", "O"}
 _COL_SITUACAO_NFE = "fatonfe_informix_stnfeletronica"
 _COL_CFOP_NFE     = "fatoitemnfe_infnfe_det_prod_cfop"
 _COL_CHAVE_NFE    = "fatonfe_infprot_chnfe"
+_COL_NUM_ITEM_NFE = "fatoitemnfe_infnfe_det_nitem"
 
 
 def _filtrar_situacao_nfe(df: pd.DataFrame, col_situacao: str = _COL_SITUACAO_NFE) -> pd.DataFrame:
@@ -82,19 +88,6 @@ def _filtrar_situacao_nfe(df: pd.DataFrame, col_situacao: str = _COL_SITUACAO_NF
     if df.empty or col_situacao not in df.columns:
         return df
     return df[df[col_situacao].astype(str).str.strip().isin(_SITUACOES_NFE_VALIDAS)]
-
-
-def _excluir_chaves_por_cfop(df: pd.DataFrame, col_chave: str, col_cfop: str, cfops_excluidos: set) -> pd.DataFrame:
-    """Descarta TODOS os itens da chave de acesso que contenha, em qualquer
-    item, um dos CFOPs informados — não apenas a linha do item com aquele
-    CFOP. CFOP de baixa de estoque/ECF não representa operação de compra/
-    venda a ser cruzada (Regra Operacional R07)."""
-    if df.empty or col_cfop not in df.columns or col_chave not in df.columns:
-        return df
-    chaves_ruins = set(df.loc[df[col_cfop].astype(str).str.strip().isin(cfops_excluidos), col_chave])
-    if not chaves_ruins:
-        return df
-    return df[~df[col_chave].isin(chaves_ruins)]
 
 
 def load_config() -> dict:
@@ -159,43 +152,50 @@ def _localizar_arquivos_nfe_subpasta(config: dict, subpasta: str) -> list:
     return sorted(pasta.glob("*.txt"))
 
 
-def _carregar_nfe(tpnf_desejado: str, origem_dados: str) -> "tuple[pd.DataFrame, dict]":
-    config    = load_config()
-    arquivos  = _localizar_arquivos_nfe(config)
-    meta: dict = {"arquivos": [str(a) for a in arquivos], "origem_dados": origem_dados, "erros": []}
+@st.cache_data(ttl=1800, show_spinner=False)
+def _classificar_itens_nfe() -> dict:
+    """Lê todos os .txt de nfe_path (ET+EP), filtra situação válida (A/O) e
+    segrega POR ITEM (não por chave inteira) os CFOPs da watchlist para as
+    tabelas de análise — o restante segue para entradas/saídas pelo tpnf.
+    Devolve {'entradas','saidas','analise_et','analise_ep': DataFrame,
+    'erros': list, 'arquivos': list}."""
+    config   = load_config()
+    arquivos = _localizar_arquivos_nfe(config)
+    vazio    = pd.DataFrame()
+    resultado_vazio = {
+        "entradas": vazio, "saidas": vazio, "analise_et": vazio, "analise_ep": vazio,
+        "erros": [], "arquivos": [str(a) for a in arquivos],
+    }
 
     if not arquivos:
-        meta["erros"].append(f"Nenhum arquivo NF-e encontrado em {_resolver_path(config, 'nfe_path', '1-DOCFISCAIS/nf')}")
-        return pd.DataFrame(), meta
+        resultado_vazio["erros"].append(
+            f"Nenhum arquivo NF-e encontrado em {_resolver_path(config, 'nfe_path', '1-DOCFISCAIS/nf')}"
+        )
+        return resultado_vazio
 
     partes = []
+    erros = []
     for arquivo in arquivos:
         try:
             df = _read_txt_pipe(arquivo)
             if df.empty or "fatonfe_infnfe_ide_tpnf" not in df.columns:
-                meta["erros"].append(f"Arquivo sem coluna tpnf ou vazio: {arquivo.name}")
+                erros.append(f"Arquivo sem coluna tpnf ou vazio: {arquivo.name}")
                 continue
-            df = df[df["fatonfe_infnfe_ide_tpnf"].astype(str).str.strip() == tpnf_desejado].copy()
-
-            # Regra Operacional R07: só situação válida (A/O) e descarta
-            # chaves com CFOP de baixa de estoque/ECF (5927/6927, mesma
-            # regra para ET e EP).
             df = _filtrar_situacao_nfe(df)
-            df = _excluir_chaves_por_cfop(df, _COL_CHAVE_NFE, _COL_CFOP_NFE, _CFOP_EXCLUIDOS_NFE)
             if df.empty:
                 continue
-
-            df["ARQUIVO_ORIGEM"] = arquivo.name
+            df["PASTA_ORIGEM"]    = arquivo.parent.name.upper()
+            df["ARQUIVO_ORIGEM"]  = arquivo.name
             partes.append(df)
         except Exception as exc:
-            meta["erros"].append(f"Erro em {arquivo.name}: {exc}")
+            erros.append(f"Erro em {arquivo.name}: {exc}")
             logger.exception("Erro ao carregar NF-e %s", arquivo)
 
     if not partes:
-        return pd.DataFrame(), meta
+        resultado_vazio["erros"] = erros
+        return resultado_vazio
 
     combined = pd.concat(partes, ignore_index=True)
-    combined["ORIGEM_DADOS"]    = origem_dados
     combined["TIMESTAMP_CARGA"] = datetime.now().isoformat(timespec="seconds")
 
     col_prod = "fatoitemnfe_infnfe_det_prod_xprod"
@@ -206,25 +206,67 @@ def _carregar_nfe(tpnf_desejado: str, origem_dados: str) -> "tuple[pd.DataFrame,
         combined["PRODUTO_RAW"]         = ""
         combined["PRODUTO_NORMALIZADO"] = ""
 
-    combined = _forcar_colunas_string(combined, [_COL_CHAVE_NFE, "fatoitemnfe_infnfe_det_nitem"])
-    combined = _gerar_id_unico(combined, [_COL_CHAVE_NFE, "fatoitemnfe_infnfe_det_nitem"])
+    combined = _forcar_colunas_string(combined, [_COL_CHAVE_NFE, _COL_NUM_ITEM_NFE, _COL_CFOP_NFE])
+    combined = _gerar_id_unico(combined, [_COL_CHAVE_NFE, _COL_NUM_ITEM_NFE])
 
-    meta["total_linhas"]  = len(combined)
-    meta["total_colunas"] = len(combined.columns)
-    meta["colunas"]       = combined.columns.tolist()
-    return combined, meta
+    cfop  = combined[_COL_CFOP_NFE].astype(str).str.strip()
+    pasta = combined["PASTA_ORIGEM"]
+
+    mask_analise_et = (pasta == "ET") & cfop.isin(_CFOP_WATCHLIST_GLOBAL | _CFOP_WATCHLIST_ET)
+    mask_analise_ep = (pasta == "EP") & cfop.isin(_CFOP_WATCHLIST_GLOBAL | _CFOP_WATCHLIST_EP)
+    mask_principal  = ~(mask_analise_et | mask_analise_ep)
+
+    tpnf = combined["fatonfe_infnfe_ide_tpnf"].astype(str).str.strip()
+
+    df_entradas = combined[mask_principal & (tpnf == "0")].copy()
+    df_entradas["ORIGEM_DADOS"] = "ENTRADAS"
+    df_saidas = combined[mask_principal & (tpnf == "1")].copy()
+    df_saidas["ORIGEM_DADOS"] = "SAIDAS"
+    df_analise_et = combined[mask_analise_et].copy()
+    df_analise_et["ORIGEM_DADOS"] = "ANALISE_ET"
+    df_analise_ep = combined[mask_analise_ep].copy()
+    df_analise_ep["ORIGEM_DADOS"] = "ANALISE_EP"
+
+    return {
+        "entradas": df_entradas, "saidas": df_saidas,
+        "analise_et": df_analise_et, "analise_ep": df_analise_ep,
+        "erros": erros, "arquivos": [str(a) for a in arquivos],
+    }
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+def _meta_nfe(df: pd.DataFrame, origem_dados: str, erros: list, arquivos: list) -> dict:
+    return {
+        "arquivos": arquivos, "origem_dados": origem_dados, "erros": erros,
+        "total_linhas": len(df), "total_colunas": len(df.columns), "colunas": df.columns.tolist(),
+    }
+
+
 def load_entradas() -> "tuple[pd.DataFrame, dict]":
-    """Carrega itens de NF-e de ENTRADA (tpnf=0) — lado XML."""
-    return _carregar_nfe("0", "ENTRADAS")
+    """Carrega itens de NF-e de ENTRADA (tpnf=0), já sem os CFOPs segregados — lado XML."""
+    r = _classificar_itens_nfe()
+    return r["entradas"], _meta_nfe(r["entradas"], "ENTRADAS", r["erros"], r["arquivos"])
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
 def load_saidas() -> "tuple[pd.DataFrame, dict]":
-    """Carrega itens de NF-e de SAÍDA (tpnf=1) — lado XML."""
-    return _carregar_nfe("1", "SAIDAS")
+    """Carrega itens de NF-e de SAÍDA (tpnf=1), já sem os CFOPs segregados — lado XML."""
+    r = _classificar_itens_nfe()
+    return r["saidas"], _meta_nfe(r["saidas"], "SAIDAS", r["erros"], r["arquivos"])
+
+
+def load_analise_et() -> "tuple[pd.DataFrame, dict]":
+    """Itens de Emissão de Terceiros segregados por CFOP de watchlist
+    (faturamento futuro/venda à ordem/baixa de estoque) — não entram no
+    cruzamento principal, mas ficam preservados para análise."""
+    r = _classificar_itens_nfe()
+    return r["analise_et"], _meta_nfe(r["analise_et"], "ANALISE_ET", r["erros"], r["arquivos"])
+
+
+def load_analise_ep() -> "tuple[pd.DataFrame, dict]":
+    """Itens de Emissão Própria segregados por CFOP de watchlist
+    (faturamento futuro/venda à ordem/lançamento ECF) — não entram no
+    cruzamento principal, mas ficam preservados para análise."""
+    r = _classificar_itens_nfe()
+    return r["analise_ep"], _meta_nfe(r["analise_ep"], "ANALISE_EP", r["erros"], r["arquivos"])
 
 
 # ── Lado DECLARAÇÃO — SPED/EFD (2-DECLARACAO/SPED/*.txt) ─────────────────────
@@ -752,27 +794,28 @@ def dados_ja_carregados() -> bool:
 
 
 def persistir_nfe(callback=None) -> dict:
-    """Persiste NF-e (ET/*.txt + EP/*.txt) em DuckDB: tabelas nfe_entradas e nfe_saidas.
+    """Persiste NF-e em DuckDB: tabelas nfe_entradas, nfe_saidas (dataset
+    principal, sem os CFOPs de watchlist) e nfe_analise_et/nfe_analise_ep
+    (itens segregados por CFOP — preservados, não descartados).
     callback(etapa, n) chamado apos cada tabela. Retorna {tabela: n_linhas}."""
     _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
     resultado = {}
     try:
+        classificado = _classificar_itens_nfe()
         with duckdb.connect(str(_BANCO_PATH)) as con:
-            df_et, _ = _carregar_nfe("0", "ENTRADAS")
-            if not df_et.empty:
-                con.register("_df_et", df_et)
-                con.execute("CREATE OR REPLACE TABLE nfe_entradas AS SELECT * FROM _df_et")
-            resultado["nfe_entradas"] = len(df_et)
-            if callback:
-                callback("nfe_entradas", resultado["nfe_entradas"])
-
-            df_ep, _ = _carregar_nfe("1", "SAIDAS")
-            if not df_ep.empty:
-                con.register("_df_ep", df_ep)
-                con.execute("CREATE OR REPLACE TABLE nfe_saidas AS SELECT * FROM _df_ep")
-            resultado["nfe_saidas"] = len(df_ep)
-            if callback:
-                callback("nfe_saidas", resultado["nfe_saidas"])
+            for tabela, chave, nome_view in (
+                ("nfe_entradas",    "entradas",   "_df_nfe_entradas"),
+                ("nfe_saidas",      "saidas",     "_df_nfe_saidas"),
+                ("nfe_analise_et",  "analise_et", "_df_nfe_analise_et"),
+                ("nfe_analise_ep",  "analise_ep", "_df_nfe_analise_ep"),
+            ):
+                df = classificado[chave]
+                if not df.empty:
+                    con.register(nome_view, df)
+                    con.execute(f"CREATE OR REPLACE TABLE {tabela} AS SELECT * FROM {nome_view}")
+                resultado[tabela] = len(df)
+                if callback:
+                    callback(tabela, resultado[tabela])
     except Exception as exc:
         logger.exception("Erro ao persistir NF-e: %s", exc)
         resultado["erro"] = str(exc)

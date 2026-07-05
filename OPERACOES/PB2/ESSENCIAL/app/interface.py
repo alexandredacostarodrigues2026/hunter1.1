@@ -81,7 +81,7 @@ def _barra_progresso(titulo: str, n_passos: int, fn_persistir) -> bool:
 def render_carga_operacao() -> None:
     """Prévia + botão de carga: 3 barras de progresso independentes.
       1. XML pendentes  — classificação arquivo a arquivo
-      2. NF-e           — nfe_entradas + nfe_saidas no DuckDB
+      2. NF-e           — nfe_entradas + nfe_saidas + nfe_analise_et + nfe_analise_ep no DuckDB
       3. SPED           — sped_itens + sped_produtos + sped_unidades + sped_estoque no DuckDB
     Quando já carregado e sem pendentes, exibe "Carregar novamente"."""
     st.subheader("Carga de XML")
@@ -146,7 +146,7 @@ def render_carga_operacao() -> None:
         fase_sped = "**2. SPED (declaração)**"
 
     # ── Barra 2: NF-e ─────────────────────────────────────────────────────────
-    ok_nfe = _barra_progresso(fase_nfe, n_passos=2, fn_persistir=loader.persistir_nfe)
+    ok_nfe = _barra_progresso(fase_nfe, n_passos=4, fn_persistir=loader.persistir_nfe)
 
     # ── Barra 3: SPED ─────────────────────────────────────────────────────────
     ok_sped = _barra_progresso(fase_sped, n_passos=4, fn_persistir=loader.persistir_sped)
