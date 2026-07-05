@@ -171,7 +171,7 @@ def render_entradas_terceiros() -> None:
     (0200) e de unidade de medida (0190). Se já foram geradas antes (mesma
     lógica de dados_ja_carregados), mostra direto o resultado persistido —
     não reprocessa a cada reabertura do front."""
-    st.subheader("Chaves de entrada de emissão de terceiros")
+    st.subheader("Chaves de entrada de emissão de terceiros (base comparativa1)")
     st.caption(
         "C100 (IND_OPER=0 + IND_EMIT=1) + C170, enriquecido com 0200 (produto) e 0190 (unidade)."
     )
