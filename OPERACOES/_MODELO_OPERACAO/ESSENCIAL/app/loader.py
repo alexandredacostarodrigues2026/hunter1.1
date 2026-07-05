@@ -60,9 +60,11 @@ _REG_VALIDO = re.compile(r"^[0-9A-Z]{4}$")
 # ── Regras de negócio de filtragem NF-e/SPED (Regra Operacional R07) ─────────
 # CFOP que não representam operação de compra/venda a ser cruzada (baixa de
 # estoque / operação já registrada em ECF) — a chave de acesso inteira é
-# descartada (todos os itens), não só a linha do item com aquele CFOP.
-_CFOP_EXCLUIDOS_ET = {"5927", "5929"}   # Emissão de Terceiros
-_CFOP_EXCLUIDOS_EP = {"5929", "6929"}   # Emissão Própria (6929 = equivalente interestadual)
+# descartada (todos os itens), não só a linha do item com aquele CFOP. Regra
+# única (ET e EP), conforme "regra de negócios unificadas/CNPJ EMIT = CNPJ
+# DEST.txt": "permitir tudo e retirar somente cfops de baixa de estoque
+# 5927 e 6927".
+_CFOP_EXCLUIDOS_NFE = {"5927", "6927"}
 
 # Situação da NF-e (fatonfe_informix_stnfeletronica): só documentos válidos
 # (A=Autorizada, O=demais situações regulares) — descarta canceladas (C),
@@ -176,13 +178,10 @@ def _carregar_nfe(tpnf_desejado: str, origem_dados: str) -> "tuple[pd.DataFrame,
             df = df[df["fatonfe_infnfe_ide_tpnf"].astype(str).str.strip() == tpnf_desejado].copy()
 
             # Regra Operacional R07: só situação válida (A/O) e descarta
-            # chaves com CFOP de baixa de estoque/ECF — conjunto de CFOP
-            # depende da pasta de origem (ET=Emissão de Terceiros,
-            # EP=Emissão Própria).
+            # chaves com CFOP de baixa de estoque/ECF (5927/6927, mesma
+            # regra para ET e EP).
             df = _filtrar_situacao_nfe(df)
-            pasta_origem = arquivo.parent.name.upper()
-            cfops_excluidos = _CFOP_EXCLUIDOS_EP if pasta_origem == "EP" else _CFOP_EXCLUIDOS_ET
-            df = _excluir_chaves_por_cfop(df, _COL_CHAVE_NFE, _COL_CFOP_NFE, cfops_excluidos)
+            df = _excluir_chaves_por_cfop(df, _COL_CHAVE_NFE, _COL_CFOP_NFE, _CFOP_EXCLUIDOS_NFE)
             if df.empty:
                 continue
 
@@ -206,6 +205,9 @@ def _carregar_nfe(tpnf_desejado: str, origem_dados: str) -> "tuple[pd.DataFrame,
     else:
         combined["PRODUTO_RAW"]         = ""
         combined["PRODUTO_NORMALIZADO"] = ""
+
+    combined = _forcar_colunas_string(combined, [_COL_CHAVE_NFE, "fatoitemnfe_infnfe_det_nitem"])
+    combined = _gerar_id_unico(combined, [_COL_CHAVE_NFE, "fatoitemnfe_infnfe_det_nitem"])
 
     meta["total_linhas"]  = len(combined)
     meta["total_colunas"] = len(combined.columns)
@@ -318,6 +320,26 @@ def _forcar_colunas_string(df: pd.DataFrame, colunas: "list[str]") -> pd.DataFra
     return df
 
 
+def _gerar_id_unico(df: pd.DataFrame, colunas: "list[str]", nome_coluna: str = "ID_UNICO") -> pd.DataFrame:
+    """Cria uma coluna de ID único sintético — hash MD5 determinístico das
+    chaves naturais informadas (ex.: CHV_NFE + NUM_ITEM). Determinístico (não
+    UUID aleatório) de propósito: precisa ficar estável entre cargas, já que
+    persistir_nfe/persistir_sped substituem a tabela inteira a cada carga
+    (CREATE OR REPLACE) — um UUID aleatório mudaria a cada recarga e quebraria
+    qualquer referência externa a essas linhas."""
+    df = df.copy()
+    if df.empty:
+        df[nome_coluna] = pd.Series(dtype=str)
+        return df
+    faltantes = [c for c in colunas if c not in df.columns]
+    if faltantes:
+        df[nome_coluna] = ""
+        return df
+    chave_concat = df[colunas].astype(str).agg("|".join, axis=1)
+    df[nome_coluna] = chave_concat.apply(lambda s: hashlib.md5(s.encode("utf-8")).hexdigest())
+    return df
+
+
 def _parse_itens_c170_com_c100(arquivos: list) -> pd.DataFrame:
     """Percorre C100/C170 sequencialmente — cada C170 herda dados do C100 mais recente."""
     linhas = []
@@ -344,7 +366,8 @@ def _parse_itens_c170_com_c100(arquivos: list) -> pd.DataFrame:
                 linha["ARQUIVO_ORIGEM"] = arquivo.name
                 linhas.append(linha)
     df = pd.DataFrame(linhas)
-    return _forcar_colunas_string(df, ["COD_ITEM", "UNID", "CHV_NFE", "NUM_ITEM"])
+    df = _forcar_colunas_string(df, ["COD_ITEM", "UNID", "CHV_NFE", "NUM_ITEM"])
+    return _gerar_id_unico(df, ["CHV_NFE", "NUM_ITEM"])
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
