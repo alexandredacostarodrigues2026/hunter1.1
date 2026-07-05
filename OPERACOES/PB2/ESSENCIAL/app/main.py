@@ -41,6 +41,8 @@ def main() -> None:
         interface.render_entidade_auditada()
         st.divider()
         interface.render_entradas_terceiros()
+        st.divider()
+        interface.render_painel_analise()
 
 
 if __name__ == "__main__":

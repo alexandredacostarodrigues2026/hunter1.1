@@ -803,16 +803,19 @@ def persistir_nfe(callback=None) -> dict:
     try:
         classificado = _classificar_itens_nfe()
         with duckdb.connect(str(_BANCO_PATH)) as con:
-            for tabela, chave, nome_view in (
-                ("nfe_entradas",    "entradas",   "_df_nfe_entradas"),
-                ("nfe_saidas",      "saidas",     "_df_nfe_saidas"),
-                ("nfe_analise_et",  "analise_et", "_df_nfe_analise_et"),
-                ("nfe_analise_ep",  "analise_ep", "_df_nfe_analise_ep"),
+            for tabela, chave, nome_view, sempre_criar in (
+                ("nfe_entradas",    "entradas",   "_df_nfe_entradas",   False),
+                ("nfe_saidas",      "saidas",     "_df_nfe_saidas",     False),
+                # tabelas de análise são sempre criadas (mesmo vazias) para
+                # que analise_ja_gerada() consiga rastrear que a carga rodou.
+                ("nfe_analise_et",  "analise_et", "_df_nfe_analise_et", True),
+                ("nfe_analise_ep",  "analise_ep", "_df_nfe_analise_ep", True),
             ):
                 df = classificado[chave]
-                if not df.empty:
+                if not df.empty or sempre_criar:
                     con.register(nome_view, df)
                     con.execute(f"CREATE OR REPLACE TABLE {tabela} AS SELECT * FROM {nome_view}")
+                    con.unregister(nome_view)
                 resultado[tabela] = len(df)
                 if callback:
                     callback(tabela, resultado[tabela])
@@ -921,6 +924,110 @@ def gerar_entradas_terceiros() -> "tuple[pd.DataFrame, dict]":
         meta = dict(meta)
         meta["erros"] = list(meta.get("erros", [])) + [str(exc)]
     return df, meta
+
+
+# ── Painel de monitoramento — CFOPs segregados (nfe_analise_et/ep) ──────────
+
+_DICIONARIO_CAMPOS_PATH = _OPERACAO_DIR.parent.parent / "DICIONARIO DE CAMPOS.txt"
+
+
+def carregar_dicionario_campos() -> dict:
+    """Lê DICIONARIO DE CAMPOS.txt (campo_tecnico;nome_amigavel) da raiz do
+    projeto — usado para renomear colunas técnicas (fatonfe_.../
+    fatoitemnfe_...) para nomes amigáveis na exibição. Devolve {} se o
+    arquivo não existir (portabilidade — não é obrigatório para a app rodar)."""
+    if not _DICIONARIO_CAMPOS_PATH.exists():
+        return {}
+    dicionario: dict = {}
+    try:
+        with open(_DICIONARIO_CAMPOS_PATH, encoding="utf-8") as f:
+            for linha in f:
+                linha = linha.strip()
+                if not linha or linha.startswith("#") or ";" not in linha:
+                    continue
+                campo, _, amigavel = linha.partition(";")
+                if campo.strip() == "campo_tecnico":
+                    continue
+                dicionario[campo.strip()] = amigavel.strip()
+    except Exception:
+        logger.exception("Erro ao ler dicionário de campos em %s", _DICIONARIO_CAMPOS_PATH)
+        return {}
+    return dicionario
+
+
+def analise_ja_gerada() -> bool:
+    """True se nfe_analise_et E nfe_analise_ep já existem persistidas no
+    DuckDB da operação (mesma lógica de dados_ja_carregados/
+    entradas_terceiros_ja_geradas) — permanecem mesmo vazias (0 linhas),
+    já que persistir_nfe()/gerar_dados_analise() sempre as criam."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            return "nfe_analise_et" in tabelas and "nfe_analise_ep" in tabelas
+    except Exception:
+        logger.exception("Erro ao verificar tabelas de análise existentes em %s", _BANCO_PATH)
+        return False
+
+
+def consultar_totais_analise() -> dict:
+    """Retorna {'nfe_analise_et': n, 'nfe_analise_ep': n} lendo direto do
+    DuckDB (sem reprocessar) — alimenta os KPIs do painel de análise."""
+    totais = {"nfe_analise_et": 0, "nfe_analise_ep": 0}
+    if not _BANCO_PATH.exists():
+        return totais
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            for tabela in totais:
+                if tabela in tabelas:
+                    totais[tabela] = con.execute(f"SELECT COUNT(*) FROM {tabela}").fetchone()[0]
+    except Exception:
+        logger.exception("Erro ao consultar totais de análise em %s", _BANCO_PATH)
+    return totais
+
+
+def consultar_chaves_analise(fluxo: str = "ET", limite: int = 100) -> "tuple[pd.DataFrame, int]":
+    """Lê nfe_analise_et/nfe_analise_ep já persistida (sem reprocessar XML),
+    devolvendo uma amostra (até 'limite' linhas) e o total real de linhas."""
+    tabela = "nfe_analise_et" if fluxo.upper() == "ET" else "nfe_analise_ep"
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if tabela not in tabelas:
+                return pd.DataFrame(), 0
+            total = con.execute(f"SELECT COUNT(*) FROM {tabela}").fetchone()[0]
+            df = con.execute(f"SELECT * FROM {tabela} LIMIT {limite}").df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar %s em %s", tabela, _BANCO_PATH)
+        return pd.DataFrame(), 0
+
+
+def gerar_dados_analise() -> dict:
+    """Gera (via _classificar_itens_nfe, cacheada) e persiste isoladamente as
+    tabelas nfe_analise_et e nfe_analise_ep — ação sob demanda (botão
+    dedicado), sem reprocessar nfe_entradas/nfe_saidas nem o SPED. Sempre
+    cria as duas tabelas (mesmo vazias) para que analise_ja_gerada() rastreie
+    corretamente que a geração já rodou."""
+    classificado = _classificar_itens_nfe()
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    resultado = {}
+    try:
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            for tabela, chave in (("nfe_analise_et", "analise_et"), ("nfe_analise_ep", "analise_ep")):
+                df = classificado[chave]
+                con.register("_df_tmp_analise", df)
+                con.execute(f"CREATE OR REPLACE TABLE {tabela} AS SELECT * FROM _df_tmp_analise")
+                con.unregister("_df_tmp_analise")
+                resultado[tabela] = len(df)
+    except Exception as exc:
+        logger.exception("Erro ao persistir tabelas de análise: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
 
 
 def persistir_banco(callback=None) -> dict:

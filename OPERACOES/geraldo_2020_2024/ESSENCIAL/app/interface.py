@@ -7,6 +7,7 @@ _APP_DIR = Path(__file__).parent
 if str(_APP_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_DIR))
 
+import pandas as pd
 import streamlit as st
 
 import loader
@@ -208,4 +209,77 @@ def render_entradas_terceiros() -> None:
         return
 
     st.session_state["entradas_terceiros_geradas"] = True
+    st.rerun()
+
+
+_COLUNAS_PREVIEW_ANALISE = [
+    "PASTA_ORIGEM", "ARQUIVO_ORIGEM",
+    "fatonfe_infprot_chnfe", "fatoitemnfe_infnfe_det_nitem",
+    "fatoitemnfe_infnfe_det_prod_cfop", "fatoitemnfe_infnfe_det_prod_xprod",
+    "fatoitemnfe_infnfe_det_prod_qcom", "fatoitemnfe_infnfe_det_prod_vuncom",
+    "fatoitemnfe_infnfe_det_prod_vprod", "ID_UNICO",
+]
+
+
+def _preparar_preview_analise(df: pd.DataFrame) -> pd.DataFrame:
+    """Seleciona as colunas relevantes e as renomeia para os nomes amigáveis
+    do DICIONARIO DE CAMPOS.txt antes de exibir."""
+    colunas = [c for c in _COLUNAS_PREVIEW_ANALISE if c in df.columns]
+    return df[colunas].rename(columns=loader.carregar_dicionario_campos())
+
+
+def render_painel_analise() -> None:
+    """Painel de monitoramento das chaves segregadas por CFOP de watchlist
+    (nfe_analise_et/nfe_analise_ep) — KPIs + botão de geração sob demanda +
+    expander com prévia. Exibido só após a carga geral (dados_carregados)."""
+    st.subheader("Análise de CFOPs segregados")
+    st.caption(
+        "Itens desviados por CFOP de watchlist (faturamento futuro, venda à ordem, "
+        "baixa de estoque/ECF) — preservados aqui, fora do cruzamento principal (Etapa 1)."
+    )
+
+    if "analise_cfop_gerada" not in st.session_state:
+        st.session_state["analise_cfop_gerada"] = loader.analise_ja_gerada()
+
+    if st.session_state["analise_cfop_gerada"]:
+        totais = loader.consultar_totais_analise()
+        col1, col2 = st.columns(2)
+        col1.metric("Qtd Itens ET (Análise)", f"{totais['nfe_analise_et']:,}".replace(",", "."))
+        col2.metric("Qtd Itens EP (Análise)", f"{totais['nfe_analise_ep']:,}".replace(",", "."))
+        st.success("✅ Dados de análise prontos.")
+
+        with st.expander("Visualizar chaves segregadas para análise"):
+            df_et, total_et = loader.consultar_chaves_analise("ET")
+            st.markdown(f"**Emissão de Terceiros (ET)** — {total_et:,} registro(s)".replace(",", "."))
+            if df_et.empty:
+                st.info("Nenhum registro para análise física/simbólica em ET.")
+            else:
+                st.dataframe(_preparar_preview_analise(df_et), use_container_width=True)
+
+            df_ep, total_ep = loader.consultar_chaves_analise("EP")
+            st.markdown(f"**Emissão Própria (EP)** — {total_ep:,} registro(s)".replace(",", "."))
+            if df_ep.empty:
+                st.info("Nenhum registro para análise física/simbólica em EP.")
+            else:
+                st.dataframe(_preparar_preview_analise(df_ep), use_container_width=True)
+
+        clicou = st.button(
+            "Regerar Análise",
+            key="btn_regerar_analise_cfop",
+            help="Reprocessa e substitui nfe_analise_et/nfe_analise_ep.",
+        )
+    else:
+        clicou = st.button("Gerar Dados para Análise de CFOPs", key="btn_gerar_analise_cfop")
+
+    if not clicou:
+        return
+
+    with st.spinner("Gerando dados de análise de CFOPs..."):
+        resultado = loader.gerar_dados_analise()
+
+    if "erro" in resultado:
+        st.error(f"Erro: {resultado['erro']}")
+        return
+
+    st.session_state["analise_cfop_gerada"] = True
     st.rerun()
