@@ -156,20 +156,44 @@ def render_carga_operacao() -> None:
         st.rerun()
 
 
+_COLUNAS_PREVIEW_ENTRADAS_TERCEIROS = [
+    "COMPETENCIA", "ARQUIVO_ORIGEM", "CHV_NFE", "NUM_DOC", "DT_DOC",
+    "NUM_ITEM", "COD_ITEM", "DESCR_ITEM", "COD_NCM", "COD_BARRA",
+    "UNID", "DESCR_UNID", "QTD", "VL_ITEM",
+]
+
+
 def render_entradas_terceiros() -> None:
     """Botão dedicado (exibido só após a carga): gera e persiste as chaves de
     entrada de emissão de terceiros — C100 com IND_OPER=0 (entrada) e
     IND_EMIT=1 (emitido por terceiros), enriquecido com o cadastro de produto
-    (0200) e de unidade de medida (0190). Mostra contagem + prévia da tabela."""
+    (0200) e de unidade de medida (0190). Se já foram geradas antes (mesma
+    lógica de dados_ja_carregados), mostra direto o resultado persistido —
+    não reprocessa a cada reabertura do front."""
     st.subheader("Chaves de entrada de emissão de terceiros")
     st.caption(
         "C100 (IND_OPER=0 + IND_EMIT=1) + C170, enriquecido com 0200 (produto) e 0190 (unidade)."
     )
 
-    clicou = st.button(
-        "Gerar chaves de entrada de emissão de terceiros",
-        key="btn_gerar_entradas_terceiros",
-    )
+    if "entradas_terceiros_geradas" not in st.session_state:
+        st.session_state["entradas_terceiros_geradas"] = loader.entradas_terceiros_ja_geradas()
+
+    if st.session_state["entradas_terceiros_geradas"]:
+        df_preview, total = loader.consultar_entradas_terceiros()
+        st.success(f"✅ {total:,} registro(s) em `sped_entradas_terceiros`.".replace(",", "."))
+        colunas = [c for c in _COLUNAS_PREVIEW_ENTRADAS_TERCEIROS if c in df_preview.columns]
+        st.dataframe(df_preview[colunas], use_container_width=True)
+        clicou = st.button(
+            "Gerar novamente",
+            key="btn_regerar_entradas_terceiros",
+            help="Reprocessa e substitui a tabela sped_entradas_terceiros.",
+        )
+    else:
+        clicou = st.button(
+            "Gerar chaves de entrada de emissão de terceiros",
+            key="btn_gerar_entradas_terceiros",
+        )
+
     if not clicou:
         return
 
@@ -183,12 +207,5 @@ def render_entradas_terceiros() -> None:
         st.warning("Nenhum registro C100/C170 com IND_OPER=0 e IND_EMIT=1 encontrado.")
         return
 
-    st.success(
-        f"✅ {len(df):,} registro(s) gerado(s) e salvos em `sped_entradas_terceiros`.".replace(",", ".")
-    )
-    colunas_preview = [c for c in [
-        "COMPETENCIA", "ARQUIVO_ORIGEM", "CHV_NFE", "NUM_DOC", "DT_DOC",
-        "NUM_ITEM", "COD_ITEM", "DESCR_ITEM", "COD_NCM", "COD_BARRA",
-        "UNID", "DESCR_UNID", "QTD", "VL_ITEM",
-    ] if c in df.columns]
-    st.dataframe(df[colunas_preview].head(200), use_container_width=True)
+    st.session_state["entradas_terceiros_geradas"] = True
+    st.rerun()

@@ -755,6 +755,39 @@ def persistir_sped(callback=None) -> dict:
     return resultado
 
 
+def entradas_terceiros_ja_geradas() -> bool:
+    """True se sped_entradas_terceiros já existe persistida (com linhas) no
+    DuckDB da operação — mesma lógica de dados_ja_carregados(), para não
+    reprocessar sempre que o front é reaberto."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "sped_entradas_terceiros" not in tabelas:
+                return False
+            return con.execute("SELECT COUNT(*) FROM sped_entradas_terceiros").fetchone()[0] > 0
+    except Exception:
+        logger.exception("Erro ao verificar sped_entradas_terceiros existente em %s", _BANCO_PATH)
+        return False
+
+
+def consultar_entradas_terceiros(limite: int = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê a tabela sped_entradas_terceiros já persistida (sem reprocessar
+    XML/SPED), devolvendo uma amostra (até 'limite' linhas) e o total real de
+    linhas da tabela — usado para exibir a prévia sem regerar o dataset."""
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            total = con.execute("SELECT COUNT(*) FROM sped_entradas_terceiros").fetchone()[0]
+            df = con.execute(f"SELECT * FROM sped_entradas_terceiros LIMIT {limite}").df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar sped_entradas_terceiros em %s", _BANCO_PATH)
+        return pd.DataFrame(), 0
+
+
 def gerar_entradas_terceiros() -> "tuple[pd.DataFrame, dict]":
     """Gera (load_declaracao_entradas_terceiros) e persiste isoladamente a
     tabela sped_entradas_terceiros — ação sob demanda (botão dedicado da
