@@ -57,6 +57,43 @@ _CANDIDATOS_PROD = [
 
 _REG_VALIDO = re.compile(r"^[0-9A-Z]{4}$")
 
+# ── Regras de negócio de filtragem NF-e/SPED (Regra Operacional R07) ─────────
+# CFOP que não representam operação de compra/venda a ser cruzada (baixa de
+# estoque / operação já registrada em ECF) — a chave de acesso inteira é
+# descartada (todos os itens), não só a linha do item com aquele CFOP.
+_CFOP_EXCLUIDOS_ET = {"5927", "5929"}   # Emissão de Terceiros
+_CFOP_EXCLUIDOS_EP = {"5929", "6929"}   # Emissão Própria (6929 = equivalente interestadual)
+
+# Situação da NF-e (fatonfe_informix_stnfeletronica): só documentos válidos
+# (A=Autorizada, O=demais situações regulares) — descarta canceladas (C),
+# denegadas, inutilizadas etc.
+_SITUACOES_NFE_VALIDAS = {"A", "O"}
+
+_COL_SITUACAO_NFE = "fatonfe_informix_stnfeletronica"
+_COL_CFOP_NFE     = "fatoitemnfe_infnfe_det_prod_cfop"
+_COL_CHAVE_NFE    = "fatonfe_infprot_chnfe"
+
+
+def _filtrar_situacao_nfe(df: pd.DataFrame, col_situacao: str = _COL_SITUACAO_NFE) -> pd.DataFrame:
+    """Mantém só documentos com situação válida (A/O) — descarta canceladas,
+    denegadas, inutilizadas etc. antes da gravação no DuckDB."""
+    if df.empty or col_situacao not in df.columns:
+        return df
+    return df[df[col_situacao].astype(str).str.strip().isin(_SITUACOES_NFE_VALIDAS)]
+
+
+def _excluir_chaves_por_cfop(df: pd.DataFrame, col_chave: str, col_cfop: str, cfops_excluidos: set) -> pd.DataFrame:
+    """Descarta TODOS os itens da chave de acesso que contenha, em qualquer
+    item, um dos CFOPs informados — não apenas a linha do item com aquele
+    CFOP. CFOP de baixa de estoque/ECF não representa operação de compra/
+    venda a ser cruzada (Regra Operacional R07)."""
+    if df.empty or col_cfop not in df.columns or col_chave not in df.columns:
+        return df
+    chaves_ruins = set(df.loc[df[col_cfop].astype(str).str.strip().isin(cfops_excluidos), col_chave])
+    if not chaves_ruins:
+        return df
+    return df[~df[col_chave].isin(chaves_ruins)]
+
 
 def load_config() -> dict:
     with open(CONFIG_PATH, encoding="utf-8") as f:
@@ -137,6 +174,18 @@ def _carregar_nfe(tpnf_desejado: str, origem_dados: str) -> "tuple[pd.DataFrame,
                 meta["erros"].append(f"Arquivo sem coluna tpnf ou vazio: {arquivo.name}")
                 continue
             df = df[df["fatonfe_infnfe_ide_tpnf"].astype(str).str.strip() == tpnf_desejado].copy()
+
+            # Regra Operacional R07: só situação válida (A/O) e descarta
+            # chaves com CFOP de baixa de estoque/ECF — conjunto de CFOP
+            # depende da pasta de origem (ET=Emissão de Terceiros,
+            # EP=Emissão Própria).
+            df = _filtrar_situacao_nfe(df)
+            pasta_origem = arquivo.parent.name.upper()
+            cfops_excluidos = _CFOP_EXCLUIDOS_EP if pasta_origem == "EP" else _CFOP_EXCLUIDOS_ET
+            df = _excluir_chaves_por_cfop(df, _COL_CHAVE_NFE, _COL_CFOP_NFE, cfops_excluidos)
+            if df.empty:
+                continue
+
             df["ARQUIVO_ORIGEM"] = arquivo.name
             partes.append(df)
         except Exception as exc:
@@ -416,8 +465,10 @@ def _enriquecer_itens_com_cadastro(
 def load_declaracao_entradas_terceiros() -> "tuple[pd.DataFrame, dict]":
     """Chaves de entrada de emissão de terceiros: C100 com IND_OPER=0 (entrada)
     e IND_EMIT=1 (emitido por terceiros) + itens C170, enriquecidos com o
-    cadastro de produto (0200) e de unidade de medida (0190).
-    COD_ITEM, UNID e CHV_NFE tratados como string (Regra Operacional R07)."""
+    cadastro de produto (0200) e de unidade de medida (0190). Descarta
+    chaves com CFOP de baixa de estoque/ECF (5927/5929 — conjunto de
+    Emissão de Terceiros, já que IND_EMIT=1). COD_ITEM, UNID e CHV_NFE
+    tratados como string (Regra Operacional R07)."""
     df_itens, meta_itens = load_declaracao_itens()
     if df_itens.empty:
         meta_itens["origem_dados"] = "DECLARACAO_ENTRADAS_TERCEIROS"
@@ -427,6 +478,7 @@ def load_declaracao_entradas_terceiros() -> "tuple[pd.DataFrame, dict]":
         (df_itens["IND_OPER"].astype(str).str.strip() == "0")
         & (df_itens["IND_EMIT"].astype(str).str.strip() == "1")
     ].copy()
+    df = _excluir_chaves_por_cfop(df, "CHV_NFE", "CFOP", _CFOP_EXCLUIDOS_ET)
 
     df_produtos, _  = load_declaracao_produtos()
     df_unidades, _  = load_declaracao_unidades()
