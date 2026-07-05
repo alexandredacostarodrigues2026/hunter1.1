@@ -147,7 +147,7 @@ def render_carga_operacao() -> None:
         fase_sped = "**2. SPED (declaração)**"
 
     # ── Barra 2: NF-e ─────────────────────────────────────────────────────────
-    ok_nfe = _barra_progresso(fase_nfe, n_passos=6, fn_persistir=loader.persistir_nfe)
+    ok_nfe = _barra_progresso(fase_nfe, n_passos=7, fn_persistir=loader.persistir_nfe)
 
     # ── Barra 3: SPED ─────────────────────────────────────────────────────────
     ok_sped = _barra_progresso(fase_sped, n_passos=4, fn_persistir=loader.persistir_sped)

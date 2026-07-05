@@ -279,6 +279,62 @@ def load_analise_ep() -> "tuple[pd.DataFrame, dict]":
     return r["analise_ep"], _meta_nfe(r["analise_ep"], "ANALISE_EP", r["erros"], r["arquivos"])
 
 
+# ── Base Comparativa 2 (BC2) — itens de NF-e de Emissão de Terceiros ────────
+# Estruturação do lado XML para cruzamento com a declaração (BC1 = lado SPED,
+# ver load_declaracao_entradas_terceiros()). Colunas renomeadas para o mesmo
+# padrão de nomes curtos da BC1 (CHV_NFE, COD_ITEM, NUM_ITEM, UNID, QTD,
+# VL_ITEM, COD_NCM, COD_BARRA), para que a Etapa 1 (Matching) compare os dois
+# lados pela mesma chave sem precisar conhecer dois esquemas de nome
+# diferentes.
+_BC2_RENOMEAR_COLUNAS = {
+    _COL_CHAVE_NFE:                             "CHV_NFE",
+    _COL_NUM_ITEM_NFE:                          "NUM_ITEM",
+    "fatoitemnfe_infnfe_det_prod_cean":         "COD_BARRA",
+    "fatoitemnfe_infnfe_det_prod_cprod":        "COD_ITEM",
+    "fatoitemnfe_infnfe_det_prod_ncm":          "COD_NCM",
+    "fatoitemnfe_infnfe_det_prod_ucom":         "UNID",
+    "fatoitemnfe_infnfe_det_prod_qcom":         "QTD",
+    "fatoitemnfe_infnfe_det_prod_vuncom":       "_VALOR_UNIT_ORIGINAL",
+    "fatoitemnfe_infnfe_det_prod_vprod":        "VL_ITEM",
+}
+_BC2_COLUNAS_FINAIS = [
+    "CHV_NFE", "fatonfe_infnfe_emit_cnpj", "NUM_ITEM",
+    "fatoitemnfe_infnfe_det_prod_xprod", "COD_BARRA", "COD_ITEM", "COD_NCM",
+    "UNID", "QTD", "_VALOR_UNIT_ORIGINAL", "VL_ITEM",
+    "ID_UNICO", "PASTA_ORIGEM", "ARQUIVO_ORIGEM",
+]
+
+
+def montar_bc2() -> "tuple[pd.DataFrame, dict]":
+    """Monta a Base Comparativa 2 (BC2): itens de NF-e de Emissão de
+    Terceiros (ET) — origem ET, situação válida (A/O — inválidas já foram
+    para nfe_situacao_et em _classificar_itens_nfe()) e CFOP fora da
+    watchlist de ET (5929 permanece no fluxo principal da BC2, só 5927/6927
+    e a watchlist global são segregados para nfe_analise_et). Reaproveita os
+    buckets 'entradas'+'saidas' já classificados (união = toda situação
+    válida com CFOP fora da watchlist, independente do tpnf) e filtra só
+    PASTA_ORIGEM=='ET'."""
+    r = _classificar_itens_nfe()
+    if r["entradas"].empty and r["saidas"].empty:
+        meta = {"origem_dados": "BC2", "erros": r["erros"], "arquivos": r["arquivos"], "total_linhas": 0}
+        return pd.DataFrame(), meta
+
+    principal = pd.concat([r["entradas"], r["saidas"]], ignore_index=True)
+    df = principal[principal["PASTA_ORIGEM"] == "ET"].copy()
+    df = df.rename(columns=_BC2_RENOMEAR_COLUNAS)
+
+    colunas = [c for c in _BC2_COLUNAS_FINAIS if c in df.columns]
+    df = df[colunas]
+    df = _forcar_colunas_string(df, ["CHV_NFE", "COD_ITEM", "NUM_ITEM"])
+
+    meta = {
+        "origem_dados": "BC2",
+        "total_linhas": len(df), "total_colunas": len(df.columns), "colunas": df.columns.tolist(),
+        "erros": r["erros"], "arquivos": r["arquivos"],
+    }
+    return df, meta
+
+
 # ── Lado DECLARAÇÃO — SPED/EFD (2-DECLARACAO/SPED/*.txt) ─────────────────────
 
 _CAMPOS_0200 = [
@@ -806,9 +862,11 @@ def dados_ja_carregados() -> bool:
 def persistir_nfe(callback=None) -> dict:
     """Persiste NF-e em DuckDB: tabelas nfe_entradas/nfe_saidas (dataset
     principal — situação válida e CFOP fora da watchlist), nfe_analise_et/
-    nfe_analise_ep (situação válida mas CFOP de watchlist) e
+    nfe_analise_ep (situação válida mas CFOP de watchlist),
     nfe_situacao_et/nfe_situacao_ep (situação inválida — canceladas,
-    denegadas, inutilizadas). callback(etapa, n) chamado apos cada tabela.
+    denegadas, inutilizadas) e nfe_bc2 (Base Comparativa 2 — itens de
+    Emissão de Terceiros já com nomes de coluna normalizados para cruzar
+    com a BC1/SPED). callback(etapa, n) chamado apos cada tabela.
     Retorna {tabela: n_linhas}."""
     _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
     resultado = {}
@@ -834,6 +892,15 @@ def persistir_nfe(callback=None) -> dict:
                 resultado[tabela] = len(df)
                 if callback:
                     callback(tabela, resultado[tabela])
+
+            df_bc2, _ = montar_bc2()
+            if not df_bc2.empty:
+                con.register("_df_nfe_bc2", df_bc2)
+                con.execute("CREATE OR REPLACE TABLE nfe_bc2 AS SELECT * FROM _df_nfe_bc2")
+                con.unregister("_df_nfe_bc2")
+            resultado["nfe_bc2"] = len(df_bc2)
+            if callback:
+                callback("nfe_bc2", resultado["nfe_bc2"])
     except Exception as exc:
         logger.exception("Erro ao persistir NF-e: %s", exc)
         resultado["erro"] = str(exc)
