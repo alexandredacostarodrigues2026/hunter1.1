@@ -25,6 +25,12 @@ st.set_page_config(
 
 
 def main() -> None:
+    if "dados_carregados" not in st.session_state:
+        # Reabertura do front (nova sessão/navegador ou reinício do servidor):
+        # verifica no DuckDB se já existe carga persistida, em vez de assumir
+        # False e obrigar uma nova carga toda vez.
+        st.session_state["dados_carregados"] = loader.dados_ja_carregados()
+
     st.title("Equalizador de Produtos")
     st.subheader(f"Operação ativa: {loader.nome_operacao()}")
     st.divider()

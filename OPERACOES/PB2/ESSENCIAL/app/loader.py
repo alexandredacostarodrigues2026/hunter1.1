@@ -653,6 +653,30 @@ def processar_arquivo_pendente(caminho: Path) -> dict:
     return resultado
 
 
+def dados_ja_carregados() -> bool:
+    """True se a operação já tem uma carga anterior persistida no DuckDB
+    (nfe_entradas/nfe_saidas + sped_itens, com linhas) — consulta o banco
+    direto, sem depender de st.session_state (que reseta a cada nova sessão/
+    reabertura do navegador). Usado para não exigir uma nova carga toda vez
+    que o front é aberto, quando os dados já estão persistidos."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            tem_nfe  = any(t in tabelas for t in ("nfe_entradas", "nfe_saidas"))
+            tem_sped = "sped_itens" in tabelas
+            if not (tem_nfe and tem_sped):
+                return False
+            for tabela in ("nfe_entradas", "nfe_saidas", "sped_itens"):
+                if tabela in tabelas and con.execute(f"SELECT COUNT(*) FROM {tabela}").fetchone()[0] > 0:
+                    return True
+            return False
+    except Exception:
+        logger.exception("Erro ao verificar carga existente em %s", _BANCO_PATH)
+        return False
+
+
 def persistir_nfe(callback=None) -> dict:
     """Persiste NF-e (ET/*.txt + EP/*.txt) em DuckDB: tabelas nfe_entradas e nfe_saidas.
     callback(etapa, n) chamado apos cada tabela. Retorna {tabela: n_linhas}."""
