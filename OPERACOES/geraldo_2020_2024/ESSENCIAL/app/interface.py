@@ -82,7 +82,7 @@ def render_carga_operacao() -> None:
     """Prévia + botão de carga: 3 barras de progresso independentes.
       1. XML pendentes  — classificação arquivo a arquivo
       2. NF-e           — nfe_entradas + nfe_saidas no DuckDB
-      3. SPED           — sped_itens + sped_produtos + sped_estoque no DuckDB
+      3. SPED           — sped_itens + sped_produtos + sped_unidades + sped_estoque no DuckDB
     Quando já carregado e sem pendentes, exibe "Carregar novamente"."""
     st.subheader("Carga de XML")
 
@@ -149,8 +149,46 @@ def render_carga_operacao() -> None:
     ok_nfe = _barra_progresso(fase_nfe, n_passos=2, fn_persistir=loader.persistir_nfe)
 
     # ── Barra 3: SPED ─────────────────────────────────────────────────────────
-    ok_sped = _barra_progresso(fase_sped, n_passos=3, fn_persistir=loader.persistir_sped)
+    ok_sped = _barra_progresso(fase_sped, n_passos=4, fn_persistir=loader.persistir_sped)
 
     if ok_nfe and ok_sped:
         st.session_state["dados_carregados"] = True
         st.rerun()
+
+
+def render_entradas_terceiros() -> None:
+    """Botão dedicado (exibido só após a carga): gera e persiste as chaves de
+    entrada de emissão de terceiros — C100 com IND_OPER=0 (entrada) e
+    IND_EMIT=1 (emitido por terceiros), enriquecido com o cadastro de produto
+    (0200) e de unidade de medida (0190). Mostra contagem + prévia da tabela."""
+    st.subheader("Chaves de entrada de emissão de terceiros")
+    st.caption(
+        "C100 (IND_OPER=0 + IND_EMIT=1) + C170, enriquecido com 0200 (produto) e 0190 (unidade)."
+    )
+
+    clicou = st.button(
+        "Gerar chaves de entrada de emissão de terceiros",
+        key="btn_gerar_entradas_terceiros",
+    )
+    if not clicou:
+        return
+
+    with st.spinner("Gerando chaves de entrada de emissão de terceiros..."):
+        df, meta = loader.gerar_entradas_terceiros()
+
+    if meta.get("erros"):
+        st.error("Erros: " + "; ".join(meta["erros"]))
+        return
+    if df.empty:
+        st.warning("Nenhum registro C100/C170 com IND_OPER=0 e IND_EMIT=1 encontrado.")
+        return
+
+    st.success(
+        f"✅ {len(df):,} registro(s) gerado(s) e salvos em `sped_entradas_terceiros`.".replace(",", ".")
+    )
+    colunas_preview = [c for c in [
+        "COMPETENCIA", "ARQUIVO_ORIGEM", "CHV_NFE", "NUM_DOC", "DT_DOC",
+        "NUM_ITEM", "COD_ITEM", "DESCR_ITEM", "COD_NCM", "COD_BARRA",
+        "UNID", "DESCR_UNID", "QTD", "VL_ITEM",
+    ] if c in df.columns]
+    st.dataframe(df[colunas_preview].head(200), use_container_width=True)

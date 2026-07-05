@@ -33,6 +33,8 @@ def main() -> None:
     if st.session_state.get("dados_carregados"):
         st.divider()
         interface.render_entidade_auditada()
+        st.divider()
+        interface.render_entradas_terceiros()
 
 
 if __name__ == "__main__":

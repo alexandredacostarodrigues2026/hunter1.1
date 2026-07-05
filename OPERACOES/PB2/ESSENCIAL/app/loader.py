@@ -683,9 +683,9 @@ def persistir_nfe(callback=None) -> dict:
 
 def persistir_sped(callback=None) -> dict:
     """Persiste SPED (C100+C170, 0200, 0190, H010) em DuckDB: tabelas sped_itens,
-    sped_produtos, sped_unidades, sped_estoque e sped_entradas_terceiros
-    (C100 IND_OPER=0 + IND_EMIT=1, já enriquecido com 0200/0190).
-    callback(etapa, n) chamado apos cada tabela."""
+    sped_produtos, sped_unidades e sped_estoque. callback(etapa, n) chamado apos
+    cada tabela. As chaves de entrada de emissão de terceiros (sped_entradas_
+    terceiros) são geradas à parte, sob demanda, por gerar_entradas_terceiros()."""
     config = load_config()
     _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
     resultado = {}
@@ -725,23 +725,28 @@ def persistir_sped(callback=None) -> dict:
             resultado["sped_estoque"] = len(df_sped_est)
             if callback:
                 callback("sped_estoque", resultado["sped_estoque"])
-
-            df_entradas_terceiros = df_sped_itens[
-                (df_sped_itens.get("IND_OPER", pd.Series(dtype=str)).astype(str).str.strip() == "0")
-                & (df_sped_itens.get("IND_EMIT", pd.Series(dtype=str)).astype(str).str.strip() == "1")
-            ].copy() if not df_sped_itens.empty else df_sped_itens
-            if not df_entradas_terceiros.empty:
-                df_entradas_terceiros = _enriquecer_itens_com_cadastro(df_entradas_terceiros, df_sped_prod, df_sped_unid)
-                df_entradas_terceiros = _forcar_colunas_string(df_entradas_terceiros, ["COD_ITEM", "UNID", "CHV_NFE"])
-                con.register("_df_entradas_terceiros", df_entradas_terceiros)
-                con.execute("CREATE OR REPLACE TABLE sped_entradas_terceiros AS SELECT * FROM _df_entradas_terceiros")
-            resultado["sped_entradas_terceiros"] = len(df_entradas_terceiros)
-            if callback:
-                callback("sped_entradas_terceiros", resultado["sped_entradas_terceiros"])
     except Exception as exc:
         logger.exception("Erro ao persistir SPED: %s", exc)
         resultado["erro"] = str(exc)
     return resultado
+
+
+def gerar_entradas_terceiros() -> "tuple[pd.DataFrame, dict]":
+    """Gera (load_declaracao_entradas_terceiros) e persiste isoladamente a
+    tabela sped_entradas_terceiros — ação sob demanda (botão dedicado da
+    interface), sem reprocessar NF-e nem as demais tabelas SPED."""
+    df, meta = load_declaracao_entradas_terceiros()
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            if not df.empty:
+                con.register("_df_entradas_terceiros", df)
+                con.execute("CREATE OR REPLACE TABLE sped_entradas_terceiros AS SELECT * FROM _df_entradas_terceiros")
+    except Exception as exc:
+        logger.exception("Erro ao persistir sped_entradas_terceiros: %s", exc)
+        meta = dict(meta)
+        meta["erros"] = list(meta.get("erros", [])) + [str(exc)]
+    return df, meta
 
 
 def persistir_banco(callback=None) -> dict:
