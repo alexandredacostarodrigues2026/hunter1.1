@@ -465,10 +465,10 @@ def _enriquecer_itens_com_cadastro(
 def load_declaracao_entradas_terceiros() -> "tuple[pd.DataFrame, dict]":
     """Chaves de entrada de emissão de terceiros: C100 com IND_OPER=0 (entrada)
     e IND_EMIT=1 (emitido por terceiros) + itens C170, enriquecidos com o
-    cadastro de produto (0200) e de unidade de medida (0190). Descarta
-    chaves com CFOP de baixa de estoque/ECF (5927/5929 — conjunto de
-    Emissão de Terceiros, já que IND_EMIT=1). COD_ITEM, UNID e CHV_NFE
-    tratados como string (Regra Operacional R07)."""
+    cadastro de produto (0200) e de unidade de medida (0190). Os filtros de
+    CFOP e situação (Regra Operacional R07) são exclusivos do lado XML
+    (_carregar_nfe) — não se aplicam à declaração (EFD/SPED). COD_ITEM,
+    UNID e CHV_NFE tratados como string."""
     df_itens, meta_itens = load_declaracao_itens()
     if df_itens.empty:
         meta_itens["origem_dados"] = "DECLARACAO_ENTRADAS_TERCEIROS"
@@ -478,7 +478,6 @@ def load_declaracao_entradas_terceiros() -> "tuple[pd.DataFrame, dict]":
         (df_itens["IND_OPER"].astype(str).str.strip() == "0")
         & (df_itens["IND_EMIT"].astype(str).str.strip() == "1")
     ].copy()
-    df = _excluir_chaves_por_cfop(df, "CHV_NFE", "CFOP", _CFOP_EXCLUIDOS_ET)
 
     df_produtos, _  = load_declaracao_produtos()
     df_unidades, _  = load_declaracao_unidades()
