@@ -72,22 +72,16 @@ _CFOP_WATCHLIST_EP = {"5929", "6929"}   # Emissão Própria — lançamentos ECF
 # nfe_saidas normalmente) — não está na watchlist global nem na de ET.
 
 # Situação da NF-e (fatonfe_informix_stnfeletronica): só documentos válidos
-# (A=Autorizada, O=demais situações regulares) — descarta canceladas (C),
-# denegadas, inutilizadas etc.
+# (A=Autorizada, O=demais situações regulares) seguem para o fluxo principal
+# ou para a conferência de CFOP — canceladas (C), denegadas, inutilizadas
+# etc. são segregadas (não descartadas) em nfe_situacao_et/nfe_situacao_ep,
+# ver _classificar_itens_nfe().
 _SITUACOES_NFE_VALIDAS = {"A", "O"}
 
 _COL_SITUACAO_NFE = "fatonfe_informix_stnfeletronica"
 _COL_CFOP_NFE     = "fatoitemnfe_infnfe_det_prod_cfop"
 _COL_CHAVE_NFE    = "fatonfe_infprot_chnfe"
 _COL_NUM_ITEM_NFE = "fatoitemnfe_infnfe_det_nitem"
-
-
-def _filtrar_situacao_nfe(df: pd.DataFrame, col_situacao: str = _COL_SITUACAO_NFE) -> pd.DataFrame:
-    """Mantém só documentos com situação válida (A/O) — descarta canceladas,
-    denegadas, inutilizadas etc. antes da gravação no DuckDB."""
-    if df.empty or col_situacao not in df.columns:
-        return df
-    return df[df[col_situacao].astype(str).str.strip().isin(_SITUACOES_NFE_VALIDAS)]
 
 
 def load_config() -> dict:
@@ -152,20 +146,29 @@ def _localizar_arquivos_nfe_subpasta(config: dict, subpasta: str) -> list:
     return sorted(pasta.glob("*.txt"))
 
 
+_BUCKETS_NFE = (
+    "entradas", "saidas", "analise_et", "analise_ep", "situacao_et", "situacao_ep",
+)
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def _classificar_itens_nfe() -> dict:
-    """Lê todos os .txt de nfe_path (ET+EP), filtra situação válida (A/O) e
-    segrega POR ITEM (não por chave inteira) os CFOPs da watchlist para as
-    tabelas de análise — o restante segue para entradas/saídas pelo tpnf.
-    Devolve {'entradas','saidas','analise_et','analise_ep': DataFrame,
-    'erros': list, 'arquivos': list}."""
+    """Lê todos os .txt de nfe_path (ET+EP) e segrega POR ITEM (não por chave
+    inteira) em 6 grupos, sem descartar nenhum registro:
+      1. situação inválida (fora de A/O — canceladas, denegadas, inutilizadas)
+         -> nfe_situacao_et / nfe_situacao_ep (pelo CNPJ nunca ir ao cruzamento
+         físico nem à conferência de CFOP simbólico);
+      2. dentre os de situação válida, CFOP na watchlist (faturamento futuro,
+         venda à ordem, baixa de estoque/ECF) -> nfe_analise_et / nfe_analise_ep;
+      3. o restante (situação válida + CFOP fora da watchlist) -> entradas/
+         saídas (fluxo principal de cruzamento), conforme o tpnf.
+    Devolve {'entradas','saidas','analise_et','analise_ep','situacao_et',
+    'situacao_ep': DataFrame, 'erros': list, 'arquivos': list}."""
     config   = load_config()
     arquivos = _localizar_arquivos_nfe(config)
     vazio    = pd.DataFrame()
-    resultado_vazio = {
-        "entradas": vazio, "saidas": vazio, "analise_et": vazio, "analise_ep": vazio,
-        "erros": [], "arquivos": [str(a) for a in arquivos],
-    }
+    resultado_vazio = {b: vazio for b in _BUCKETS_NFE}
+    resultado_vazio.update({"erros": [], "arquivos": [str(a) for a in arquivos]})
 
     if not arquivos:
         resultado_vazio["erros"].append(
@@ -180,9 +183,6 @@ def _classificar_itens_nfe() -> dict:
             df = _read_txt_pipe(arquivo)
             if df.empty or "fatonfe_infnfe_ide_tpnf" not in df.columns:
                 erros.append(f"Arquivo sem coluna tpnf ou vazio: {arquivo.name}")
-                continue
-            df = _filtrar_situacao_nfe(df)
-            if df.empty:
                 continue
             df["PASTA_ORIGEM"]    = arquivo.parent.name.upper()
             df["ARQUIVO_ORIGEM"]  = arquivo.name
@@ -209,12 +209,17 @@ def _classificar_itens_nfe() -> dict:
     combined = _forcar_colunas_string(combined, [_COL_CHAVE_NFE, _COL_NUM_ITEM_NFE, _COL_CFOP_NFE])
     combined = _gerar_id_unico(combined, [_COL_CHAVE_NFE, _COL_NUM_ITEM_NFE])
 
-    cfop  = combined[_COL_CFOP_NFE].astype(str).str.strip()
-    pasta = combined["PASTA_ORIGEM"]
+    situacao = combined[_COL_SITUACAO_NFE].astype(str).str.strip() if _COL_SITUACAO_NFE in combined.columns else pd.Series("", index=combined.index)
+    cfop     = combined[_COL_CFOP_NFE].astype(str).str.strip()
+    pasta    = combined["PASTA_ORIGEM"]
 
-    mask_analise_et = (pasta == "ET") & cfop.isin(_CFOP_WATCHLIST_GLOBAL | _CFOP_WATCHLIST_ET)
-    mask_analise_ep = (pasta == "EP") & cfop.isin(_CFOP_WATCHLIST_GLOBAL | _CFOP_WATCHLIST_EP)
-    mask_principal  = ~(mask_analise_et | mask_analise_ep)
+    mask_situacao_valida = situacao.isin(_SITUACOES_NFE_VALIDAS)
+    mask_situacao_et = ~mask_situacao_valida & (pasta == "ET")
+    mask_situacao_ep = ~mask_situacao_valida & (pasta == "EP")
+
+    mask_analise_et = mask_situacao_valida & (pasta == "ET") & cfop.isin(_CFOP_WATCHLIST_GLOBAL | _CFOP_WATCHLIST_ET)
+    mask_analise_ep = mask_situacao_valida & (pasta == "EP") & cfop.isin(_CFOP_WATCHLIST_GLOBAL | _CFOP_WATCHLIST_EP)
+    mask_principal  = mask_situacao_valida & ~(mask_analise_et | mask_analise_ep)
 
     tpnf = combined["fatonfe_infnfe_ide_tpnf"].astype(str).str.strip()
 
@@ -226,10 +231,15 @@ def _classificar_itens_nfe() -> dict:
     df_analise_et["ORIGEM_DADOS"] = "ANALISE_ET"
     df_analise_ep = combined[mask_analise_ep].copy()
     df_analise_ep["ORIGEM_DADOS"] = "ANALISE_EP"
+    df_situacao_et = combined[mask_situacao_et].copy()
+    df_situacao_et["ORIGEM_DADOS"] = "SITUACAO_ET"
+    df_situacao_ep = combined[mask_situacao_ep].copy()
+    df_situacao_ep["ORIGEM_DADOS"] = "SITUACAO_EP"
 
     return {
         "entradas": df_entradas, "saidas": df_saidas,
         "analise_et": df_analise_et, "analise_ep": df_analise_ep,
+        "situacao_et": df_situacao_et, "situacao_ep": df_situacao_ep,
         "erros": erros, "arquivos": [str(a) for a in arquivos],
     }
 
@@ -794,22 +804,27 @@ def dados_ja_carregados() -> bool:
 
 
 def persistir_nfe(callback=None) -> dict:
-    """Persiste NF-e em DuckDB: tabelas nfe_entradas, nfe_saidas (dataset
-    principal, sem os CFOPs de watchlist) e nfe_analise_et/nfe_analise_ep
-    (itens segregados por CFOP — preservados, não descartados).
-    callback(etapa, n) chamado apos cada tabela. Retorna {tabela: n_linhas}."""
+    """Persiste NF-e em DuckDB: tabelas nfe_entradas/nfe_saidas (dataset
+    principal — situação válida e CFOP fora da watchlist), nfe_analise_et/
+    nfe_analise_ep (situação válida mas CFOP de watchlist) e
+    nfe_situacao_et/nfe_situacao_ep (situação inválida — canceladas,
+    denegadas, inutilizadas). callback(etapa, n) chamado apos cada tabela.
+    Retorna {tabela: n_linhas}."""
     _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
     resultado = {}
     try:
         classificado = _classificar_itens_nfe()
         with duckdb.connect(str(_BANCO_PATH)) as con:
             for tabela, chave, nome_view, sempre_criar in (
-                ("nfe_entradas",    "entradas",   "_df_nfe_entradas",   False),
-                ("nfe_saidas",      "saidas",     "_df_nfe_saidas",     False),
-                # tabelas de análise são sempre criadas (mesmo vazias) para
-                # que analise_ja_gerada() consiga rastrear que a carga rodou.
-                ("nfe_analise_et",  "analise_et", "_df_nfe_analise_et", True),
-                ("nfe_analise_ep",  "analise_ep", "_df_nfe_analise_ep", True),
+                ("nfe_entradas",    "entradas",    "_df_nfe_entradas",    False),
+                ("nfe_saidas",      "saidas",      "_df_nfe_saidas",      False),
+                # tabelas de segregação são sempre criadas (mesmo vazias)
+                # para que analise_ja_gerada() consiga rastrear que a carga
+                # já rodou, independente de terem encontrado algo ou não.
+                ("nfe_analise_et",  "analise_et",  "_df_nfe_analise_et",  True),
+                ("nfe_analise_ep",  "analise_ep",  "_df_nfe_analise_ep",  True),
+                ("nfe_situacao_et", "situacao_et", "_df_nfe_situacao_et", True),
+                ("nfe_situacao_ep", "situacao_ep", "_df_nfe_situacao_ep", True),
             ):
                 df = classificado[chave]
                 if not df.empty or sempre_criar:
@@ -955,26 +970,37 @@ def carregar_dicionario_campos() -> dict:
     return dicionario
 
 
+_TABELAS_SEGREGACAO = (
+    "nfe_analise_et", "nfe_analise_ep", "nfe_situacao_et", "nfe_situacao_ep",
+)
+_CHAVES_SEGREGACAO = {
+    "nfe_analise_et": "analise_et", "nfe_analise_ep": "analise_ep",
+    "nfe_situacao_et": "situacao_et", "nfe_situacao_ep": "situacao_ep",
+}
+
+
 def analise_ja_gerada() -> bool:
-    """True se nfe_analise_et E nfe_analise_ep já existem persistidas no
-    DuckDB da operação (mesma lógica de dados_ja_carregados/
-    entradas_terceiros_ja_geradas) — permanecem mesmo vazias (0 linhas),
-    já que persistir_nfe()/gerar_dados_analise() sempre as criam."""
+    """True se as 4 tabelas de segregação (nfe_analise_et/ep — CFOP de
+    watchlist — e nfe_situacao_et/ep — situação inválida) já existem
+    persistidas no DuckDB da operação (mesma lógica de dados_ja_carregados/
+    entradas_terceiros_ja_geradas) — permanecem mesmo vazias (0 linhas), já
+    que persistir_nfe()/gerar_dados_analise() sempre as criam."""
     if not _BANCO_PATH.exists():
         return False
     try:
         with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
             tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
-            return "nfe_analise_et" in tabelas and "nfe_analise_ep" in tabelas
+            return set(_TABELAS_SEGREGACAO).issubset(tabelas)
     except Exception:
         logger.exception("Erro ao verificar tabelas de análise existentes em %s", _BANCO_PATH)
         return False
 
 
 def consultar_totais_analise() -> dict:
-    """Retorna {'nfe_analise_et': n, 'nfe_analise_ep': n} lendo direto do
-    DuckDB (sem reprocessar) — alimenta os KPIs do painel de análise."""
-    totais = {"nfe_analise_et": 0, "nfe_analise_ep": 0}
+    """Retorna {'nfe_analise_et': n, 'nfe_analise_ep': n, 'nfe_situacao_et': n,
+    'nfe_situacao_ep': n} lendo direto do DuckDB (sem reprocessar) —
+    alimenta os KPIs do painel de monitoramento."""
+    totais = {t: 0 for t in _TABELAS_SEGREGACAO}
     if not _BANCO_PATH.exists():
         return totais
     try:
@@ -988,10 +1014,13 @@ def consultar_totais_analise() -> dict:
     return totais
 
 
-def consultar_chaves_analise(fluxo: str = "ET", limite: int = 100) -> "tuple[pd.DataFrame, int]":
-    """Lê nfe_analise_et/nfe_analise_ep já persistida (sem reprocessar XML),
-    devolvendo uma amostra (até 'limite' linhas) e o total real de linhas."""
-    tabela = "nfe_analise_et" if fluxo.upper() == "ET" else "nfe_analise_ep"
+def consultar_chaves_analise(fluxo: str = "ET", categoria: str = "cfop", limite: int = 100) -> "tuple[pd.DataFrame, int]":
+    """Lê uma das 4 tabelas de segregação já persistida (sem reprocessar
+    XML), devolvendo uma amostra (até 'limite' linhas) e o total real de
+    linhas. categoria='cfop' -> nfe_analise_et/ep; categoria='situacao' ->
+    nfe_situacao_et/ep."""
+    prefixo = "nfe_analise" if categoria.lower() == "cfop" else "nfe_situacao"
+    tabela = f"{prefixo}_{fluxo.lower()}"
     if not _BANCO_PATH.exists():
         return pd.DataFrame(), 0
     try:
@@ -1009,16 +1038,16 @@ def consultar_chaves_analise(fluxo: str = "ET", limite: int = 100) -> "tuple[pd.
 
 def gerar_dados_analise() -> dict:
     """Gera (via _classificar_itens_nfe, cacheada) e persiste isoladamente as
-    tabelas nfe_analise_et e nfe_analise_ep — ação sob demanda (botão
-    dedicado), sem reprocessar nfe_entradas/nfe_saidas nem o SPED. Sempre
-    cria as duas tabelas (mesmo vazias) para que analise_ja_gerada() rastreie
-    corretamente que a geração já rodou."""
+    4 tabelas de segregação (nfe_analise_et/ep + nfe_situacao_et/ep) — ação
+    sob demanda (botão dedicado), sem reprocessar nfe_entradas/nfe_saidas
+    nem o SPED. Sempre cria as quatro tabelas (mesmo vazias) para que
+    analise_ja_gerada() rastreie corretamente que a geração já rodou."""
     classificado = _classificar_itens_nfe()
     _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
     resultado = {}
     try:
         with duckdb.connect(str(_BANCO_PATH)) as con:
-            for tabela, chave in (("nfe_analise_et", "analise_et"), ("nfe_analise_ep", "analise_ep")):
+            for tabela, chave in _CHAVES_SEGREGACAO.items():
                 df = classificado[chave]
                 con.register("_df_tmp_analise", df)
                 con.execute(f"CREATE OR REPLACE TABLE {tabela} AS SELECT * FROM _df_tmp_analise")

@@ -82,7 +82,7 @@ def _barra_progresso(titulo: str, n_passos: int, fn_persistir) -> bool:
 def render_carga_operacao() -> None:
     """Prévia + botão de carga: 3 barras de progresso independentes.
       1. XML pendentes  — classificação arquivo a arquivo
-      2. NF-e           — nfe_entradas + nfe_saidas + nfe_analise_et + nfe_analise_ep no DuckDB
+      2. NF-e           — nfe_entradas + nfe_saidas + nfe_analise_et/ep + nfe_situacao_et/ep no DuckDB
       3. SPED           — sped_itens + sped_produtos + sped_unidades + sped_estoque no DuckDB
     Quando já carregado e sem pendentes, exibe "Carregar novamente"."""
     st.subheader("Carga de XML")
@@ -147,7 +147,7 @@ def render_carga_operacao() -> None:
         fase_sped = "**2. SPED (declaração)**"
 
     # ── Barra 2: NF-e ─────────────────────────────────────────────────────────
-    ok_nfe = _barra_progresso(fase_nfe, n_passos=4, fn_persistir=loader.persistir_nfe)
+    ok_nfe = _barra_progresso(fase_nfe, n_passos=6, fn_persistir=loader.persistir_nfe)
 
     # ── Barra 3: SPED ─────────────────────────────────────────────────────────
     ok_sped = _barra_progresso(fase_sped, n_passos=4, fn_persistir=loader.persistir_sped)
@@ -219,23 +219,58 @@ _COLUNAS_PREVIEW_ANALISE = [
     "fatoitemnfe_infnfe_det_prod_qcom", "fatoitemnfe_infnfe_det_prod_vuncom",
     "fatoitemnfe_infnfe_det_prod_vprod", "ID_UNICO",
 ]
+_COLUNAS_PREVIEW_SITUACAO = [
+    "PASTA_ORIGEM", "ARQUIVO_ORIGEM",
+    "fatonfe_infprot_chnfe", "fatoitemnfe_infnfe_det_nitem",
+    "fatonfe_informix_stnfeletronica", "fatoitemnfe_infnfe_det_prod_xprod",
+    "fatoitemnfe_infnfe_det_prod_vprod", "ID_UNICO",
+]
 
 
-def _preparar_preview_analise(df: pd.DataFrame) -> pd.DataFrame:
+def _preparar_preview(df: pd.DataFrame, colunas: list) -> pd.DataFrame:
     """Seleciona as colunas relevantes e as renomeia para os nomes amigáveis
     do DICIONARIO DE CAMPOS.txt antes de exibir."""
-    colunas = [c for c in _COLUNAS_PREVIEW_ANALISE if c in df.columns]
-    return df[colunas].rename(columns=loader.carregar_dicionario_campos())
+    cols = [c for c in colunas if c in df.columns]
+    return df[cols].rename(columns=loader.carregar_dicionario_campos())
+
+
+def _render_categoria_segregacao(
+    titulo: str, categoria: str, total_et: int, total_ep: int,
+    colunas_preview: list, msg_vazio: str,
+) -> None:
+    """Bloco reutilizável: KPIs ET/EP + expander com prévia de uma das duas
+    categorias de segregação (categoria='cfop' ou 'situacao')."""
+    st.markdown(f"**{titulo}**")
+    col1, col2 = st.columns(2)
+    col1.metric(f"Qtd Itens ET ({titulo})", f"{total_et:,}".replace(",", "."))
+    col2.metric(f"Qtd Itens EP ({titulo})", f"{total_ep:,}".replace(",", "."))
+
+    with st.expander(f"Visualizar registros — {titulo}"):
+        for fluxo, rotulo in (("ET", "Emissão de Terceiros (ET)"), ("EP", "Emissão Própria (EP)")):
+            df, total = loader.consultar_chaves_analise(fluxo, categoria=categoria)
+            st.markdown(f"**{rotulo}** — {total:,} registro(s)".replace(",", "."))
+            if df.empty:
+                st.info(f"{msg_vazio} em {fluxo}.")
+            else:
+                st.dataframe(_preparar_preview(df, colunas_preview), use_container_width=True)
 
 
 def render_painel_analise() -> None:
-    """Painel de monitoramento das chaves segregadas por CFOP de watchlist
-    (nfe_analise_et/nfe_analise_ep) — KPIs + botão de geração sob demanda +
-    expander com prévia. Exibido só após a carga geral (dados_carregados)."""
-    st.subheader("Análise de CFOPs segregados")
+    """Painel de Monitoramento de Registros Segregados — KPIs + botão de
+    geração sob demanda + expanders com prévia para as duas categorias que a
+    carga de NF-e desvia do fluxo principal (nfe_entradas/nfe_saidas), sem
+    descartar nada:
+      1. CFOP de watchlist (nfe_analise_et/nfe_analise_ep) — situação válida
+         mas operação simbólica/de ajuste (entrega futura, venda à ordem,
+         baixa de estoque, lançamento ECF).
+      2. Situação irregular (nfe_situacao_et/nfe_situacao_ep) — canceladas,
+         denegadas, inutilizadas etc.
+    Exibido só após a carga geral (dados_carregados)."""
+    st.subheader("Painel de Monitoramento — Registros Segregados")
     st.caption(
-        "Itens desviados por CFOP de watchlist (faturamento futuro, venda à ordem, "
-        "baixa de estoque/ECF) — preservados aqui, fora do cruzamento principal (Etapa 1)."
+        "Itens desviados do cruzamento principal (Etapa 1), preservados aqui para consulta: "
+        "CFOP de watchlist (faturamento futuro, venda à ordem, baixa de estoque/ECF) e "
+        "documentos com situação irregular (cancelados, denegados, inutilizados)."
     )
 
     if "analise_cfop_gerada" not in st.session_state:
@@ -243,30 +278,24 @@ def render_painel_analise() -> None:
 
     if st.session_state["analise_cfop_gerada"]:
         totais = loader.consultar_totais_analise()
-        col1, col2 = st.columns(2)
-        col1.metric("Qtd Itens ET (Análise)", f"{totais['nfe_analise_et']:,}".replace(",", "."))
-        col2.metric("Qtd Itens EP (Análise)", f"{totais['nfe_analise_ep']:,}".replace(",", "."))
         st.success("✅ Dados de análise prontos.")
 
-        with st.expander("Visualizar chaves segregadas para análise"):
-            df_et, total_et = loader.consultar_chaves_analise("ET")
-            st.markdown(f"**Emissão de Terceiros (ET)** — {total_et:,} registro(s)".replace(",", "."))
-            if df_et.empty:
-                st.info("Nenhum registro para análise física/simbólica em ET.")
-            else:
-                st.dataframe(_preparar_preview_analise(df_et), use_container_width=True)
-
-            df_ep, total_ep = loader.consultar_chaves_analise("EP")
-            st.markdown(f"**Emissão Própria (EP)** — {total_ep:,} registro(s)".replace(",", "."))
-            if df_ep.empty:
-                st.info("Nenhum registro para análise física/simbólica em EP.")
-            else:
-                st.dataframe(_preparar_preview_analise(df_ep), use_container_width=True)
+        _render_categoria_segregacao(
+            "CFOP de Watchlist", "cfop",
+            totais["nfe_analise_et"], totais["nfe_analise_ep"],
+            _COLUNAS_PREVIEW_ANALISE, "Nenhum registro para análise física/simbólica",
+        )
+        st.markdown("---")
+        _render_categoria_segregacao(
+            "Situação Irregular", "situacao",
+            totais["nfe_situacao_et"], totais["nfe_situacao_ep"],
+            _COLUNAS_PREVIEW_SITUACAO, "Nenhum documento com situação irregular",
+        )
 
         clicou = st.button(
             "Regerar Análise",
             key="btn_regerar_analise_cfop",
-            help="Reprocessa e substitui nfe_analise_et/nfe_analise_ep.",
+            help="Reprocessa e substitui nfe_analise_et/ep e nfe_situacao_et/ep.",
         )
     else:
         clicou = st.button("Gerar Dados para Análise de CFOPs", key="btn_gerar_analise_cfop")
@@ -274,7 +303,7 @@ def render_painel_analise() -> None:
     if not clicou:
         return
 
-    with st.spinner("Gerando dados de análise de CFOPs..."):
+    with st.spinner("Gerando dados de análise de CFOPs e situação..."):
         resultado = loader.gerar_dados_analise()
 
     if "erro" in resultado:
