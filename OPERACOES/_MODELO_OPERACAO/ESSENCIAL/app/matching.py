@@ -11,7 +11,7 @@ tenta casar o que sobrou do anterior):
     (xprod x DESCR_ITEM) > LIMIAR_TIPO1 (0,90).
   - Tipo 2 (fallback): para os itens que não casaram no Tipo 1, mesmo Valor
     Total (VL_ITEM idêntico) **e** similaridade de descrição > LIMIAR_TIPO2
-    (0,40).
+    (0,60).
 
 Não Declarados e Não Matches:
   - 'nd' (Não Declarado) — a CHV_NFE inteira não aparece na BC1.
@@ -49,7 +49,7 @@ import loader
 import scoring
 
 LIMIAR_TIPO1 = 0.90  # mesmo GTIN/EAN + similaridade
-LIMIAR_TIPO2 = 0.40  # mesmo Valor Total + similaridade
+LIMIAR_TIPO2 = 0.60  # mesmo Valor Total + similaridade
 
 _COL_DESCR_XML = "fatoitemnfe_infnfe_det_prod_xprod"
 _SEM_GTIN = {"", "SEM GTIN", "NAN", "NONE"}
@@ -177,7 +177,7 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     df_bc2_pend = df_bc2.loc[pendentes_idx]
     df_bc1_disp = df_bc1.loc[~df_bc1.index.isin(indices_bc1_usados)]
 
-    # ── Tipo 2 (fallback): Valor + similaridade > 0,40 ──────────────────────
+    # ── Tipo 2 (fallback): Valor + similaridade > 0,60 ──────────────────────
     match_tipo2 = _match_tipo2_por_nota(df_bc2_pend, df_bc1_disp)
 
     # ── Monta a BC3 vetorizadamente (sem laço por linha) ────────────────────
