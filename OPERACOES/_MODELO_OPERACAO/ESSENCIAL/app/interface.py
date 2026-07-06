@@ -171,7 +171,7 @@ def render_entradas_terceiros() -> None:
     (0200) e de unidade de medida (0190). Se já foram geradas antes (mesma
     lógica de dados_ja_carregados), mostra direto o resultado persistido —
     não reprocessa a cada reabertura do front."""
-    st.subheader("Chaves de entrada de emissão de terceiros (base comparativa1)")
+    st.subheader("Chaves de entrada de emissão de terceiros da declaração (base comparativa1)")
     st.caption(
         "C100 (IND_OPER=0 + IND_EMIT=1) + C170, enriquecido com 0200 (produto) e 0190 (unidade)."
     )
@@ -180,10 +180,32 @@ def render_entradas_terceiros() -> None:
         st.session_state["entradas_terceiros_geradas"] = loader.entradas_terceiros_ja_geradas()
 
     if st.session_state["entradas_terceiros_geradas"]:
-        df_preview, total = loader.consultar_entradas_terceiros()
+        df_preview, total = loader.consultar_entradas_terceiros(limite=200)
         st.success(f"✅ {total:,} registro(s) em `sped_entradas_terceiros`.".replace(",", "."))
         colunas = [c for c in _COLUNAS_PREVIEW_ENTRADAS_TERCEIROS if c in df_preview.columns]
+        st.markdown(f"Prévia limitada a 200 linhas de {total:,}".replace(",", "."))
         st.dataframe(df_preview[colunas], use_container_width=True)
+
+        # Exportação sob demanda, à parte da prévia — só busca a tabela
+        # inteira quando pedido, para não pesar em bases com milhões de
+        # linhas a cada redesenho da tela.
+        preparar = st.button("Preparar exportação completa (CSV)", key="btn_preparar_export_entradas_terceiros")
+        if preparar:
+            with st.spinner("Preparando exportação completa..."):
+                df_completo, total_completo = loader.consultar_entradas_terceiros(limite=None)
+                csv_completo = df_completo.rename(columns=loader.carregar_dicionario_campos())
+                st.session_state["entradas_terceiros_csv_bytes"] = csv_completo.to_csv(index=False, sep=";").encode("utf-8-sig")
+                st.session_state["entradas_terceiros_csv_total"] = total_completo
+
+        if "entradas_terceiros_csv_bytes" in st.session_state:
+            st.download_button(
+                f"Baixar tabela completa ({st.session_state['entradas_terceiros_csv_total']:,} linha(s), CSV)".replace(",", "."),
+                data=st.session_state["entradas_terceiros_csv_bytes"],
+                file_name="sped_entradas_terceiros.csv",
+                mime="text/csv",
+                key="btn_download_entradas_terceiros",
+            )
+
         clicou = st.button(
             "Gerar novamente",
             key="btn_regerar_entradas_terceiros",

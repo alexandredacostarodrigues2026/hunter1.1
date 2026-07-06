@@ -974,16 +974,21 @@ def entradas_terceiros_ja_geradas() -> bool:
         return False
 
 
-def consultar_entradas_terceiros(limite: int = 200) -> "tuple[pd.DataFrame, int]":
+def consultar_entradas_terceiros(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
     """Lê a tabela sped_entradas_terceiros já persistida (sem reprocessar
     XML/SPED), devolvendo uma amostra (até 'limite' linhas) e o total real de
-    linhas da tabela — usado para exibir a prévia sem regerar o dataset."""
+    linhas da tabela — usado para exibir a prévia sem regerar o dataset.
+    limite=None devolve a tabela inteira (usado para exportação completa)."""
     if not _BANCO_PATH.exists():
         return pd.DataFrame(), 0
     try:
         with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
             total = con.execute("SELECT COUNT(*) FROM sped_entradas_terceiros").fetchone()[0]
-            df = con.execute(f"SELECT * FROM sped_entradas_terceiros LIMIT {limite}").df()
+            query = (
+                "SELECT * FROM sped_entradas_terceiros" if limite is None
+                else f"SELECT * FROM sped_entradas_terceiros LIMIT {limite}"
+            )
+            df = con.execute(query).df()
         return df, total
     except Exception:
         logger.exception("Erro ao consultar sped_entradas_terceiros em %s", _BANCO_PATH)
