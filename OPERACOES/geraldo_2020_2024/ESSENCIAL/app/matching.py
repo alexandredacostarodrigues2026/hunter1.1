@@ -9,13 +9,10 @@ tenta casar o que sobrou do anterior):
   - Tipo 1: mesmo EAN/GTIN (COD_BARRA do SPED == cean do XML, comparados após
     normalização — ver _normalizar_gtin) **e** similaridade de descrição
     (xprod x DESCR_ITEM) > LIMIAR_TIPO1 (0,90).
-  - Tipo 2 (fallback): para os itens que não casaram no Tipo 1, mesmo Valor
-    Total (VL_ITEM idêntico) **e** similaridade de descrição > LIMIAR_TIPO2
-    (0,50).
-
-Cada tipo exige as DUAS condições ao mesmo tempo (E, não OU) — diferente da
-versão anterior, que usava só a similaridade como portão e GTIN/valor como
-desempate entre candidatos já aprovados.
+  - Tipo 2 (fallback): para os itens que não casaram no Tipo 1, apenas
+    similaridade de descrição > LIMIAR_TIPO2 (0,60) — sem exigir igualdade de
+    Valor Total (VL_ITEM); essa exigência existia numa versão anterior e foi
+    removida a pedido do usuário.
 
 Não Declarados e Não Matches:
   - 'nd' (Não Declarado) — a CHV_NFE inteira não aparece na BC1.
@@ -28,16 +25,16 @@ Consistência de Unicidade — um item da BC1 (declaração) não pode ser
 ID_UNICO (já presente em BC1 e BC2) segue existindo só para rastreabilidade
 interna — não é usado como chave de ligação. Regra Operacional R07: as
 colunas de ligação (CHV_NFE, COD_ITEM, NUM_ITEM, CFOP) continuam com
-dtype=str — os campos numéricos (VL_ITEM) só são convertidos internamente,
-em memória, para fins de comparação, sem alterar o tipo da coluna persistida.
+dtype=str.
 
 Implementação vetorizada (sem .iterrows()/.apply() linha a linha) para
 escalar a operações com milhões de itens: agrupado por CHV_NFE, com a
-matriz de similaridade calculada em lote por nota (rapidfuzz.process.cdist,
-implementado em C) — o laço em Python passa a ser por NOTA, não por ITEM.
-As máscaras de GTIN/Valor são comparações vetorizadas (NumPy broadcasting)
-sobre essa mesma matriz, e a atribuição gulosa (maior score primeiro,
-1-para-1) usa np.argsort sobre os pares que já passam nas duas condições.
+matriz de similaridade calculada em lote por nota via scoring.matriz_similaridade()
+(rapidfuzz.process.cdist, implementado em C) — o laço em Python passa a ser
+por NOTA, não por ITEM. A máscara de GTIN (Tipo 1) é uma comparação
+vetorizada (NumPy broadcasting) sobre essa mesma matriz, e a atribuição
+gulosa (maior score primeiro, 1-para-1) usa np.argsort sobre os pares que já
+passam nas condições de cada tipo.
 """
 import sys
 from pathlib import Path
@@ -48,12 +45,12 @@ if str(_APP_DIR) not in sys.path:
 
 import numpy as np
 import pandas as pd
-from rapidfuzz import fuzz, process
 
 import loader
+import scoring
 
 LIMIAR_TIPO1 = 0.90  # mesmo GTIN/EAN + similaridade
-LIMIAR_TIPO2 = 0.50  # mesmo Valor Total + similaridade
+LIMIAR_TIPO2 = 0.60  # apenas similaridade (sem exigência de Valor Total)
 
 _COL_DESCR_XML = "fatoitemnfe_infnfe_det_prod_xprod"
 _SEM_GTIN = {"", "SEM GTIN", "NAN", "NONE"}
@@ -73,7 +70,7 @@ def _normalizar_gtin(serie: pd.Series) -> np.ndarray:
 def _matriz_similaridade(grupo_bc2: pd.DataFrame, grupo_bc1: pd.DataFrame) -> np.ndarray:
     descricoes_bc2 = grupo_bc2[_COL_DESCR_XML].astype(str).tolist()
     descricoes_bc1 = grupo_bc1["DESCR_ITEM"].astype(str).tolist()
-    return process.cdist(descricoes_bc2, descricoes_bc1, scorer=fuzz.token_sort_ratio) / 100.0
+    return scoring.matriz_similaridade(descricoes_bc2, descricoes_bc1)
 
 
 def _atribuir_1_para_1(mask: np.ndarray, matriz_score: np.ndarray, idx_bc2_grupo, idx_bc1_grupo) -> dict:
@@ -128,9 +125,9 @@ def _match_tipo1_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
 
 
 def _match_tipo2_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
-    """Tipo 2 (fallback): dentro da mesma CHV_NFE, mesmo Valor Total (VL_ITEM
-    idêntico) E similaridade de descrição > LIMIAR_TIPO2. Chamado só com os
-    itens que sobraram do Tipo 1. Devolve {indice_bc2: (indice_bc1, score)}."""
+    """Tipo 2 (fallback): dentro da mesma CHV_NFE, apenas similaridade de
+    descrição > LIMIAR_TIPO2 (sem exigir igualdade de Valor Total). Chamado só
+    com os itens que sobraram do Tipo 1. Devolve {indice_bc2: (indice_bc1, score)}."""
     if df_bc2.empty or df_bc1.empty:
         return {}
 
@@ -144,11 +141,7 @@ def _match_tipo2_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
 
         matriz = _matriz_similaridade(grupo_bc2, grupo_bc1)
 
-        val_bc2 = pd.to_numeric(grupo_bc2["VL_ITEM"], errors="coerce").round(2).to_numpy()
-        val_bc1 = pd.to_numeric(grupo_bc1["VL_ITEM"], errors="coerce").round(2).to_numpy()
-        mask_valor = val_bc2[:, None] == val_bc1[None, :]
-
-        mask_final = (matriz > LIMIAR_TIPO2) & mask_valor
+        mask_final = matriz > LIMIAR_TIPO2
         correspondencias.update(
             _atribuir_1_para_1(mask_final, matriz, grupo_bc2.index, grupo_bc1.index)
         )
@@ -181,7 +174,7 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     df_bc2_pend = df_bc2.loc[pendentes_idx]
     df_bc1_disp = df_bc1.loc[~df_bc1.index.isin(indices_bc1_usados)]
 
-    # ── Tipo 2 (fallback): Valor + similaridade > 0,50 ──────────────────────
+    # ── Tipo 2 (fallback): apenas similaridade > 0,60 ───────────────────────
     match_tipo2 = _match_tipo2_por_nota(df_bc2_pend, df_bc1_disp)
 
     # ── Monta a BC3 vetorizadamente (sem laço por linha) ────────────────────

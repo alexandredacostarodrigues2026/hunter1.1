@@ -6,8 +6,17 @@ _APP_DIR = Path(__file__).parent
 if str(_APP_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_DIR))
 
+import numpy as np
 import pandas as pd
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz, process
+
+
+def matriz_similaridade(descricoes_a: list, descricoes_b: list) -> np.ndarray:
+    """Calcula, em lote (rapidfuzz.process.cdist, implementado em C), a matriz
+    de similaridade (0 a 1) entre duas listas de descrições — usada pelo
+    Matching (Etapa 1, matching.py) para comparar de uma vez todos os itens de
+    uma nota, sem laço item a item."""
+    return process.cdist(descricoes_a, descricoes_b, scorer=fuzz.token_sort_ratio) / 100.0
 
 
 def similaridade(a: str, b: str) -> float:
