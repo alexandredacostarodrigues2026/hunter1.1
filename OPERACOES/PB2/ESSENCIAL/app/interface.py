@@ -353,7 +353,7 @@ def render_bc3() -> None:
     st.caption(
         "Cruza os itens de Emissão de Terceiros (BC2, XML) com a declaração (BC1, SPED), dentro "
         "da mesma CHV_NFE, em dois níveis: Tipo 1 = mesmo GTIN/EAN + similaridade > 90%; "
-        "Tipo 2 (fallback) = mesmo Valor Total + similaridade > 60% — sem depender de NUM_ITEM."
+        "Tipo 2 (fallback) = mesmo Valor Total + similaridade > 40% — sem depender de NUM_ITEM."
     )
 
     if "bc3_gerada" not in st.session_state:
