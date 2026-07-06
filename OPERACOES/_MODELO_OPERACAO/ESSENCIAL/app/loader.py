@@ -1148,9 +1148,11 @@ def bc3_ja_gerada() -> bool:
         return False
 
 
-def consultar_bc3(limite: int = 200) -> "tuple[pd.DataFrame, int]":
+def consultar_bc3(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
     """Lê a tabela bc3 já persistida (sem reprocessar o matching), devolvendo
-    uma amostra (até 'limite' linhas) e o total real de linhas."""
+    uma amostra (até 'limite' linhas) e o total real de linhas. limite=None
+    devolve a tabela inteira (usado para exportação completa, não para a
+    prévia na tela)."""
     if not _BANCO_PATH.exists():
         return pd.DataFrame(), 0
     try:
@@ -1159,7 +1161,8 @@ def consultar_bc3(limite: int = 200) -> "tuple[pd.DataFrame, int]":
             if "bc3" not in tabelas:
                 return pd.DataFrame(), 0
             total = con.execute("SELECT COUNT(*) FROM bc3").fetchone()[0]
-            df = con.execute(f"SELECT * FROM bc3 LIMIT {limite}").df()
+            query = "SELECT * FROM bc3" if limite is None else f"SELECT * FROM bc3 LIMIT {limite}"
+            df = con.execute(query).df()
         return df, total
     except Exception:
         logger.exception("Erro ao consultar bc3 em %s", _BANCO_PATH)

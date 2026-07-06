@@ -348,11 +348,35 @@ def render_bc3() -> None:
 
         with st.expander("Visualizar resultado do Matching (BC3)"):
             df_bc3, total = loader.consultar_bc3(limite=200)
-            st.markdown(f"**Amostra** — {total:,} registro(s) no total".replace(",", "."))
+            st.markdown(
+                f"**Amostra** — {total:,} registro(s) no total (prévia limitada a 200 linhas; "
+                "use o botão abaixo para exportar tudo)".replace(",", ".")
+            )
             if df_bc3.empty:
                 st.info("Nenhum registro na BC3.")
             else:
                 st.dataframe(_preparar_preview(df_bc3, _COLUNAS_PREVIEW_BC3), use_container_width=True)
+
+            # A prévia acima é sempre limitada a 200 linhas (leve, rápida de
+            # desenhar). A exportação é uma ação à parte, sob demanda, porque
+            # ler a BC3 inteira pode ser pesado em bases com milhões de linhas
+            # — só acontece quando o usuário pede, não a cada redesenho da tela.
+            preparar = st.button("Preparar exportação completa (CSV)", key="btn_preparar_export_bc3")
+            if preparar:
+                with st.spinner("Preparando exportação completa..."):
+                    df_completo, total_completo = loader.consultar_bc3(limite=None)
+                    csv_completo = df_completo.rename(columns=loader.carregar_dicionario_campos())
+                    st.session_state["bc3_csv_bytes"] = csv_completo.to_csv(index=False, sep=";").encode("utf-8-sig")
+                    st.session_state["bc3_csv_total"] = total_completo
+
+            if "bc3_csv_bytes" in st.session_state:
+                st.download_button(
+                    f"Baixar BC3 completa ({st.session_state['bc3_csv_total']:,} linha(s), CSV)".replace(",", "."),
+                    data=st.session_state["bc3_csv_bytes"],
+                    file_name="bc3_matching.csv",
+                    mime="text/csv",
+                    key="btn_download_bc3",
+                )
 
         clicou = st.button(
             "Regerar Matching (BC3)",
