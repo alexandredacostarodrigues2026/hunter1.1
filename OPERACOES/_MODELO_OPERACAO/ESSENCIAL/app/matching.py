@@ -4,28 +4,31 @@ Terceiros) com a BC1 (SPED — sped_entradas_terceiros) para produzir a BC3
 sequencial dos itens no XML do fornecedor não necessariamente bate com a
 ordem de escrituração no SPED do declarante.
 
-Hierarquia de chaves (cada nível só tenta casar o que sobrou do anterior):
-  1. Match Principal — CHV_NFE + VL_ITEM (valor exato, arredondado a 2 casas).
-  2. Match Secundário — dentro da MESMA CHV_NFE: similaridade de texto
+Regra de elegibilidade + match único (correspondência por valor removida):
+  1. Elegibilidade por nota: só se tenta casar os itens de uma CHV_NFE
+     quando a quantidade de linhas (itens) da BC2 para aquela nota é IGUAL
+     à quantidade de linhas da BC1 para a mesma nota. Se as quantidades
+     forem diferentes, nenhum item daquela nota é comparado — todos ficam
+     como 'nm' (a nota existe na declaração, mas a correspondência item a
+     item não é tentada por divergência na quantidade de linhas).
+  2. Match (Fuzzy) — dentro das notas elegíveis, similaridade de texto
      (produto do XML x DESCR_ITEM do SPED), sugerido quando score >
-     LIMIAR_SIMILARIDADE. (O passo de GTIN/EAN — COD_BARRA — foi suspenso;
-     o fallback do Principal vai direto para o Fuzzy.)
-  3. Sem match em nenhum critério — duas situações distintas:
+     LIMIAR_SIMILARIDADE.
+  3. Sem match — duas situações distintas:
      a. 'nd' (não declarado) — a CHV_NFE inteira não aparece na BC1: a nota
         de compra não foi encontrada na declaração (possível compra não
         declarada, não é só um item sem match).
-     b. 'nm' (não match) — a CHV_NFE existe na BC1, mas este item específico
-        não bateu por nenhum dos critérios (valor, similaridade).
+     b. 'nm' (não match) — a CHV_NFE existe na BC1, mas a nota não é
+        elegível (quantidade de linhas diferente) ou o item não bateu a
+        similaridade de texto.
 
 ID_UNICO (já presente em BC1 e BC2) segue existindo só para rastreabilidade
 interna — não é usado como chave de ligação.
 
 Implementação vetorizada (sem .iterrows()/.apply() linha a linha) para
 escalar a operações com milhões de itens:
-  - Match Principal: merge (hash join) por (CHV_NFE, valor, rank de
-    ocorrência) — o "rank" (posição da ocorrência dentro do grupo, via
-    groupby().cumcount()) é o que garante 1-para-1 mesmo com valores
-    repetidos dentro da mesma chave, sem precisar de laço item a item.
+  - Elegibilidade por nota: contagem de itens por CHV_NFE em cada lado
+    (groupby().size(), vetorizado) comparada de uma vez (join de Series).
   - Fuzzy: agrupado por CHV_NFE, com a matriz de similaridade calculada em
     lote por nota (rapidfuzz.process.cdist, implementado em C) em vez de
     comparar item a item — o laço em Python passa a ser por NOTA, não por
@@ -50,28 +53,14 @@ LIMIAR_SIMILARIDADE = 0.50
 _COL_DESCR_XML = "fatoitemnfe_infnfe_det_prod_xprod"
 
 
-def _arredondar_valor(serie: pd.Series) -> pd.Series:
-    return pd.to_numeric(serie, errors="coerce").round(2)
-
-
-def _match_exato_vetorizado(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame, colunas_chave: list) -> dict:
-    """Match exato 1-para-1 via merge (hash join) por 'colunas_chave' (ex.:
-    ['CHV_NFE', '_VAL'] ou ['CHV_NFE', 'COD_BARRA']). Usa groupby().cumcount()
-    como "rank de ocorrência" para casar duplicatas em ordem, sem laço
-    item a item. Devolve {indice_bc2: indice_bc1}."""
-    if df_bc2.empty or df_bc1.empty:
-        return {}
-
-    bc2 = df_bc2[colunas_chave].copy()
-    bc2["_IDX_BC2"] = df_bc2.index
-    bc2["_RANK"] = bc2.groupby(colunas_chave).cumcount()
-
-    bc1 = df_bc1[colunas_chave].copy()
-    bc1["_IDX_BC1"] = df_bc1.index
-    bc1["_RANK"] = bc1.groupby(colunas_chave).cumcount()
-
-    merged = bc2.merge(bc1, on=colunas_chave + ["_RANK"], how="inner")
-    return dict(zip(merged["_IDX_BC2"], merged["_IDX_BC1"]))
+def _chaves_com_mesma_quantidade_de_linhas(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> set:
+    """Compara, por CHV_NFE, a quantidade de itens da BC2 com a quantidade
+    de itens da BC1 — devolve o conjunto de chaves onde as quantidades são
+    iguais (únicas elegíveis para tentar o match por nota)."""
+    contagem_bc2 = df_bc2.groupby("CHV_NFE").size()
+    contagem_bc1 = df_bc1.groupby("CHV_NFE").size()
+    comparacao = pd.DataFrame({"bc2": contagem_bc2, "bc1": contagem_bc1}).dropna()
+    return set(comparacao[comparacao["bc2"] == comparacao["bc1"]].index)
 
 
 def _match_fuzzy_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
@@ -119,9 +108,10 @@ def _match_fuzzy_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
 def executar_matching() -> "tuple[pd.DataFrame, dict]":
     """Executa o cruzamento BC2 (XML, ET) x BC1 (SPED) e devolve a BC3: uma
     linha por item da BC2, com DESCR_ITEM_DECLARACAO/COD_ITEM_DECLARACAO
-    trazidos do BC1 quando houver correspondência (por qualquer um dos
-    critérios), 'nd' quando a nota inteira não estiver declarada, ou 'nm'
-    quando a nota existir mas o item não bater por nenhum critério."""
+    trazidos do BC1 quando houver correspondência por similaridade de texto
+    (só tentada em notas com a mesma quantidade de itens nos dois lados),
+    'nd' quando a nota inteira não estiver declarada, ou 'nm' quando a nota
+    existir mas não for elegível ou o item não bater a similaridade."""
     df_bc2, meta_bc2 = loader.montar_bc2()
     df_bc1, meta_bc1 = loader.load_declaracao_entradas_terceiros()
 
@@ -133,24 +123,16 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     df_bc2 = df_bc2.reset_index(drop=True)
     df_bc1 = df_bc1.reset_index(drop=True)
 
-    df_bc2 = df_bc2.assign(_VAL=_arredondar_valor(df_bc2["VL_ITEM"]))
-    df_bc1 = df_bc1.assign(_VAL=_arredondar_valor(df_bc1["VL_ITEM"]))
+    # ── Elegibilidade: só notas com a MESMA quantidade de linhas nos dois lados ──
+    chaves_elegiveis = _chaves_com_mesma_quantidade_de_linhas(df_bc2, df_bc1)
+    df_bc2_elegivel = df_bc2[df_bc2["CHV_NFE"].isin(chaves_elegiveis)]
+    df_bc1_elegivel = df_bc1[df_bc1["CHV_NFE"].isin(chaves_elegiveis)]
 
-    # ── 1. Match Principal: CHV_NFE + VL_ITEM ───────────────────────────────
-    match_principal = _match_exato_vetorizado(df_bc2, df_bc1, ["CHV_NFE", "_VAL"])
-    indices_bc1_usados = set(match_principal.values())
-
-    pendentes_idx = df_bc2.index.difference(pd.Index(match_principal.keys()))
-    df_bc2_pend = df_bc2.loc[pendentes_idx]
-    df_bc1_disp = df_bc1.loc[~df_bc1.index.isin(indices_bc1_usados)]
-
-    # ── 2. Match Secundário: similaridade de texto (por nota, em lote) ──────
-    # Passo de GTIN/EAN (COD_BARRA) suspenso — o fallback do Principal vai
-    # direto para o Fuzzy.
-    match_fuzzy = _match_fuzzy_por_nota(df_bc2_pend, df_bc1_disp)
+    # ── Match (Fuzzy): similaridade de texto, só dentro das notas elegíveis ──
+    match_fuzzy = _match_fuzzy_por_nota(df_bc2_elegivel, df_bc1_elegivel)
 
     # ── Monta a BC3 vetorizadamente (sem laço por linha) ────────────────────
-    df_bc3 = df_bc2.drop(columns=["_VAL"]).copy()
+    df_bc3 = df_bc2.copy()
     chaves_declaradas = set(df_bc1["CHV_NFE"])
     nao_declarado = ~df_bc3["CHV_NFE"].isin(chaves_declaradas)
 
@@ -159,17 +141,16 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     df_bc3["DESCR_ITEM_DECLARACAO"] = np.where(nao_declarado, "nd", "nm")
     df_bc3["COD_ITEM_DECLARACAO"]   = np.where(nao_declarado, "nd", "nm")
 
-    def _aplicar(mapa_idx_bc1: dict, tipo: str, scores: dict = None):
+    def _aplicar(mapa_idx_bc1: dict, tipo: str, scores: dict):
         if not mapa_idx_bc1:
             return
         idxs_bc2 = list(mapa_idx_bc1.keys())
         idxs_bc1 = list(mapa_idx_bc1.values())
         df_bc3.loc[idxs_bc2, "MATCH_TIPO"]  = tipo
-        df_bc3.loc[idxs_bc2, "MATCH_SCORE"] = 1.0 if scores is None else [round(scores[i], 4) for i in idxs_bc2]
+        df_bc3.loc[idxs_bc2, "MATCH_SCORE"] = [round(scores[i], 4) for i in idxs_bc2]
         df_bc3.loc[idxs_bc2, "DESCR_ITEM_DECLARACAO"] = df_bc1.loc[idxs_bc1, "DESCR_ITEM"].values
         df_bc3.loc[idxs_bc2, "COD_ITEM_DECLARACAO"]   = df_bc1.loc[idxs_bc1, "COD_ITEM"].values
 
-    _aplicar(match_principal, "PRINCIPAL_VALOR")
     _aplicar(
         {k: v[0] for k, v in match_fuzzy.items()}, "SECUNDARIO_FUZZY",
         scores={k: v[1] for k, v in match_fuzzy.items()},
@@ -180,9 +161,8 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
         "origem_dados": "BC3",
         "total_linhas": len(df_bc3),
         "erros": erros,
-        "match_principal": contagem_tipo.get("PRINCIPAL_VALOR", 0),
         "match_secundario_fuzzy": contagem_tipo.get("SECUNDARIO_FUZZY", 0),
         "nao_declarado": contagem_tipo.get("ND", 0),   # chave inteira ausente do SPED
-        "sem_match_item": contagem_tipo.get("NM", 0),  # chave declarada, item nao casado
+        "sem_match_item": contagem_tipo.get("NM", 0),  # chave declarada mas nao elegivel/nao casada
     }
     return df_bc3, meta
