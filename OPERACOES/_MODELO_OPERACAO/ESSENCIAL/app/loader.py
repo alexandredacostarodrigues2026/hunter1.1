@@ -1134,6 +1134,63 @@ def persistir_banco(callback=None) -> dict:
     return res
 
 
+def bc3_ja_gerada() -> bool:
+    """True se a tabela bc3 (resultado do Matching BC2 x BC1) já existe no
+    DuckDB da operação (mesma lógica de dados_ja_carregados/analise_ja_gerada)."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            return "bc3" in tabelas
+    except Exception:
+        logger.exception("Erro ao verificar tabela bc3 existente em %s", _BANCO_PATH)
+        return False
+
+
+def consultar_bc3(limite: int = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê a tabela bc3 já persistida (sem reprocessar o matching), devolvendo
+    uma amostra (até 'limite' linhas) e o total real de linhas."""
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "bc3" not in tabelas:
+                return pd.DataFrame(), 0
+            total = con.execute("SELECT COUNT(*) FROM bc3").fetchone()[0]
+            df = con.execute(f"SELECT * FROM bc3 LIMIT {limite}").df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar bc3 em %s", _BANCO_PATH)
+        return pd.DataFrame(), 0
+
+
+def persistir_bc3(callback=None) -> dict:
+    """Executa o Matching (Etapa 1 — BC2 x BC1, ver matching.py) e persiste
+    o resultado na tabela bc3. Import de matching.py feito dentro da função
+    (lazy import) para evitar import circular, já que matching.py importa
+    loader.py para ler BC2/BC1."""
+    import matching  # lazy import — ver docstring
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    resultado = {}
+    try:
+        df_bc3, meta = matching.executar_matching()
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            if not df_bc3.empty:
+                con.register("_df_bc3", df_bc3)
+                con.execute("CREATE OR REPLACE TABLE bc3 AS SELECT * FROM _df_bc3")
+                con.unregister("_df_bc3")
+        resultado["bc3"] = len(df_bc3)
+        resultado["meta"] = meta
+        if callback:
+            callback("bc3", resultado["bc3"])
+    except Exception as exc:
+        logger.exception("Erro ao persistir BC3: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
 def carregar_operacao(progresso=None) -> list:
     """Ponto de entrada único da carga: escaneia nfe_path/ por XML pendentes e
     classifica cada um em ET/EP. Usuário só precisa apontar a operação (já
