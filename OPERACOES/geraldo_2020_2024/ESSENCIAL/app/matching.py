@@ -6,8 +6,9 @@ ordem de escrituração no SPED do declarante.
 
 Matching em dois níveis, sempre dentro da MESMA CHV_NFE (cada nível só
 tenta casar o que sobrou do anterior):
-  - Tipo 1: mesmo EAN/GTIN (COD_BARRA do SPED == cean do XML) **e**
-    similaridade de descrição (xprod x DESCR_ITEM) > LIMIAR_TIPO1 (0,90).
+  - Tipo 1: mesmo EAN/GTIN (COD_BARRA do SPED == cean do XML, comparados após
+    normalização — ver _normalizar_gtin) **e** similaridade de descrição
+    (xprod x DESCR_ITEM) > LIMIAR_TIPO1 (0,90).
   - Tipo 2 (fallback): para os itens que não casaram no Tipo 1, mesmo Valor
     Total (VL_ITEM idêntico) **e** similaridade de descrição > LIMIAR_TIPO2
     (0,50).
@@ -58,6 +59,17 @@ _COL_DESCR_XML = "fatoitemnfe_infnfe_det_prod_xprod"
 _SEM_GTIN = {"", "SEM GTIN", "NAN", "NONE"}
 
 
+def _normalizar_gtin(serie: pd.Series) -> np.ndarray:
+    """Normaliza GTIN/EAN para comparação: remove zeros à esquerda, pois o
+    SPED (registro 0200) grava o código padronizado em 14 posições (GTIN-14),
+    enquanto o XML (campo cean) traz o valor cru, tipicamente em 13 dígitos
+    (GTIN-13) — sem essa normalização, "7898034920103" (XML) nunca bate com
+    "07898034920103" (SPED), mesmo sendo o mesmo produto. Um valor 100% zeros
+    (placeholder de "sem GTIN" do SPED) vira string vazia após o lstrip, caindo
+    naturalmente em _SEM_GTIN."""
+    return serie.astype(str).str.strip().str.upper().str.lstrip("0").to_numpy()
+
+
 def _matriz_similaridade(grupo_bc2: pd.DataFrame, grupo_bc1: pd.DataFrame) -> np.ndarray:
     descricoes_bc2 = grupo_bc2[_COL_DESCR_XML].astype(str).tolist()
     descricoes_bc1 = grupo_bc1["DESCR_ITEM"].astype(str).tolist()
@@ -102,8 +114,8 @@ def _match_tipo1_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
 
         matriz = _matriz_similaridade(grupo_bc2, grupo_bc1)
 
-        gtin_bc2 = grupo_bc2["COD_BARRA"].astype(str).str.strip().str.upper().to_numpy()
-        gtin_bc1 = grupo_bc1["COD_BARRA"].astype(str).str.strip().str.upper().to_numpy()
+        gtin_bc2 = _normalizar_gtin(grupo_bc2["COD_BARRA"])
+        gtin_bc1 = _normalizar_gtin(grupo_bc1["COD_BARRA"])
         gtin_valido_bc2 = ~np.isin(gtin_bc2, list(_SEM_GTIN))
         mask_gtin = gtin_valido_bc2[:, None] & (gtin_bc2[:, None] == gtin_bc1[None, :])
 
