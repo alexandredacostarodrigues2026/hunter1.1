@@ -45,7 +45,7 @@ from rapidfuzz import fuzz, process
 
 import loader
 
-LIMIAR_SIMILARIDADE = 0.85
+LIMIAR_SIMILARIDADE = 0.50
 
 _COL_DESCR_XML = "fatoitemnfe_infnfe_det_prod_xprod"
 
