@@ -312,3 +312,69 @@ def render_painel_analise() -> None:
 
     st.session_state["analise_cfop_gerada"] = True
     st.rerun()
+
+
+_COLUNAS_PREVIEW_BC3 = [
+    "CHV_NFE", "COD_ITEM", "NUM_ITEM", "fatoitemnfe_infnfe_det_prod_xprod",
+    "VL_ITEM", "COD_BARRA", "MATCH_TIPO", "MATCH_SCORE",
+    "COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO", "ID_UNICO",
+]
+
+
+def render_bc3() -> None:
+    """Painel do Matching (Etapa 1): cruza a BC2 (XML) com a BC1 (SPED) e
+    mostra o resultado (BC3) — KPIs por tipo de match + botão de geração sob
+    demanda + expander com prévia. A geração pode levar cerca de 1 minuto
+    (similaridade de texto item a item), por isso fica atrás de um botão
+    explícito em vez de rodar automaticamente na carga geral."""
+    st.subheader("Matching (Etapa 1) — BC2 × BC1 = BC3")
+    st.caption(
+        "Cruza os itens de Emissão de Terceiros (BC2, XML) com a declaração (BC1, SPED) "
+        "por valor exato, depois GTIN, depois similaridade de texto — sem depender de NUM_ITEM."
+    )
+
+    if "bc3_gerada" not in st.session_state:
+        st.session_state["bc3_gerada"] = loader.bc3_ja_gerada()
+
+    if st.session_state["bc3_gerada"]:
+        totais = loader.consultar_totais_bc3()
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("Match por Valor", f"{totais['PRINCIPAL_VALOR']:,}".replace(",", "."))
+        col2.metric("Match por GTIN", f"{totais['SECUNDARIO_GTIN']:,}".replace(",", "."))
+        col3.metric("Match por Similaridade", f"{totais['SECUNDARIO_FUZZY']:,}".replace(",", "."))
+        col4.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
+        col5.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
+        st.success("✅ Matching (BC3) pronto.")
+
+        with st.expander("Visualizar resultado do Matching (BC3)"):
+            df_bc3, total = loader.consultar_bc3(limite=200)
+            st.markdown(f"**Amostra** — {total:,} registro(s) no total".replace(",", "."))
+            if df_bc3.empty:
+                st.info("Nenhum registro na BC3.")
+            else:
+                st.dataframe(_preparar_preview(df_bc3, _COLUNAS_PREVIEW_BC3), use_container_width=True)
+
+        clicou = st.button(
+            "Regerar Matching (BC3)",
+            key="btn_regerar_bc3",
+            help="Reprocessa o cruzamento BC2 x BC1 (pode levar cerca de 1 minuto).",
+        )
+    else:
+        clicou = st.button(
+            "Gerar Matching (BC3)",
+            key="btn_gerar_bc3",
+            help="Executa o cruzamento BC2 x BC1 (pode levar cerca de 1 minuto).",
+        )
+
+    if not clicou:
+        return
+
+    with st.spinner("Executando o Matching (BC2 x BC1) — pode levar cerca de 1 minuto..."):
+        resultado = loader.persistir_bc3()
+
+    if "erro" in resultado:
+        st.error(f"Erro: {resultado['erro']}")
+        return
+
+    st.session_state["bc3_gerada"] = True
+    st.rerun()

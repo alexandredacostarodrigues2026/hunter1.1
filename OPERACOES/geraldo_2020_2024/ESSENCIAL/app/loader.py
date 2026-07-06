@@ -1166,6 +1166,27 @@ def consultar_bc3(limite: int = 200) -> "tuple[pd.DataFrame, int]":
         return pd.DataFrame(), 0
 
 
+def consultar_totais_bc3() -> dict:
+    """Retorna a contagem de itens da BC3 por tipo de match (PRINCIPAL_VALOR,
+    SECUNDARIO_GTIN, SECUNDARIO_FUZZY, ND, NM), lendo direto do DuckDB (sem
+    reprocessar) — alimenta os KPIs do painel de Matching."""
+    totais = {"PRINCIPAL_VALOR": 0, "SECUNDARIO_GTIN": 0, "SECUNDARIO_FUZZY": 0, "ND": 0, "NM": 0}
+    if not _BANCO_PATH.exists():
+        return totais
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "bc3" not in tabelas:
+                return totais
+            linhas = con.execute("SELECT MATCH_TIPO, COUNT(*) FROM bc3 GROUP BY MATCH_TIPO").fetchall()
+            for tipo, n in linhas:
+                if tipo in totais:
+                    totais[tipo] = n
+    except Exception:
+        logger.exception("Erro ao consultar totais da bc3 em %s", _BANCO_PATH)
+    return totais
+
+
 def persistir_bc3(callback=None) -> dict:
     """Executa o Matching (Etapa 1 — BC2 x BC1, ver matching.py) e persiste
     o resultado na tabela bc3. Import de matching.py feito dentro da função

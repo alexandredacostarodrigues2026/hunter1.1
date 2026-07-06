@@ -35,7 +35,7 @@ def main() -> None:
     st.subheader(f"Operação ativa: {loader.nome_operacao()}")
     st.divider()
     interface.render_carga_operacao()
-    st.info("Demais módulos (carregamento completo, matching e equalização) ainda não implementados.")
+    st.info("Demais módulos (carregamento completo, equalização) ainda não implementados.")
     if st.session_state.get("dados_carregados"):
         st.divider()
         interface.render_entidade_auditada()
@@ -43,6 +43,8 @@ def main() -> None:
         interface.render_entradas_terceiros()
         st.divider()
         interface.render_painel_analise()
+        st.divider()
+        interface.render_bc3()
 
 
 if __name__ == "__main__":
