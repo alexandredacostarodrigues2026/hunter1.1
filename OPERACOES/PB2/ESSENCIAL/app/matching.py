@@ -6,25 +6,25 @@ ordem de escrituração no SPED do declarante.
 
 Hierarquia de chaves (cada nível só tenta casar o que sobrou do anterior):
   1. Match Principal — CHV_NFE + VL_ITEM (valor exato, arredondado a 2 casas).
-  2. Match Secundário — dentro da MESMA CHV_NFE:
-     a. COD_BARRA (GTIN/EAN) exato.
-     b. Similaridade de texto (produto do XML x DESCR_ITEM do SPED),
-        sugerido quando score > LIMIAR_SIMILARIDADE.
+  2. Match Secundário — dentro da MESMA CHV_NFE: similaridade de texto
+     (produto do XML x DESCR_ITEM do SPED), sugerido quando score >
+     LIMIAR_SIMILARIDADE. (O passo de GTIN/EAN — COD_BARRA — foi suspenso;
+     o fallback do Principal vai direto para o Fuzzy.)
   3. Sem match em nenhum critério — duas situações distintas:
      a. 'nd' (não declarado) — a CHV_NFE inteira não aparece na BC1: a nota
         de compra não foi encontrada na declaração (possível compra não
         declarada, não é só um item sem match).
      b. 'nm' (não match) — a CHV_NFE existe na BC1, mas este item específico
-        não bateu por nenhum dos critérios (valor, GTIN, similaridade).
+        não bateu por nenhum dos critérios (valor, similaridade).
 
 ID_UNICO (já presente em BC1 e BC2) segue existindo só para rastreabilidade
 interna — não é usado como chave de ligação.
 
 Implementação vetorizada (sem .iterrows()/.apply() linha a linha) para
 escalar a operações com milhões de itens:
-  - Match Principal e GTIN: merge (hash join) por (CHV_NFE, campo, rank de
+  - Match Principal: merge (hash join) por (CHV_NFE, valor, rank de
     ocorrência) — o "rank" (posição da ocorrência dentro do grupo, via
-    groupby().cumcount()) é o que garante 1-para-1 mesmo com valores/GTIN
+    groupby().cumcount()) é o que garante 1-para-1 mesmo com valores
     repetidos dentro da mesma chave, sem precisar de laço item a item.
   - Fuzzy: agrupado por CHV_NFE, com a matriz de similaridade calculada em
     lote por nota (rapidfuzz.process.cdist, implementado em C) em vez de
@@ -48,7 +48,6 @@ import loader
 LIMIAR_SIMILARIDADE = 0.85
 
 _COL_DESCR_XML = "fatoitemnfe_infnfe_det_prod_xprod"
-_SEM_GTIN = {"", "SEM GTIN", "NAN", "NONE"}
 
 
 def _arredondar_valor(serie: pd.Series) -> pd.Series:
@@ -145,20 +144,10 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     df_bc2_pend = df_bc2.loc[pendentes_idx]
     df_bc1_disp = df_bc1.loc[~df_bc1.index.isin(indices_bc1_usados)]
 
-    # ── 2a. Match Secundário: GTIN/COD_BARRA (ignora vazio/"sem GTIN") ──────
-    cb2 = df_bc2_pend["COD_BARRA"].astype(str).str.strip().str.upper()
-    cb1 = df_bc1_disp["COD_BARRA"].astype(str).str.strip().str.upper()
-    df_bc2_gtin = df_bc2_pend.assign(_GTIN=cb2)[~cb2.isin(_SEM_GTIN)]
-    df_bc1_gtin = df_bc1_disp.assign(_GTIN=cb1)[~cb1.isin(_SEM_GTIN)]
-    match_gtin = _match_exato_vetorizado(df_bc2_gtin, df_bc1_gtin, ["CHV_NFE", "_GTIN"])
-    indices_bc1_usados |= set(match_gtin.values())
-
-    pendentes_idx2 = pendentes_idx.difference(pd.Index(match_gtin.keys()))
-    df_bc2_pend2 = df_bc2.loc[pendentes_idx2]
-    df_bc1_disp2 = df_bc1.loc[~df_bc1.index.isin(indices_bc1_usados)]
-
-    # ── 2b. Match Secundário: similaridade de texto (por nota, em lote) ─────
-    match_fuzzy = _match_fuzzy_por_nota(df_bc2_pend2, df_bc1_disp2)
+    # ── 2. Match Secundário: similaridade de texto (por nota, em lote) ──────
+    # Passo de GTIN/EAN (COD_BARRA) suspenso — o fallback do Principal vai
+    # direto para o Fuzzy.
+    match_fuzzy = _match_fuzzy_por_nota(df_bc2_pend, df_bc1_disp)
 
     # ── Monta a BC3 vetorizadamente (sem laço por linha) ────────────────────
     df_bc3 = df_bc2.drop(columns=["_VAL"]).copy()
@@ -181,7 +170,6 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
         df_bc3.loc[idxs_bc2, "COD_ITEM_DECLARACAO"]   = df_bc1.loc[idxs_bc1, "COD_ITEM"].values
 
     _aplicar(match_principal, "PRINCIPAL_VALOR")
-    _aplicar(match_gtin, "SECUNDARIO_GTIN")
     _aplicar(
         {k: v[0] for k, v in match_fuzzy.items()}, "SECUNDARIO_FUZZY",
         scores={k: v[1] for k, v in match_fuzzy.items()},
@@ -193,7 +181,6 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
         "total_linhas": len(df_bc3),
         "erros": erros,
         "match_principal": contagem_tipo.get("PRINCIPAL_VALOR", 0),
-        "match_secundario_gtin": contagem_tipo.get("SECUNDARIO_GTIN", 0),
         "match_secundario_fuzzy": contagem_tipo.get("SECUNDARIO_FUZZY", 0),
         "nao_declarado": contagem_tipo.get("ND", 0),   # chave inteira ausente do SPED
         "sem_match_item": contagem_tipo.get("NM", 0),  # chave declarada, item nao casado

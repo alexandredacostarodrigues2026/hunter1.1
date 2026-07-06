@@ -1171,9 +1171,12 @@ def consultar_bc3(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
 
 def consultar_totais_bc3() -> dict:
     """Retorna a contagem de itens da BC3 por tipo de match (PRINCIPAL_VALOR,
-    SECUNDARIO_GTIN, SECUNDARIO_FUZZY, ND, NM), lendo direto do DuckDB (sem
-    reprocessar) — alimenta os KPIs do painel de Matching."""
-    totais = {"PRINCIPAL_VALOR": 0, "SECUNDARIO_GTIN": 0, "SECUNDARIO_FUZZY": 0, "ND": 0, "NM": 0}
+    SECUNDARIO_FUZZY, ND, NM), lendo direto do DuckDB (sem reprocessar) —
+    alimenta os KPIs do painel de Matching. O passo de GTIN foi suspenso;
+    'SECUNDARIO_GTIN' pode ainda aparecer em bases já geradas antes dessa
+    mudança e não regeradas — por isso não é somado a nenhum outro tipo, só
+    deixa de ter contador próprio na interface."""
+    totais = {"PRINCIPAL_VALOR": 0, "SECUNDARIO_FUZZY": 0, "ND": 0, "NM": 0}
     if not _BANCO_PATH.exists():
         return totais
     try:

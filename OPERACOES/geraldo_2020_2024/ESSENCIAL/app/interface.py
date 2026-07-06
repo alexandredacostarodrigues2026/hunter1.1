@@ -330,7 +330,7 @@ def render_bc3() -> None:
     st.subheader("Matching (Etapa 1) — BC2 × BC1 = BC3")
     st.caption(
         "Cruza os itens de Emissão de Terceiros (BC2, XML) com a declaração (BC1, SPED) "
-        "por valor exato, depois GTIN, depois similaridade de texto — sem depender de NUM_ITEM."
+        "por valor exato, depois similaridade de texto — sem depender de NUM_ITEM."
     )
 
     if "bc3_gerada" not in st.session_state:
@@ -338,12 +338,11 @@ def render_bc3() -> None:
 
     if st.session_state["bc3_gerada"]:
         totais = loader.consultar_totais_bc3()
-        col1, col2, col3, col4, col5 = st.columns(5)
+        col1, col2, col3, col4 = st.columns(4)
         col1.metric("Match por Valor", f"{totais['PRINCIPAL_VALOR']:,}".replace(",", "."))
-        col2.metric("Match por GTIN", f"{totais['SECUNDARIO_GTIN']:,}".replace(",", "."))
-        col3.metric("Match por Similaridade", f"{totais['SECUNDARIO_FUZZY']:,}".replace(",", "."))
-        col4.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
-        col5.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
+        col2.metric("Match por Similaridade", f"{totais['SECUNDARIO_FUZZY']:,}".replace(",", "."))
+        col3.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
+        col4.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
         st.success("✅ Matching (BC3) pronto.")
 
         with st.expander("Visualizar resultado do Matching (BC3)"):
