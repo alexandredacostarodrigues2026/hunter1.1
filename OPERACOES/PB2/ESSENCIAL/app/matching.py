@@ -6,7 +6,7 @@ ordem de escrituração no SPED do declarante.
 
 Critério Primário — dentro da MESMA CHV_NFE, são candidatos todos os itens
 do SPED cuja descrição (DESCR_ITEM) tenha similaridade de texto com a
-descrição do XML (xprod) acima de LIMIAR_SIMILARIDADE (0,60).
+descrição do XML (xprod) acima de LIMIAR_SIMILARIDADE (0,50).
 
 Lógica de Desempate — quando um item do XML tem mais de um candidato acima
 do limiar, o candidato escolhido é decidido nesta ordem de prioridade:
@@ -52,7 +52,7 @@ from rapidfuzz import fuzz, process
 
 import loader
 
-LIMIAR_SIMILARIDADE = 0.60
+LIMIAR_SIMILARIDADE = 0.50
 
 _COL_DESCR_XML = "fatoitemnfe_infnfe_det_prod_xprod"
 _SEM_GTIN = {"", "SEM GTIN", "NAN", "NONE"}
@@ -120,7 +120,7 @@ def _match_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
 def executar_matching() -> "tuple[pd.DataFrame, dict]":
     """Executa o cruzamento BC2 (XML, ET) x BC1 (SPED) e devolve a BC3: uma
     linha por item da BC2, com DESCR_ITEM_DECLARACAO/COD_ITEM_DECLARACAO
-    trazidos do BC1 quando houver correspondência (similaridade > 0,60,
+    trazidos do BC1 quando houver correspondência (similaridade > 0,50,
     com desempate por GTIN/Valor/score), 'nd' quando a CHV_NFE não estiver
     declarada, ou 'nm' quando a CHV_NFE existir mas nenhum item atingir o
     limiar de similaridade."""
