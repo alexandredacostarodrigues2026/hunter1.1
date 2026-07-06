@@ -19,6 +19,18 @@ Hierarquia de chaves (cada nível só tenta casar o que sobrou do anterior):
 
 ID_UNICO (já presente em BC1 e BC2) segue existindo só para rastreabilidade
 interna — não é usado como chave de ligação.
+
+Implementação vetorizada (sem .iterrows()/.apply() linha a linha) para
+escalar a operações com milhões de itens:
+  - Match Principal e GTIN: merge (hash join) por (CHV_NFE, campo, rank de
+    ocorrência) — o "rank" (posição da ocorrência dentro do grupo, via
+    groupby().cumcount()) é o que garante 1-para-1 mesmo com valores/GTIN
+    repetidos dentro da mesma chave, sem precisar de laço item a item.
+  - Fuzzy: agrupado por CHV_NFE, com a matriz de similaridade calculada em
+    lote por nota (rapidfuzz.process.cdist, implementado em C) em vez de
+    comparar item a item — o laço em Python passa a ser por NOTA, não por
+    ITEM (uma nota típica tem poucos itens; milhões de itens tendem a virar
+    "só" dezenas/centenas de milhares de notas).
 """
 import sys
 from pathlib import Path
@@ -27,10 +39,11 @@ _APP_DIR = Path(__file__).parent
 if str(_APP_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_DIR))
 
+import numpy as np
 import pandas as pd
+from rapidfuzz import fuzz, process
 
 import loader
-import scoring
 
 LIMIAR_SIMILARIDADE = 0.85
 
@@ -42,65 +55,64 @@ def _arredondar_valor(serie: pd.Series) -> pd.Series:
     return pd.to_numeric(serie, errors="coerce").round(2)
 
 
-def _match_principal(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
-    """Match exato por (CHV_NFE, VL_ITEM arredondado) — 1 para 1: cada linha
-    do BC1 só pode ser usada em uma correspondência. Devolve
-    {indice_bc2: indice_bc1}."""
-    valores_bc1 = _arredondar_valor(df_bc1["VL_ITEM"])
-    disponiveis: dict = {}
-    for idx_bc1, chv in df_bc1["CHV_NFE"].items():
-        disponiveis.setdefault((chv, valores_bc1.loc[idx_bc1]), []).append(idx_bc1)
+def _match_exato_vetorizado(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame, colunas_chave: list) -> dict:
+    """Match exato 1-para-1 via merge (hash join) por 'colunas_chave' (ex.:
+    ['CHV_NFE', '_VAL'] ou ['CHV_NFE', 'COD_BARRA']). Usa groupby().cumcount()
+    como "rank de ocorrência" para casar duplicatas em ordem, sem laço
+    item a item. Devolve {indice_bc2: indice_bc1}."""
+    if df_bc2.empty or df_bc1.empty:
+        return {}
 
-    valores_bc2 = _arredondar_valor(df_bc2["VL_ITEM"])
-    correspondencias = {}
-    for idx_bc2, chv in df_bc2["CHV_NFE"].items():
-        candidatos = disponiveis.get((chv, valores_bc2.loc[idx_bc2]))
-        if candidatos:
-            correspondencias[idx_bc2] = candidatos.pop(0)
-    return correspondencias
+    bc2 = df_bc2[colunas_chave].copy()
+    bc2["_IDX_BC2"] = df_bc2.index
+    bc2["_RANK"] = bc2.groupby(colunas_chave).cumcount()
+
+    bc1 = df_bc1[colunas_chave].copy()
+    bc1["_IDX_BC1"] = df_bc1.index
+    bc1["_RANK"] = bc1.groupby(colunas_chave).cumcount()
+
+    merged = bc2.merge(bc1, on=colunas_chave + ["_RANK"], how="inner")
+    return dict(zip(merged["_IDX_BC2"], merged["_IDX_BC1"]))
 
 
-def _match_secundario(
-    df_bc2: pd.DataFrame, df_bc1: pd.DataFrame,
-    indices_bc2_pendentes: list, indices_bc1_usados: set,
-) -> dict:
-    """Para os itens do BC2 que não casaram no match principal, tenta,
-    dentro da MESMA chave de acesso: (a) COD_BARRA exato; (b) similaridade
-    de texto (produto do XML x DESCR_ITEM do SPED) acima do limiar. Devolve
-    {indice_bc2: (indice_bc1, tipo_match, score)}."""
-    disponiveis_por_chave: dict = {}
-    for idx_bc1, chv in df_bc1["CHV_NFE"].items():
-        if idx_bc1 in indices_bc1_usados:
+def _match_fuzzy_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
+    """Similaridade de texto entre a descrição do produto no XML e no SPED,
+    calculada em LOTE por nota (rapidfuzz.process.cdist) — o laço Python é
+    por CHV_NFE (nota), não por item. Dentro de cada nota, faz atribuição
+    gulosa (maior score primeiro) para não usar o mesmo item da BC1 duas
+    vezes. Devolve {indice_bc2: (indice_bc1, score)}."""
+    if df_bc2.empty or df_bc1.empty:
+        return {}
+
+    grupos_bc1 = {chv: grp for chv, grp in df_bc1.groupby("CHV_NFE")}
+    correspondencias: dict = {}
+
+    for chv, grupo_bc2 in df_bc2.groupby("CHV_NFE"):
+        grupo_bc1 = grupos_bc1.get(chv)
+        if grupo_bc1 is None or grupo_bc1.empty:
             continue
-        disponiveis_por_chave.setdefault(chv, []).append(idx_bc1)
 
-    correspondencias = {}
-    for idx_bc2 in indices_bc2_pendentes:
-        row_bc2 = df_bc2.loc[idx_bc2]
-        candidatos_idx = [
-            i for i in disponiveis_por_chave.get(row_bc2["CHV_NFE"], [])
-            if i not in indices_bc1_usados
-        ]
-        if not candidatos_idx:
+        descricoes_bc2 = grupo_bc2[_COL_DESCR_XML].astype(str).tolist()
+        descricoes_bc1 = grupo_bc1["DESCR_ITEM"].astype(str).tolist()
+
+        matriz = process.cdist(descricoes_bc2, descricoes_bc1, scorer=fuzz.token_sort_ratio) / 100.0
+
+        acima_limiar = np.argwhere(matriz > LIMIAR_SIMILARIDADE)
+        if acima_limiar.size == 0:
             continue
-        candidatos = df_bc1.loc[candidatos_idx]
+        scores = matriz[acima_limiar[:, 0], acima_limiar[:, 1]]
+        ordem = np.argsort(-scores)  # maior score primeiro
 
-        # (a) GTIN/EAN exato
-        cod_barra_bc2 = str(row_bc2.get("COD_BARRA", "")).strip().upper()
-        if cod_barra_bc2 not in _SEM_GTIN:
-            iguais = candidatos[candidatos["COD_BARRA"].astype(str).str.strip().str.upper() == cod_barra_bc2]
-            if not iguais.empty:
-                escolhido = iguais.index[0]
-                correspondencias[idx_bc2] = (escolhido, "SECUNDARIO_GTIN", 1.0)
-                indices_bc1_usados.add(escolhido)
+        usados_i, usados_j = set(), set()
+        idx_bc2_grupo = grupo_bc2.index
+        idx_bc1_grupo = grupo_bc1.index
+        for pos in ordem:
+            i, j = acima_limiar[pos]
+            if i in usados_i or j in usados_j:
                 continue
-
-        # (b) similaridade de texto
-        descricao_bc2 = row_bc2.get(_COL_DESCR_XML, "")
-        idx_melhor, score = scoring.melhor_similaridade(descricao_bc2, candidatos["DESCR_ITEM"].astype(str))
-        if idx_melhor is not None and score > LIMIAR_SIMILARIDADE:
-            correspondencias[idx_bc2] = (idx_melhor, "SECUNDARIO_FUZZY", score)
-            indices_bc1_usados.add(idx_melhor)
+            correspondencias[idx_bc2_grupo[i]] = (idx_bc1_grupo[j], float(scores[pos]))
+            usados_i.add(i)
+            usados_j.add(j)
 
     return correspondencias
 
@@ -109,7 +121,8 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     """Executa o cruzamento BC2 (XML, ET) x BC1 (SPED) e devolve a BC3: uma
     linha por item da BC2, com DESCR_ITEM_DECLARACAO/COD_ITEM_DECLARACAO
     trazidos do BC1 quando houver correspondência (por qualquer um dos
-    critérios) ou 'nd' quando não houver nenhuma."""
+    critérios), 'nd' quando a nota inteira não estiver declarada, ou 'nm'
+    quando a nota existir mas o item não bater por nenhum critério."""
     df_bc2, meta_bc2 = loader.montar_bc2()
     df_bc1, meta_bc1 = loader.load_declaracao_entradas_terceiros()
 
@@ -121,46 +134,60 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     df_bc2 = df_bc2.reset_index(drop=True)
     df_bc1 = df_bc1.reset_index(drop=True)
 
-    match_principal = _match_principal(df_bc2, df_bc1)
+    df_bc2 = df_bc2.assign(_VAL=_arredondar_valor(df_bc2["VL_ITEM"]))
+    df_bc1 = df_bc1.assign(_VAL=_arredondar_valor(df_bc1["VL_ITEM"]))
+
+    # ── 1. Match Principal: CHV_NFE + VL_ITEM ───────────────────────────────
+    match_principal = _match_exato_vetorizado(df_bc2, df_bc1, ["CHV_NFE", "_VAL"])
     indices_bc1_usados = set(match_principal.values())
-    pendentes = [i for i in df_bc2.index if i not in match_principal]
-    match_secundario = _match_secundario(df_bc2, df_bc1, pendentes, indices_bc1_usados)
+
+    pendentes_idx = df_bc2.index.difference(pd.Index(match_principal.keys()))
+    df_bc2_pend = df_bc2.loc[pendentes_idx]
+    df_bc1_disp = df_bc1.loc[~df_bc1.index.isin(indices_bc1_usados)]
+
+    # ── 2a. Match Secundário: GTIN/COD_BARRA (ignora vazio/"sem GTIN") ──────
+    cb2 = df_bc2_pend["COD_BARRA"].astype(str).str.strip().str.upper()
+    cb1 = df_bc1_disp["COD_BARRA"].astype(str).str.strip().str.upper()
+    df_bc2_gtin = df_bc2_pend.assign(_GTIN=cb2)[~cb2.isin(_SEM_GTIN)]
+    df_bc1_gtin = df_bc1_disp.assign(_GTIN=cb1)[~cb1.isin(_SEM_GTIN)]
+    match_gtin = _match_exato_vetorizado(df_bc2_gtin, df_bc1_gtin, ["CHV_NFE", "_GTIN"])
+    indices_bc1_usados |= set(match_gtin.values())
+
+    pendentes_idx2 = pendentes_idx.difference(pd.Index(match_gtin.keys()))
+    df_bc2_pend2 = df_bc2.loc[pendentes_idx2]
+    df_bc1_disp2 = df_bc1.loc[~df_bc1.index.isin(indices_bc1_usados)]
+
+    # ── 2b. Match Secundário: similaridade de texto (por nota, em lote) ─────
+    match_fuzzy = _match_fuzzy_por_nota(df_bc2_pend2, df_bc1_disp2)
+
+    # ── Monta a BC3 vetorizadamente (sem laço por linha) ────────────────────
+    df_bc3 = df_bc2.drop(columns=["_VAL"]).copy()
     chaves_declaradas = set(df_bc1["CHV_NFE"])
+    nao_declarado = ~df_bc3["CHV_NFE"].isin(chaves_declaradas)
 
-    linhas = []
-    for idx_bc2, row_bc2 in df_bc2.iterrows():
-        linha = row_bc2.to_dict()
-        if idx_bc2 in match_principal:
-            idx_bc1 = match_principal[idx_bc2]
-            linha["MATCH_TIPO"]  = "PRINCIPAL_VALOR"
-            linha["MATCH_SCORE"] = 1.0
-            linha["DESCR_ITEM_DECLARACAO"] = df_bc1.at[idx_bc1, "DESCR_ITEM"]
-            linha["COD_ITEM_DECLARACAO"]   = df_bc1.at[idx_bc1, "COD_ITEM"]
-        elif idx_bc2 in match_secundario:
-            idx_bc1, tipo, score = match_secundario[idx_bc2]
-            linha["MATCH_TIPO"]  = tipo
-            linha["MATCH_SCORE"] = round(score, 4)
-            linha["DESCR_ITEM_DECLARACAO"] = df_bc1.at[idx_bc1, "DESCR_ITEM"]
-            linha["COD_ITEM_DECLARACAO"]   = df_bc1.at[idx_bc1, "COD_ITEM"]
-        elif row_bc2["CHV_NFE"] not in chaves_declaradas:
-            # a chave de acesso inteira não aparece na declaração (SPED) —
-            # possível compra não declarada, não é só um item sem match.
-            linha["MATCH_TIPO"]  = "ND"
-            linha["MATCH_SCORE"] = 0.0
-            linha["DESCR_ITEM_DECLARACAO"] = "nd"
-            linha["COD_ITEM_DECLARACAO"]   = "nd"
-        else:
-            # a nota existe na declaração, mas este item específico não bateu
-            # por nenhum dos critérios (valor, GTIN, similaridade de texto).
-            linha["MATCH_TIPO"]  = "NM"
-            linha["MATCH_SCORE"] = 0.0
-            linha["DESCR_ITEM_DECLARACAO"] = "nm"
-            linha["COD_ITEM_DECLARACAO"]   = "nm"
-        linhas.append(linha)
+    df_bc3["MATCH_TIPO"] = np.where(nao_declarado, "ND", "NM")
+    df_bc3["MATCH_SCORE"] = 0.0
+    df_bc3["DESCR_ITEM_DECLARACAO"] = np.where(nao_declarado, "nd", "nm")
+    df_bc3["COD_ITEM_DECLARACAO"]   = np.where(nao_declarado, "nd", "nm")
 
-    df_bc3 = pd.DataFrame(linhas)
+    def _aplicar(mapa_idx_bc1: dict, tipo: str, scores: dict = None):
+        if not mapa_idx_bc1:
+            return
+        idxs_bc2 = list(mapa_idx_bc1.keys())
+        idxs_bc1 = list(mapa_idx_bc1.values())
+        df_bc3.loc[idxs_bc2, "MATCH_TIPO"]  = tipo
+        df_bc3.loc[idxs_bc2, "MATCH_SCORE"] = 1.0 if scores is None else [round(scores[i], 4) for i in idxs_bc2]
+        df_bc3.loc[idxs_bc2, "DESCR_ITEM_DECLARACAO"] = df_bc1.loc[idxs_bc1, "DESCR_ITEM"].values
+        df_bc3.loc[idxs_bc2, "COD_ITEM_DECLARACAO"]   = df_bc1.loc[idxs_bc1, "COD_ITEM"].values
+
+    _aplicar(match_principal, "PRINCIPAL_VALOR")
+    _aplicar(match_gtin, "SECUNDARIO_GTIN")
+    _aplicar(
+        {k: v[0] for k, v in match_fuzzy.items()}, "SECUNDARIO_FUZZY",
+        scores={k: v[1] for k, v in match_fuzzy.items()},
+    )
+
     contagem_tipo = df_bc3["MATCH_TIPO"].value_counts().to_dict()
-
     meta = {
         "origem_dados": "BC3",
         "total_linhas": len(df_bc3),
