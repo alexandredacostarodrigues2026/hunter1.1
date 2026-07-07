@@ -1,0 +1,28 @@
+//excessões para emit=dest    
+    IF(
+    // Remessa em bonificação, doação ou brinde
+    CFOP_prod='5910' OR 
+    CFOP_prod='6910' OR 
+    
+    //baixa de estoque decorrente de perda, roubo ou deterioração
+    CFOP_prod='5927' OR 
+    CFOP_prod='6927' OR 
+    
+    //baixa de estoque decorrente do encerramento da atividade da empresa
+    CFOP_prod='5928' OR 
+    
+     //Lançamento efetuado a título de reclassificação de mercadoria decorrente de formação de kit ou de sua desagregação
+    CFOP_prod='5926' OR  
+     CFOP_prod='1926' 
+     
+    ,0,1) as obs2
+    
+                    
+                    	//RECLASSIFICAÇÃO
+                    
+	      //obs1	          obs2	                   obs	
+//saída	    0(e<>d)	          0(brinde_baixa_reclass)	       0	         ok
+	     // 0(e<>d)	          1(não brinde_baixa_reclass)	   1	         ok
+	     // 1(e=d)	          0(brinde_baixa_reclass)	       1	         ok
+	     // 1(e=d)	          1(não brinde_baixa_reclass)	   2	         exclusão  EP  É EXCLUIDA, POIS HÁ
+         //WHERE PARA ET (LINHA 98)

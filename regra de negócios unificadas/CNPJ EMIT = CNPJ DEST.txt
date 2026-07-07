@@ -1,0 +1,12 @@
+/*
+where CPF_CNPJ_emit<>CPF_CNPJ_dest somente para ET.
+IGUALDADE de CNPJ EP resolve a situação pois:
+CPF_CNPJ_emit = CPF_CNPJ_dest / Tp op 1 / R$ 1000,00
+caso haja retorno:
+CPF_CNPJ_emit = CPF_CNPJ_dest / Tp op 0  / R$ 1000,00
+*/
+
+
+refeito-produção
+permitir tudo e retirar somente cfops de baixa de estoque 5927 e 6927
+

@@ -1,0 +1,84 @@
+DICIONARIO DE CAMPOS
+Nome amigavel dos campos tecnicos extraidos (dicionario geral, nao restrito a uma distribuidora).
+Base inicial: cabecalhos do CSV em DADOS BRUTOS\PB_DISTRIBUIDORA\NOME (arquivo ET, ja publicado
+com nomes amigaveis), mapeamento posicional (69 colunas, mesma ordem em ET, EP, CODIGO/ET e CODIGO/EP).
+
+campo_tecnico;nome_amigavel
+fatonfe_infnfe_ide_dhemi_dia_da_semana;Data e Hora de emissao do Documento Fiscal - Dia da semana
+fatonfe_infnfe_ide_dhemi_data;Data e Hora de emissao do Documento Fiscal - Data
+fatonfe_infnfe_ide_dhemi_hora;Data e Hora de emissao do Documento Fiscal - Hora
+fatonfe_infnfe_ide_dhemi;Data e Hora de emissao do Documento Fiscal
+fatonfe_infnfe_ide_mod;Codigo do modelo do Documento Fiscal
+fatonfe_informix_stnfeletronica;Situacao da Nota Fiscal Eletronica
+fatonfe_infnfe_total_icmstot_vnf;Valor Total da NFe
+fatonfe_infnfe_total_icmstot_vdesc;Valor Total do Desconto - ICMS Total
+fatonfe_infnfe_ide_nnf;Numero do Documento Fiscal
+fatonfe_infnfe_ide_tpnf;Tipo do Documento Fiscal
+fatonfe_infnfe_ide_natop;Descricao da Natureza da Operacao
+fatonfe_infnfe_emit_ie;Inscricao Estadual do emitente
+fatonfe_infnfe_emit_cnpj;Numero do CNPJ do emitente
+fatonfe_infnfe_emit_cpf;Numero do CPF do emitente
+fatonfe_infnfe_emit_xnome;Razao Social ou Nome do emitente
+fatonfe_infnfe_emit_enderemit_xlgr;Logradouro do emitente
+fatonfe_infnfe_emit_enderemit_nro;Numero do endereco do emitente
+fatonfe_infnfe_emit_enderemit_xcpl;Complemento do endereco do emitente
+fatonfe_infnfe_emit_enderemit_xbairro;Bairro do emitente
+fatonfe_infnfe_emit_enderemit_xmun;Nome do municipio do emitente
+fatonfe_infnfe_emit_enderemit_uf;Sigla da UF do emitente
+fatonfe_infnfe_emit_enderemit_fone;Codigo DDD + numero do telefone (v.2.0) do emitente
+fatonfe_infnfe_dest_ie;Inscricao Estadual do destinatario
+fatonfe_infnfe_dest_cnpj;Numero do CNPJ do destinatario
+fatonfe_infnfe_dest_cpf;Numero do CPF do destinatario
+fatonfe_infnfe_dest_xnome;Razao Social ou nome do destinatario
+fatonfe_infnfe_dest_enderdest_xlgr;Logradouro do destinatario
+fatonfe_infnfe_dest_enderdest_nro;Numero do endereco do destinatario
+fatonfe_infnfe_dest_enderdest_xcpl;Complemento do endereco do destinatario
+fatonfe_infnfe_dest_enderdest_xbairro;Bairro do destinatario
+fatonfe_infnfe_dest_enderdest_xmun;Nome do municipio do destinatario
+fatonfe_infnfe_dest_enderdest_uf;Sigla da UF (ou EX para operacoes com o exterior) do destinatario
+fatonfe_infnfe_dest_enderdest_fone;Codigo DDD + numero do telefone (v.2.0) do destinatario
+fatonfe_infnfe_total_icmstot_vbc;BC do ICMS total
+fatonfe_infnfe_total_icmstot_vicms;Valor Total do ICMS
+fatonfe_infnfe_total_icmstot_vbcst;BC do ICMS total ST
+fatonfe_infnfe_total_icmstot_vst;Valor Total do ICMS ST
+fatonfe_infnfe_total_icmstot_vprod;Valor Total dos produtos e servicos - ICMS Total
+fatonfe_infnfe_total_icmstot_vipi;Valor Total do IPI - ICMS Total
+fatonfe_infnfe_infadic_infadfisco;Informacoes adicionais de interesse do Fisco (v2.0)
+fatonfe_infnfe_infadic_obscont_xtexto;Conteudo do campo - Informacoes adicionais da NFe
+fatonfe_infnfe_infadic_infcpl;Informacoes complementares de interesse do Contribuinte
+fatonfe_informix_nriptransmissor;IP da conexao de envio da Nota Fiscal Eletronica
+fatonfe_informix_nrportacon;Porta da conexao de envio da Nota Fiscal Eletronica
+fatonfe_informix_dhconexao_dia_da_semana;Data e hora da conexao de envio da Nota Fiscal Eletronica - Dia da semana
+fatonfe_informix_dhconexao_data;Data e hora da conexao de envio da Nota Fiscal Eletronica - Data
+fatonfe_informix_dhconexao_hora;Data e hora da conexao de envio da Nota Fiscal Eletronica - Hora
+fatonfe_informix_dhconexao;Data e hora da conexao de envio da Nota Fiscal Eletronica
+fatonfe_infprot_chnfe;Chaves de acesso da NFe
+fatoitemnfe_infnfe_det_imposto_icms_cst;Tributacao pelo ICMS
+fatoitemnfe_infprot_chnfe;Chaves de acesso do item da NFe
+fatoitemnfe_infnfe_det_imposto_icms_csosn;Codigo de situacao da operacao do simples nacional
+fatoitemnfe_infnfe_det_nitem;Dados dos detalhes da NFe
+fatoitemnfe_infnfe_det_prod_cprod;Codigo do produto ou servico
+fatoitemnfe_infnfe_det_prod_cean;GTIN (Global Trade Item Number) do produto
+fatoitemnfe_infnfe_det_prod_ncm;Codigo NCM (8 posicoes)
+fatoitemnfe_infnfe_det_prod_xprod;Descricao do produto ou servico
+fatoitemnfe_infnfe_det_prod_cfop;Cfop
+fatoitemnfe_infnfe_det_prod_ucom;Unidade comercial
+fatoitemnfe_infnfe_det_prod_qcom;Quantidade Comercial do produto
+fatoitemnfe_infnfe_det_prod_vuncom;Valor unitario de comercializacao
+fatoitemnfe_infnfe_det_prod_vprod;Valor bruto do produto ou servico
+fatoitemnfe_infnfe_det_prod_vdesc;Valor do Desconto
+fatoitemnfe_infnfe_det_imposto_icms_vbc;Valor da BC da partilha do ICMS
+fatoitemnfe_infnfe_det_imposto_icms_vicms;Valor do ICMS
+fatoitemnfe_infnfe_det_imposto_icms_picms;Aliquota da partilha do ICMS
+fatoitemnfe_infnfe_det_imposto_icms_vbcst;Valor da BC do ICMS ST
+fatoitemnfe_infnfe_det_imposto_icms_vicmsst;Valor do ICMS ST
+fatoitemnfe_infnfe_det_imposto_icms_picmsst;Aliquota do ICMS ST
+
+# Novos campos - 2026-07-05 (prefixos padronizados: f. -> fatonfe_, i. -> fatoitemnfe_)
+fatonfe_infnfe_ide_serie;Serie do Documento Fiscal
+fatonfe_infnfe_total_icmstot_vbc;BC do ICMS total
+fatonfe_infnfe_total_icmstot_vicms_ok;Valor Total do ICMS_ok
+fatoitemnfe_infnfe_det_prod_cprod;Codigo do produto ou servico
+fatoitemnfe_infnfe_det_prod_cean;GTIN (Global Trade Item Number) do produto
+fatoitemnfe_infnfe_det_imposto_icms_vbc;Valor da BC da partilha do ICMS
+fatoitemnfe_infnfe_det_imposto_icms_vicms;Valor do ICMS

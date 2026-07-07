@@ -1,0 +1,51 @@
+CFOP 5929 - Lançamento efetuado em decorrência de emissão de documento fiscal relativo a operação ou prestação também registrada em equipamento Emissor de Cupom Fiscal - ECF
+R$1.611.733,67
+
+
+
+5102
+5405
+5927
+5928
+5929
+6929
+
+
+
+
+
+
+NOTAS ELIMINADAS
+CFOP 5927-Lançamento efetuado a título de baixa de estoque decorrente de perda, roubo ou deterioração
+
+
+CFOP 5928 - Lançamento efetuado a título de baixa de estoque decorrente do encerramento da atividade da empresa
+
+
+CFOP 5929 - Lançamento efetuado em decorrência de emissão de documento fiscal relativo a operação ou prestação também registrada em equipamento Emissor de Cupom Fiscal - ECF
+
+
+CFOP 6929 - Lançamento efetuado em decorrência de emissão de documento fiscal relativo a operação ou prestação também registrada em equipamento Emissor de Cupom Fiscal - ECF
+______________________________________________________________________________________
+1
+barradas da ET NFe e EP NFe
+CFOP 5929 - Lançamento efetuado em decorrência de emissão de documento fiscal relativo a operação ou prestação também registrada
+ em equipamento Emissor de Cupom Fiscal - ECF
+
+CFOP 6929 - Lançamento efetuado em decorrência de emissão de documento fiscal relativo a operação ou prestação também registrada
+ em equipamento Emissor de Cupom Fiscal - ECF
+
+2
+
+
+5 
+barradas da ET NFe
+CPF_CNPJ_emit=CPF_CNPJ_dest    (NFe serão replicadas na EP)
+EX
+CFOP 5927-Lançamento efetuado a título de baixa de estoque decorrente de perda, roubo ou deterioração
+CFOP 5928 - Lançamento efetuado a título de baixa de estoque decorrente do encerramento da atividade da empresa 
+
+
+checar
+5102
+5904

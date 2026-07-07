@@ -1,0 +1,45 @@
+
+condições
+1 - ei+c < v+ef compras de mercadorias sem notas = estoque a descoberto
+
+1.1 c>0 (quantidade de produto cruzado >1)
+pu: média dos valor das compras
+"...na pepercussão pretérita, cobra-se ICMS cuja base de cálculo é o valor nominal ds notas fiscais não lançadas, sem qualquer agregação, tendo em vista a ilação de que o valor das vendas 
+pretéritas omitidas serviu como receita marginal para quitar as meradorias constantes das notas fiscais não contabilizadas, diante da ausência do lançamento concernente ao desembolso do
+numerário de uma conta de disponibilidade finaceira (banco e/o caixa). (pag261_TEMAS POLÎMICOS_UMA VISÃO CRÍTICA E ATUALIZADA).
+
+1.2 c=0 (quantidade de produto cruzado =0  não há o produto cruzado na compra)
+pu: vendas-30%
+
+
+///////////////////////////////////////////////////////////////////////////////////////
+
+
+2 - ei+c > v+ef vendas de mercadorias sem notas
+2.1 v>0 (quantidade de produto cruzado >1)
+pu: vendas
+
+
+2.2 v=0 (quantidade de produto cruzado =0  não há o produto cruzado na compra)
+pu: compras+30%
+
+
+
+
+
+
+
+
+
+
+
+
+	
+
+
+
+
+
+
+
+

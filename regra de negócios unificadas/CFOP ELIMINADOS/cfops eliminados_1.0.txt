@@ -1,0 +1,48 @@
+
+1-seção '1_ET_NFE'
+barradas da ET NFe e EP NFe
+CFOP 5929 - Lançamento efetuado em decorrência de emissão de documento fiscal relativo a operação ou prestação também registrada
+em equipamento Emissor de Cupom Fiscal - ECF
+
+CFOP 6929 - Lançamento efetuado em decorrência de emissão de documento fiscal relativo a operação ou prestação também registrada
+ em equipamento Emissor de Cupom Fiscal - ECF
+
+2-seção '9_T_NF_AJUSTES_PRODUTOS'
+barradas da ET NFe e EP NFe
+"1922","2922","5922","6922“: SIMPLES FATURAMENTO PARA ENTREGA
+"1923","2923","5923","6923“: VENDA A ORDEM
+
+3-seção '1_ET_NFE' 
+barradas somnete da ET NFe
+CPF_CNPJ_emit=CPF_CNPJ_dest    (NFe serão replicadas na EP)
+EX
+CFOP 5927-Lançamento efetuado a título de baixa de estoque decorrente de perda, roubo ou deterioração
+CFOP 5928 - Lançamento efetuado a título de baixa de estoque decorrente do encerramento da atividade da empresa 
+
+
+vide word 'CHAVES EXCLUÍDAS'
+
+_________________________________________________________________________________________________________
+
+checar situação de nelson
+5102-Venda de mercadoria adquirida ou recebida de terceiros
+Classificam-se neste código as vendas de mercadorias adquiridas ou recebidas de terceiros para industrialização ou comercialização, 
+que não tenham sido objeto de qualquer processo industrial no estabelecimento. 
+Também serão classificadas neste código as vendas de mercadorias por estabelecimento comercial de cooperativa destinadas 
+a seus cooperados ou estabelecimento de outra cooperativa.
+
+O CFOP 5102 é um dos códigos existentes na tabela CFOP, e trata da venda de produtos comprados de outros locais ou que foram recebidos. 
+São casos em que algo é vendido, como mercadorias para serem processadas ou vendidas novamente, 
+desde que não tenham sido modificadas na empresa.
+
+CFOP 5904 - Remessa para venda fora do estabelecimento
+Classificam-se neste código as remessas de mercadorias para venda fora do estabelecimento, inclusive por meio de veículos.
+
+Na remessa das mercadorias para a venda na feira livre, e no retorno daquelas não vendidas, deverá ser emitida Nota Fiscal Eletrônica (NF-e), 
+utilizando-se, respectivamente, os CFOPs 5.904 (remessa para venda fora do estabelecimento) 
+e 1.904 (retorno de remessa para venda fora do estabelecimento).
+
+
+{<[ref_v2.CH V1 NA V2?]={'N'}>}
+
+Valor Total do Desconto - ICMS Total

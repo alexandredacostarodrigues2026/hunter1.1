@@ -1,0 +1,11 @@
+DIRETRIZES
+datas: modelo antigo
+
+et: 
+considera-se xml da nota (exceção: data nas declarações)
+motivos para desconsiderar et declarados:
+diferençada em vtn, vtp, quantidades dos produtos
+declaração extemporânea
+
+ep:
+considera-se xml da nota (observar regramento das datas)

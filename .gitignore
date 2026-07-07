@@ -55,3 +55,10 @@ NF/
 # Arquivos temporarios do Office (lock files)
 ~$*.xlsx
 ~$*.docx
+
+# Documentos pesados de exemplo em "regra de negócios unificadas/" (podem
+# conter notas fiscais reais de exemplo) — versiona-se só o texto puro
+# (.txt) das regras, não os anexos binários (PDF/docx/xlsx).
+regra de negócios unificadas/**/*.pdf
+regra de negócios unificadas/**/*.docx
+regra de negócios unificadas/**/*.xlsx

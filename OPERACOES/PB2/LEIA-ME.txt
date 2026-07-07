@@ -1,0 +1,53 @@
+======================================================
+  MODELO DE OPERACAO - Equalizador de Produtos
+======================================================
+
+COMO USAR PARA UMA OPERACAO/CLIENTE NOVO
+------------------------------------------------------
+
+1. Copie esta pasta inteira (_MODELO_OPERACAO) para dentro de OPERACOES\
+2. Renomeie a copia para o nome da operacao/cliente
+   (ex.: OPERACOES\nome_do_cliente\)
+3. Abra ESSENCIAL\config\config.json e confira:
+   - "port": ajuste se necessario (padrao 8601 no modelo)
+   - "entidade_auditada": null (sera identificado automaticamente
+     apos a primeira carga)
+4. Coloque os XML de NF-e recebidos direto em:
+     1-DOCFISCAIS\nf\
+   (o sistema classifica automaticamente em ET\ ou EP\)
+5. Para abrir o painel no navegador, clique em:
+     ESSENCIAL\iniciar_sistema.bat
+6. Para carregar os XML via linha de comando (sem abrir o painel):
+     carregar_xml.bat
+
+
+DIFERENCA DESTA VERSAO DO MODELO
+------------------------------------------------------
+
+Este modelo possui ESSENCIAL\ propria (Python + Streamlit embarcados),
+podendo ser implantado em qualquer PC Windows sem Python instalado e
+sem depender de outra operacao.
+
+Runtime: ESSENCIAL\runtime\python.exe (Python 3.12 embeddable)
+Porta padrao: 8600 (padrao unico de todas as operacoes - o auditor abre uma por vez)
+
+
+ONDE FICAM OS DADOS GERADOS
+------------------------------------------------------
+
+   ESSENCIAL\banco\                 banco de dados local
+   ESSENCIAL\logs\                  logs de execucao
+   ESSENCIAL\history\               contexto e snapshots
+   1-DOCFISCAIS\nf\ET\              XML de entrada (recebidos)
+   1-DOCFISCAIS\nf\EP\              XML de saida (emitidos)
+
+
+SE ALGO DER ERRADO
+------------------------------------------------------
+
+1. Verifique: ESSENCIAL\logs\launcher.log
+2. Verifique: ESSENCIAL\logs\streamlit.log
+3. Para reconfigurar o runtime:
+     ESSENCIAL\launcher\setup_ambiente.bat
+
+======================================================
