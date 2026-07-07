@@ -359,9 +359,7 @@ def render_bc3() -> None:
         "Tipo 3 (aprendizado) = itens 'nd'/'nm' recuperados por histórico de CNPJ do emitente + "
         "código do produto (XML) + ano de emissão já confirmado em Tipo 1/Tipo 2. "
         "Tipo 4 (integridade de nota) = itens 'nd'/'nm' restantes, recuperados só em notas onde a "
-        "contagem de itens e o valor total batem entre XML e SPED, por similaridade > 50%. "
-        "Tipo 5 (último recurso) = itens 'nd'/'nm' restantes, casados só por similaridade > 50% "
-        "dentro da mesma CHV_NFE, sem exigir GTIN, valor ou integridade de nota."
+        "contagem de itens e o valor total batem entre XML e SPED, por similaridade > 50%."
     )
 
     if "bc3_gerada" not in st.session_state:
@@ -369,14 +367,13 @@ def render_bc3() -> None:
 
     if st.session_state["bc3_gerada"]:
         totais = loader.consultar_totais_bc3()
-        col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+        col1, col2, col3, col4, col5, col6 = st.columns(6)
         col1.metric("Matches Tipo 1", f"{totais['TIPO_1']:,}".replace(",", "."))
         col2.metric("Matches Tipo 2", f"{totais['TIPO_2']:,}".replace(",", "."))
         col3.metric("Matches Tipo 3", f"{totais['TIPO_3']:,}".replace(",", "."))
         col4.metric("Matches Tipo 4", f"{totais['TIPO_4']:,}".replace(",", "."))
-        col5.metric("Matches Tipo 5", f"{totais['TIPO_5']:,}".replace(",", "."))
-        col6.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
-        col7.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
+        col5.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
+        col6.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
         st.success("✅ Matching (BC3) pronto.")
 
         with st.expander("Visualizar resultado do Matching (BC3)"):

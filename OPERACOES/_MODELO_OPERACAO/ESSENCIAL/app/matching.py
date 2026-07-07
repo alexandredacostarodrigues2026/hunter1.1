@@ -4,7 +4,7 @@ Terceiros) com a BC1 (SPED — sped_entradas_terceiros) para produzir a BC3
 sequencial dos itens no XML do fornecedor não necessariamente bate com a
 ordem de escrituração no SPED do declarante.
 
-Matching em cinco níveis, os quatro primeiros sempre dentro da MESMA CHV_NFE
+Matching em quatro níveis, os três primeiros sempre dentro da MESMA CHV_NFE
 (cada nível só tenta casar o que sobrou do anterior):
   - Tipo 1: mesmo EAN/GTIN (COD_BARRA do SPED == cean do XML, comparados após
     normalização — ver _normalizar_gtin) **e** similaridade de descrição
@@ -25,18 +25,14 @@ Matching em cinco níveis, os quatro primeiros sempre dentro da MESMA CHV_NFE
     e o lado SPED (BC1), ver _integridade_por_nota — e casa, só dentro
     dessas notas, por similaridade de descrição > LIMIAR_TIPO4 (0,50),
     1-para-1. Ver _match_tipo4_por_nota.
-  - Tipo 5 (último recurso): para os itens que ainda sobraram 'nd'/'nm' após
-    o Tipo 4, casa dentro da mesma CHV_NFE só por similaridade de descrição
-    > LIMIAR_TIPO5 (0,50), 1-para-1, sem exigir GTIN, valor ou integridade
-    de nota. Ver _match_tipo5_por_nota.
 
-Não Declarados e Não Matches (antes do Tipo 3/4/5):
+Não Declarados e Não Matches (antes do Tipo 3/4):
   - 'nd' (Não Declarado) — a CHV_NFE inteira não aparece na BC1.
   - 'nm' (Não Match) — a CHV_NFE existe na BC1, mas o item não passou nem no
     Tipo 1 nem no Tipo 2.
-Itens 'nd'/'nm' recuperados pelo Tipo 3, 4 ou 5 mudam de status para
-'TIPO_3'/'TIPO_4'/'TIPO_5'; os que não encontram correspondência em nenhum
-deles mantêm 'ND'/'NM'.
+Itens 'nd'/'nm' recuperados pelo Tipo 3 ou Tipo 4 mudam de status para
+'TIPO_3'/'TIPO_4'; os que não encontram correspondência em nenhum dos dois
+mantêm 'ND'/'NM'.
 
 Consistência de Unicidade — um item da BC1 (declaração) não pode ser
 "consumido" por dois matches diferentes (1 para 1), nem entre os dois tipos.
@@ -71,7 +67,6 @@ import scoring
 LIMIAR_TIPO1 = 0.90  # mesmo GTIN/EAN + similaridade
 LIMIAR_TIPO2 = 0.60  # mesmo Valor Total + similaridade
 LIMIAR_TIPO4 = 0.50  # nota integra (mesma contagem/valor) + similaridade
-LIMIAR_TIPO5 = 0.50  # ultimo recurso: so similaridade, mesma chave
 
 _COL_DESCR_XML = "fatoitemnfe_infnfe_det_prod_xprod"
 _COL_CNPJ_EMIT_XML = "fatonfe_infnfe_emit_cnpj"
@@ -316,38 +311,12 @@ def _match_tipo4_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame, chaves_int
     return correspondencias
 
 
-def _match_tipo5_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
-    """Tipo 5 (último recurso): dentro da mesma CHV_NFE, casa só por
-    similaridade de descrição > LIMIAR_TIPO5, 1-para-1 (_atribuir_1_para_1)
-    — sem exigir GTIN, valor ou integridade de nota. Chamado só com os itens
-    que sobraram 'nd'/'nm' após Tipo 1/2/3/4. Devolve
-    {indice_bc2: (indice_bc1, score)}."""
-    if df_bc2.empty or df_bc1.empty:
-        return {}
-
-    grupos_bc1 = {chv: grp for chv, grp in df_bc1.groupby("CHV_NFE")}
-    correspondencias: dict = {}
-
-    for chv, grupo_bc2 in df_bc2.groupby("CHV_NFE"):
-        grupo_bc1 = grupos_bc1.get(chv)
-        if grupo_bc1 is None or grupo_bc1.empty:
-            continue
-
-        matriz = _matriz_similaridade(grupo_bc2, grupo_bc1)
-        mask_final = matriz > LIMIAR_TIPO5
-        correspondencias.update(
-            _atribuir_1_para_1(mask_final, matriz, grupo_bc2.index, grupo_bc1.index)
-        )
-
-    return correspondencias
-
-
 def executar_matching() -> "tuple[pd.DataFrame, dict]":
-    """Executa o cruzamento BC2 (XML, ET) x BC1 (SPED) em cinco níveis e
+    """Executa o cruzamento BC2 (XML, ET) x BC1 (SPED) em quatro níveis e
     devolve a BC3: uma linha por item da BC2, com DESCR_ITEM_DECLARACAO/
     COD_ITEM_DECLARACAO trazidos do BC1 quando houver correspondência
-    (Tipo 1, 2, 3, 4 ou 5), 'nd' quando a CHV_NFE não estiver declarada, ou
-    'nm' quando a CHV_NFE existir mas o item não passar em nenhum dos tipos."""
+    (Tipo 1, 2, 3 ou 4), 'nd' quando a CHV_NFE não estiver declarada, ou 'nm'
+    quando a CHV_NFE existir mas o item não passar em nenhum dos tipos."""
     df_bc2, meta_bc2 = loader.montar_bc2()
     df_bc1, meta_bc1 = loader.load_declaracao_entradas_terceiros()
 
@@ -410,14 +379,6 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     df_bc1_disp_tipo4 = df_bc1.loc[~df_bc1.index.isin(indices_bc1_usados)]
     match_tipo4 = _match_tipo4_por_nota(df_bc2_pend_tipo4, df_bc1_disp_tipo4, chaves_integras)
     _aplicar(match_tipo4, "TIPO_4")
-    indices_bc1_usados |= {v[0] for v in match_tipo4.values()}
-
-    # ── Tipo 5: ultimo recurso (so similaridade) sobre o que ainda sobrou ───
-    idx_pendente_tipo5 = df_bc3.index[df_bc3["MATCH_TIPO"].isin(("ND", "NM"))]
-    df_bc2_pend_tipo5 = df_bc2.loc[idx_pendente_tipo5]
-    df_bc1_disp_tipo5 = df_bc1.loc[~df_bc1.index.isin(indices_bc1_usados)]
-    match_tipo5 = _match_tipo5_por_nota(df_bc2_pend_tipo5, df_bc1_disp_tipo5)
-    _aplicar(match_tipo5, "TIPO_5")
 
     contagem_tipo = df_bc3["MATCH_TIPO"].value_counts().to_dict()
     meta = {
@@ -428,8 +389,7 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
         "match_tipo2": contagem_tipo.get("TIPO_2", 0),
         "match_tipo3": contagem_tipo.get("TIPO_3", 0),
         "match_tipo4": contagem_tipo.get("TIPO_4", 0),
-        "match_tipo5": contagem_tipo.get("TIPO_5", 0),
-        "nao_declarado": contagem_tipo.get("ND", 0),   # chave inteira ausente do SPED (apos Tipo 3/4/5)
-        "sem_match_item": contagem_tipo.get("NM", 0),  # chave declarada, item nao casou em nenhum tipo (apos Tipo 3/4/5)
+        "nao_declarado": contagem_tipo.get("ND", 0),   # chave inteira ausente do SPED (apos Tipo 3/4)
+        "sem_match_item": contagem_tipo.get("NM", 0),  # chave declarada, item nao casou em nenhum tipo (apos Tipo 3/4)
     }
     return df_bc3, meta
