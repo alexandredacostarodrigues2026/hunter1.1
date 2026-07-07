@@ -369,7 +369,11 @@ def render_bc3() -> None:
 
     if st.session_state["bc3_gerada"]:
         totais = loader.consultar_totais_bc3()
-        col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+        total_itens = sum(totais.values())
+        total_casados = totais["TIPO_1"] + totais["TIPO_2"] + totais["TIPO_3"] + totais["TIPO_4"] + totais["TIPO_5"]
+        taxa_match = (total_casados / total_itens * 100) if total_itens else 0.0
+
+        col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
         col1.metric("Matches Tipo 1", f"{totais['TIPO_1']:,}".replace(",", "."))
         col2.metric("Matches Tipo 2", f"{totais['TIPO_2']:,}".replace(",", "."))
         col3.metric("Matches Tipo 3", f"{totais['TIPO_3']:,}".replace(",", "."))
@@ -377,6 +381,7 @@ def render_bc3() -> None:
         col5.metric("Matches Tipo 5", f"{totais['TIPO_5']:,}".replace(",", "."))
         col6.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
         col7.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
+        col8.metric("Taxa de Match", f"{taxa_match:.1f}%".replace(".", ","))
         st.success("✅ Matching (BC3) pronto.")
 
         with st.expander("Visualizar resultado do Matching (BC3)"):
