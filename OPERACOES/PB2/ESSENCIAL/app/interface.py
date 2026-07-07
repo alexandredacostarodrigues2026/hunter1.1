@@ -359,8 +359,8 @@ def render_bc3() -> None:
         "Tipo 3 (aprendizado) = itens 'nd'/'nm' recuperados por histórico de CNPJ do emitente + "
         "código do produto (XML) + ano de emissão já confirmado em Tipo 1/Tipo 2. "
         "Tipo 4 (integridade de nota) = itens 'nd'/'nm' restantes, recuperados só em notas onde a "
-        "contagem de itens e o valor total batem entre XML e SPED, por similaridade > 50%. "
-        "Tipo 5 (último recurso) = itens 'nd'/'nm' restantes, casados só por similaridade > 50% "
+        "contagem de itens e o valor total batem entre XML e SPED, por similaridade > 70%. "
+        "Tipo 5 (último recurso) = itens 'nd'/'nm' restantes, casados só por similaridade > 70% "
         "dentro da mesma CHV_NFE, sem exigir GTIN, valor ou integridade de nota."
     )
 

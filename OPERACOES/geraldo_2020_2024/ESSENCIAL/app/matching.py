@@ -23,11 +23,11 @@ Matching em cinco níveis, os quatro primeiros sempre dentro da MESMA CHV_NFE
     após o Tipo 3, restringe às CHV_NFE onde a nota é "íntegra" — mesma
     contagem de itens **e** mesmo somatório de VL_ITEM entre o lado XML (BC2)
     e o lado SPED (BC1), ver _integridade_por_nota — e casa, só dentro
-    dessas notas, por similaridade de descrição > LIMIAR_TIPO4 (0,50),
+    dessas notas, por similaridade de descrição > LIMIAR_TIPO4 (0,70),
     1-para-1. Ver _match_tipo4_por_nota.
   - Tipo 5 (último recurso): para os itens que ainda sobraram 'nd'/'nm' após
     o Tipo 4, casa dentro da mesma CHV_NFE só por similaridade de descrição
-    > LIMIAR_TIPO5 (0,50), 1-para-1, sem exigir GTIN, valor ou integridade
+    > LIMIAR_TIPO5 (0,70), 1-para-1, sem exigir GTIN, valor ou integridade
     de nota. Ver _match_tipo5_por_nota.
 
 Não Declarados e Não Matches (antes do Tipo 3/4/5):
@@ -70,8 +70,8 @@ import scoring
 
 LIMIAR_TIPO1 = 0.90  # mesmo GTIN/EAN + similaridade
 LIMIAR_TIPO2 = 0.60  # mesmo Valor Total + similaridade
-LIMIAR_TIPO4 = 0.50  # nota integra (mesma contagem/valor) + similaridade
-LIMIAR_TIPO5 = 0.50  # ultimo recurso: so similaridade, mesma chave
+LIMIAR_TIPO4 = 0.70  # nota integra (mesma contagem/valor) + similaridade
+LIMIAR_TIPO5 = 0.70  # ultimo recurso: so similaridade, mesma chave
 
 _COL_DESCR_XML = "fatoitemnfe_infnfe_det_prod_xprod"
 _COL_CNPJ_EMIT_XML = "fatonfe_infnfe_emit_cnpj"
