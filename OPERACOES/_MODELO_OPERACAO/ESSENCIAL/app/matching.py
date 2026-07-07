@@ -4,19 +4,28 @@ Terceiros) com a BC1 (SPED — sped_entradas_terceiros) para produzir a BC3
 sequencial dos itens no XML do fornecedor não necessariamente bate com a
 ordem de escrituração no SPED do declarante.
 
-Matching em dois níveis, sempre dentro da MESMA CHV_NFE (cada nível só
-tenta casar o que sobrou do anterior):
+Matching em três níveis, os dois primeiros sempre dentro da MESMA CHV_NFE
+(cada nível só tenta casar o que sobrou do anterior):
   - Tipo 1: mesmo EAN/GTIN (COD_BARRA do SPED == cean do XML, comparados após
     normalização — ver _normalizar_gtin) **e** similaridade de descrição
     (xprod x DESCR_ITEM) > LIMIAR_TIPO1 (0,90).
   - Tipo 2 (fallback): para os itens que não casaram no Tipo 1, mesmo Valor
     Total (VL_ITEM idêntico) **e** similaridade de descrição > LIMIAR_TIPO2
     (0,60).
+  - Tipo 3 (aprendizado histórico): para os itens que sobraram como 'nd' ou
+    'nm', busca num dicionário de aprendizado — construído só a partir dos
+    matches já confirmados em Tipo 1/Tipo 2 — a combinação CNPJ_EMITENTE +
+    COD_ITEM (XML) + ANO_EMISSAO (dígitos 3-4 da CHV_NFE). Não depende de
+    similaridade de texto nem de a nota estar declarada: sinaliza como aquele
+    fornecedor/código costuma ser escriturado, mesmo quando a nota nem consta
+    na declaração ('nd'). Ver _match_tipo3.
 
-Não Declarados e Não Matches:
+Não Declarados e Não Matches (antes do Tipo 3):
   - 'nd' (Não Declarado) — a CHV_NFE inteira não aparece na BC1.
   - 'nm' (Não Match) — a CHV_NFE existe na BC1, mas o item não passou nem no
     Tipo 1 nem no Tipo 2.
+Itens 'nd'/'nm' recuperados pelo Tipo 3 mudam de status para 'TIPO_3'; os
+que não encontram par no dicionário de aprendizado mantêm 'ND'/'NM'.
 
 Consistência de Unicidade — um item da BC1 (declaração) não pode ser
 "consumido" por dois matches diferentes (1 para 1), nem entre os dois tipos.
@@ -52,6 +61,7 @@ LIMIAR_TIPO1 = 0.90  # mesmo GTIN/EAN + similaridade
 LIMIAR_TIPO2 = 0.60  # mesmo Valor Total + similaridade
 
 _COL_DESCR_XML = "fatoitemnfe_infnfe_det_prod_xprod"
+_COL_CNPJ_EMIT_XML = "fatonfe_infnfe_emit_cnpj"
 _SEM_GTIN = {"", "SEM GTIN", "NAN", "NONE"}
 
 
@@ -152,6 +162,83 @@ def _match_tipo2_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
     return correspondencias
 
 
+def _normalizar_codigo(serie: pd.Series) -> np.ndarray:
+    """Normaliza código de item (COD_ITEM) para comparação: remove espaços e
+    zeros à esquerda (Regra Operacional R07) — mesma lógica de
+    _normalizar_gtin, aplicada ao código do item em vez do GTIN/EAN."""
+    return serie.astype(str).str.strip().str.upper().str.lstrip("0").to_numpy()
+
+
+def _extrair_ano_emissao(serie: pd.Series) -> np.ndarray:
+    """Extrai o ano de emissão (2 dígitos) a partir dos dígitos 3-4 da
+    CHV_NFE — chave de acesso da NF-e é UF(2)+AAMM(4)+CNPJ(14)+... , então as
+    posições 3-4 (1-indexado) são o "AA" do campo AAMM."""
+    return serie.astype(str).str.strip().str.slice(2, 4).to_numpy()
+
+
+def _chave_aprendizado(df: pd.DataFrame) -> pd.Series:
+    """Monta a chave de vínculo do dicionário de aprendizado (Tipo 3):
+    CNPJ_EMITENTE (XML) + COD_ITEM (XML, normalizado) + ANO_EMISSAO (dígitos
+    3-4 da CHV_NFE)."""
+    return pd.Series(
+        df[_COL_CNPJ_EMIT_XML].astype(str).str.strip().to_numpy()
+        + "|" + _normalizar_codigo(df["COD_ITEM"])
+        + "|" + _extrair_ano_emissao(df["CHV_NFE"]),
+        index=df.index,
+    )
+
+
+def _montar_dicionario_aprendizado(df_bc3: pd.DataFrame) -> pd.DataFrame:
+    """Constrói o dicionário de aprendizado exclusivamente a partir dos
+    matches já confirmados de Tipo 1 e Tipo 2: mapeia CNPJ_EMITENTE +
+    COD_ITEM (XML) + ANO_EMISSAO -> COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO
+    já vinculados historicamente. Em caso de chaves repetidas (mesmo
+    fornecedor/código/ano com mais de um par histórico), prevalece a
+    primeira ocorrência."""
+    confirmados = df_bc3[df_bc3["MATCH_TIPO"].isin(("TIPO_1", "TIPO_2"))]
+    if confirmados.empty:
+        return pd.DataFrame(columns=["COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO"])
+
+    aprendizado = pd.DataFrame({
+        "_CHAVE": _chave_aprendizado(confirmados),
+        "COD_ITEM_DECLARACAO": confirmados["COD_ITEM_DECLARACAO"].to_numpy(),
+        "DESCR_ITEM_DECLARACAO": confirmados["DESCR_ITEM_DECLARACAO"].to_numpy(),
+    })
+    return aprendizado.drop_duplicates("_CHAVE").set_index("_CHAVE")
+
+
+def _match_tipo3(df_bc3: pd.DataFrame) -> int:
+    """Tipo 3 (aprendizado histórico): para itens 'ND' ou 'NM', busca no
+    dicionário de aprendizado (montado só a partir de matches confirmados de
+    Tipo 1/Tipo 2 — ver _montar_dicionario_aprendizado) a combinação
+    CNPJ_EMITENTE + COD_ITEM (XML) + ANO_EMISSAO. Encontrando, preenche
+    COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO com o histórico e muda o status
+    para 'TIPO_3' — inclusive para 'ND' (sinaliza ao auditor como o produto
+    costuma ser escriturado quando a nota é declarada). Sem correspondência,
+    mantém o status original ('ND'/'NM'). Devolve a quantidade recuperada.
+    Muta df_bc3 in-place."""
+    dicionario = _montar_dicionario_aprendizado(df_bc3)
+    if dicionario.empty:
+        return 0
+
+    alvo_mask = df_bc3["MATCH_TIPO"].isin(("ND", "NM"))
+    if not alvo_mask.any():
+        return 0
+
+    chave_alvo = _chave_aprendizado(df_bc3.loc[alvo_mask])
+    cod_encontrado   = chave_alvo.map(dicionario["COD_ITEM_DECLARACAO"])
+    descr_encontrado = chave_alvo.map(dicionario["DESCR_ITEM_DECLARACAO"])
+    achou = cod_encontrado.notna()
+    if not achou.any():
+        return 0
+
+    idx_achou = achou[achou].index
+    df_bc3.loc[idx_achou, "MATCH_TIPO"]            = "TIPO_3"
+    df_bc3.loc[idx_achou, "COD_ITEM_DECLARACAO"]   = cod_encontrado.loc[idx_achou].values
+    df_bc3.loc[idx_achou, "DESCR_ITEM_DECLARACAO"] = descr_encontrado.loc[idx_achou].values
+    return int(achou.sum())
+
+
 def executar_matching() -> "tuple[pd.DataFrame, dict]":
     """Executa o cruzamento BC2 (XML, ET) x BC1 (SPED) em dois níveis e
     devolve a BC3: uma linha por item da BC2, com DESCR_ITEM_DECLARACAO/
@@ -204,6 +291,9 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     _aplicar(match_tipo1, "TIPO_1")
     _aplicar(match_tipo2, "TIPO_2")
 
+    # ── Tipo 3: aprendizado histórico sobre o que sobrou como ND/NM ─────────
+    _match_tipo3(df_bc3)
+
     contagem_tipo = df_bc3["MATCH_TIPO"].value_counts().to_dict()
     meta = {
         "origem_dados": "BC3",
@@ -211,7 +301,8 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
         "erros": erros,
         "match_tipo1": contagem_tipo.get("TIPO_1", 0),
         "match_tipo2": contagem_tipo.get("TIPO_2", 0),
-        "nao_declarado": contagem_tipo.get("ND", 0),   # chave inteira ausente do SPED
-        "sem_match_item": contagem_tipo.get("NM", 0),  # chave declarada, item nao casou em nenhum tipo
+        "match_tipo3": contagem_tipo.get("TIPO_3", 0),
+        "nao_declarado": contagem_tipo.get("ND", 0),   # chave inteira ausente do SPED (apos Tipo 3)
+        "sem_match_item": contagem_tipo.get("NM", 0),  # chave declarada, item nao casou em nenhum tipo (apos Tipo 3)
     }
     return df_bc3, meta
