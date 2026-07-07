@@ -141,6 +141,20 @@ def _match_tipo1_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
     return correspondencias
 
 
+def _valor_numerico(serie: pd.Series) -> pd.Series:
+    """Converte VL_ITEM para numérico tolerando separador decimal por
+    vírgula — o SPED/EFD grava valores não-inteiros como "33,60" (formato
+    BR), enquanto o XML sempre usa ponto ("33.60"). Sem essa normalização,
+    pd.to_numeric() descarta como NaN qualquer VL_ITEM do lado SPED com
+    vírgula (bug real encontrado: ~82% das linhas da BC1 nesta operação),
+    quebrando o casamento por Valor Total (Tipo 2) e a soma de integridade
+    de nota (Tipo 4)."""
+    return pd.to_numeric(
+        serie.astype(str).str.strip().str.replace(",", ".", regex=False),
+        errors="coerce",
+    )
+
+
 def _match_tipo2_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
     """Tipo 2 (fallback): dentro da mesma CHV_NFE, mesmo Valor Total (VL_ITEM
     idêntico) E similaridade de descrição > LIMIAR_TIPO2. Chamado só com os
@@ -158,8 +172,8 @@ def _match_tipo2_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
 
         matriz = _matriz_similaridade(grupo_bc2, grupo_bc1)
 
-        val_bc2 = pd.to_numeric(grupo_bc2["VL_ITEM"], errors="coerce").round(2).to_numpy()
-        val_bc1 = pd.to_numeric(grupo_bc1["VL_ITEM"], errors="coerce").round(2).to_numpy()
+        val_bc2 = _valor_numerico(grupo_bc2["VL_ITEM"]).round(2).to_numpy()
+        val_bc1 = _valor_numerico(grupo_bc1["VL_ITEM"]).round(2).to_numpy()
         mask_valor = val_bc2[:, None] == val_bc1[None, :]
 
         mask_final = (matriz > LIMIAR_TIPO2) & mask_valor
@@ -256,8 +270,8 @@ def _integridade_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> set:
     contagem_bc2 = df_bc2.groupby("CHV_NFE").size()
     contagem_bc1 = df_bc1.groupby("CHV_NFE").size()
 
-    valor_bc2 = pd.to_numeric(df_bc2["VL_ITEM"], errors="coerce")
-    valor_bc1 = pd.to_numeric(df_bc1["VL_ITEM"], errors="coerce")
+    valor_bc2 = _valor_numerico(df_bc2["VL_ITEM"])
+    valor_bc1 = _valor_numerico(df_bc1["VL_ITEM"])
     soma_bc2 = valor_bc2.groupby(df_bc2["CHV_NFE"]).sum().round(2)
     soma_bc1 = valor_bc1.groupby(df_bc1["CHV_NFE"]).sum().round(2)
 
