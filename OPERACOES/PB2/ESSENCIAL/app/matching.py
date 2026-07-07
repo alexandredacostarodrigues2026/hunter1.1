@@ -4,7 +4,7 @@ Terceiros) com a BC1 (SPED — sped_entradas_terceiros) para produzir a BC3
 sequencial dos itens no XML do fornecedor não necessariamente bate com a
 ordem de escrituração no SPED do declarante.
 
-Matching em três níveis, os dois primeiros sempre dentro da MESMA CHV_NFE
+Matching em quatro níveis, os três primeiros sempre dentro da MESMA CHV_NFE
 (cada nível só tenta casar o que sobrou do anterior):
   - Tipo 1: mesmo EAN/GTIN (COD_BARRA do SPED == cean do XML, comparados após
     normalização — ver _normalizar_gtin) **e** similaridade de descrição
@@ -19,13 +19,20 @@ Matching em três níveis, os dois primeiros sempre dentro da MESMA CHV_NFE
     similaridade de texto nem de a nota estar declarada: sinaliza como aquele
     fornecedor/código costuma ser escriturado, mesmo quando a nota nem consta
     na declaração ('nd'). Ver _match_tipo3.
+  - Tipo 4 (integridade de nota): para os itens que ainda sobraram 'nd'/'nm'
+    após o Tipo 3, restringe às CHV_NFE onde a nota é "íntegra" — mesma
+    contagem de itens **e** mesmo somatório de VL_ITEM entre o lado XML (BC2)
+    e o lado SPED (BC1), ver _integridade_por_nota — e casa, só dentro
+    dessas notas, por similaridade de descrição > LIMIAR_TIPO4 (0,50),
+    1-para-1. Ver _match_tipo4_por_nota.
 
-Não Declarados e Não Matches (antes do Tipo 3):
+Não Declarados e Não Matches (antes do Tipo 3/4):
   - 'nd' (Não Declarado) — a CHV_NFE inteira não aparece na BC1.
   - 'nm' (Não Match) — a CHV_NFE existe na BC1, mas o item não passou nem no
     Tipo 1 nem no Tipo 2.
-Itens 'nd'/'nm' recuperados pelo Tipo 3 mudam de status para 'TIPO_3'; os
-que não encontram par no dicionário de aprendizado mantêm 'ND'/'NM'.
+Itens 'nd'/'nm' recuperados pelo Tipo 3 ou Tipo 4 mudam de status para
+'TIPO_3'/'TIPO_4'; os que não encontram correspondência em nenhum dos dois
+mantêm 'ND'/'NM'.
 
 Consistência de Unicidade — um item da BC1 (declaração) não pode ser
 "consumido" por dois matches diferentes (1 para 1), nem entre os dois tipos.
@@ -59,6 +66,7 @@ import scoring
 
 LIMIAR_TIPO1 = 0.90  # mesmo GTIN/EAN + similaridade
 LIMIAR_TIPO2 = 0.60  # mesmo Valor Total + similaridade
+LIMIAR_TIPO4 = 0.50  # nota integra (mesma contagem/valor) + similaridade
 
 _COL_DESCR_XML = "fatoitemnfe_infnfe_det_prod_xprod"
 _COL_CNPJ_EMIT_XML = "fatonfe_infnfe_emit_cnpj"
@@ -239,12 +247,62 @@ def _match_tipo3(df_bc3: pd.DataFrame) -> int:
     return int(achou.sum())
 
 
+def _integridade_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> set:
+    """Calcula, por CHV_NFE, a contagem de itens e o somatório de VL_ITEM em
+    cada lado (XML/BC2 e SPED/BC1) e devolve o conjunto de CHV_NFE onde
+    ambos batem exatamente ("nota íntegra") — pré-requisito do Tipo 4.
+    Usa as bases completas (todos os itens da nota, não só os pendentes),
+    já que a integridade é uma propriedade estrutural da nota inteira."""
+    contagem_bc2 = df_bc2.groupby("CHV_NFE").size()
+    contagem_bc1 = df_bc1.groupby("CHV_NFE").size()
+
+    valor_bc2 = pd.to_numeric(df_bc2["VL_ITEM"], errors="coerce")
+    valor_bc1 = pd.to_numeric(df_bc1["VL_ITEM"], errors="coerce")
+    soma_bc2 = valor_bc2.groupby(df_bc2["CHV_NFE"]).sum().round(2)
+    soma_bc1 = valor_bc1.groupby(df_bc1["CHV_NFE"]).sum().round(2)
+
+    chaves_comuns = contagem_bc2.index.intersection(contagem_bc1.index)
+    mesma_contagem = contagem_bc2.loc[chaves_comuns].to_numpy() == contagem_bc1.loc[chaves_comuns].to_numpy()
+    mesmo_valor    = soma_bc2.loc[chaves_comuns].to_numpy() == soma_bc1.loc[chaves_comuns].to_numpy()
+
+    return set(chaves_comuns[mesma_contagem & mesmo_valor])
+
+
+def _match_tipo4_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame, chaves_integras: set) -> dict:
+    """Tipo 4 (integridade de nota): restringe às CHV_NFE "íntegras" (mesma
+    contagem de itens e mesmo somatório de VL_ITEM entre XML e SPED — ver
+    _integridade_por_nota) e casa, dentro delas, só por similaridade de
+    descrição > LIMIAR_TIPO4, 1-para-1 (_atribuir_1_para_1). Chamado só com
+    os itens que sobraram 'nd'/'nm' após Tipo 1/2/3. Devolve
+    {indice_bc2: (indice_bc1, score)}."""
+    if df_bc2.empty or df_bc1.empty or not chaves_integras:
+        return {}
+
+    grupos_bc1 = {chv: grp for chv, grp in df_bc1.groupby("CHV_NFE")}
+    correspondencias: dict = {}
+
+    for chv, grupo_bc2 in df_bc2.groupby("CHV_NFE"):
+        if chv not in chaves_integras:
+            continue
+        grupo_bc1 = grupos_bc1.get(chv)
+        if grupo_bc1 is None or grupo_bc1.empty:
+            continue
+
+        matriz = _matriz_similaridade(grupo_bc2, grupo_bc1)
+        mask_final = matriz > LIMIAR_TIPO4
+        correspondencias.update(
+            _atribuir_1_para_1(mask_final, matriz, grupo_bc2.index, grupo_bc1.index)
+        )
+
+    return correspondencias
+
+
 def executar_matching() -> "tuple[pd.DataFrame, dict]":
-    """Executa o cruzamento BC2 (XML, ET) x BC1 (SPED) em dois níveis e
+    """Executa o cruzamento BC2 (XML, ET) x BC1 (SPED) em quatro níveis e
     devolve a BC3: uma linha por item da BC2, com DESCR_ITEM_DECLARACAO/
     COD_ITEM_DECLARACAO trazidos do BC1 quando houver correspondência
-    (Tipo 1 ou Tipo 2), 'nd' quando a CHV_NFE não estiver declarada, ou 'nm'
-    quando a CHV_NFE existir mas o item não passar em nenhum dos dois tipos."""
+    (Tipo 1, 2, 3 ou 4), 'nd' quando a CHV_NFE não estiver declarada, ou 'nm'
+    quando a CHV_NFE existir mas o item não passar em nenhum dos tipos."""
     df_bc2, meta_bc2 = loader.montar_bc2()
     df_bc1, meta_bc1 = loader.load_declaracao_entradas_terceiros()
 
@@ -256,6 +314,12 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     df_bc2 = df_bc2.reset_index(drop=True)
     df_bc1 = df_bc1.reset_index(drop=True)
 
+    # Integridade de nota (contagem de itens + somatório de VL_ITEM iguais
+    # entre XML e SPED) calculada sobre as bases completas, antes de
+    # qualquer consumo por Tipo 1/2 — é propriedade da nota, não dos itens
+    # ainda disponíveis (Tipo 4).
+    chaves_integras = _integridade_por_nota(df_bc2, df_bc1)
+
     # ── Tipo 1: GTIN + similaridade > 0,90 ──────────────────────────────────
     match_tipo1 = _match_tipo1_por_nota(df_bc2, df_bc1)
     indices_bc1_usados = {v[0] for v in match_tipo1.values()}
@@ -266,6 +330,7 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
 
     # ── Tipo 2 (fallback): Valor + similaridade > 0,60 ──────────────────────
     match_tipo2 = _match_tipo2_por_nota(df_bc2_pend, df_bc1_disp)
+    indices_bc1_usados |= {v[0] for v in match_tipo2.values()}
 
     # ── Monta a BC3 vetorizadamente (sem laço por linha) ────────────────────
     df_bc3 = df_bc2.copy()
@@ -294,6 +359,13 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     # ── Tipo 3: aprendizado histórico sobre o que sobrou como ND/NM ─────────
     _match_tipo3(df_bc3)
 
+    # ── Tipo 4: integridade de nota sobre o que ainda sobrou ND/NM ──────────
+    idx_pendente_tipo4 = df_bc3.index[df_bc3["MATCH_TIPO"].isin(("ND", "NM"))]
+    df_bc2_pend_tipo4 = df_bc2.loc[idx_pendente_tipo4]
+    df_bc1_disp_tipo4 = df_bc1.loc[~df_bc1.index.isin(indices_bc1_usados)]
+    match_tipo4 = _match_tipo4_por_nota(df_bc2_pend_tipo4, df_bc1_disp_tipo4, chaves_integras)
+    _aplicar(match_tipo4, "TIPO_4")
+
     contagem_tipo = df_bc3["MATCH_TIPO"].value_counts().to_dict()
     meta = {
         "origem_dados": "BC3",
@@ -302,7 +374,8 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
         "match_tipo1": contagem_tipo.get("TIPO_1", 0),
         "match_tipo2": contagem_tipo.get("TIPO_2", 0),
         "match_tipo3": contagem_tipo.get("TIPO_3", 0),
-        "nao_declarado": contagem_tipo.get("ND", 0),   # chave inteira ausente do SPED (apos Tipo 3)
-        "sem_match_item": contagem_tipo.get("NM", 0),  # chave declarada, item nao casou em nenhum tipo (apos Tipo 3)
+        "match_tipo4": contagem_tipo.get("TIPO_4", 0),
+        "nao_declarado": contagem_tipo.get("ND", 0),   # chave inteira ausente do SPED (apos Tipo 3/4)
+        "sem_match_item": contagem_tipo.get("NM", 0),  # chave declarada, item nao casou em nenhum tipo (apos Tipo 3/4)
     }
     return df_bc3, meta
