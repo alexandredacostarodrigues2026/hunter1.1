@@ -25,6 +25,7 @@ __pycache__/
 **/qlik/*.csv
 **/exports/
 DADOS/
+/DADOS BRUTOS/
 
 # Arquivos avulsos vazios na raiz (resíduo de algum comando, sem extensão/uso identificado)
 /Python
