@@ -361,6 +361,10 @@ _CAMPOS_H010 = [
     "COD_PART", "TXT_COMPL", "COD_CTA", "VL_ITEM_IR",
 ]
 _CAMPOS_0190 = ["UNID", "DESCR"]
+_CAMPOS_0150 = [
+    "COD_PART", "NOME", "COD_PAIS", "CNPJ", "CPF", "IE", "COD_MUN",
+    "SUFRAMA", "END", "NUM", "COMPL", "BAIRRO",
+]
 _CAMPOS_0000 = [
     "COD_VER", "COD_FIN", "DT_INI", "DT_FIN", "NOME", "CNPJ", "CPF", "UF",
     "IE", "COD_MUN", "IM", "SUFRAMA", "IND_PERFIL", "IND_ATIV",
@@ -466,6 +470,7 @@ def _parse_itens_c170_com_c100(arquivos: list) -> pd.DataFrame:
                 linha = dict(zip(_CAMPOS_C170, valores))
                 linha["IND_OPER"]       = c100_atual.get("IND_OPER", "")
                 linha["IND_EMIT"]       = c100_atual.get("IND_EMIT", "")
+                linha["COD_PART"]       = c100_atual.get("COD_PART", "")
                 linha["NUM_DOC"]        = c100_atual.get("NUM_DOC", "")
                 linha["CHV_NFE"]        = c100_atual.get("CHV_NFE", "")
                 linha["DT_DOC"]         = c100_atual.get("DT_DOC", "")
@@ -474,7 +479,7 @@ def _parse_itens_c170_com_c100(arquivos: list) -> pd.DataFrame:
                 linha["ARQUIVO_ORIGEM"] = arquivo.name
                 linhas.append(linha)
     df = pd.DataFrame(linhas)
-    df = _forcar_colunas_string(df, ["COD_ITEM", "UNID", "CHV_NFE", "NUM_ITEM"])
+    df = _forcar_colunas_string(df, ["COD_ITEM", "UNID", "CHV_NFE", "NUM_ITEM", "COD_PART"])
     return _gerar_id_unico(df, ["CHV_NFE", "NUM_ITEM"])
 
 
@@ -562,6 +567,33 @@ def load_declaracao_unidades() -> "tuple[pd.DataFrame, dict]":
     return df, meta
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_declaracao_participantes() -> "tuple[pd.DataFrame, dict]":
+    """Carrega o cadastro de participantes da declaração (registro 0150) —
+    chave de ligação para o campo 03 (COD_PART) do C100, usado para obter o
+    CNPJ do emitente em load_declaracao_entradas_terceiros() (Regra
+    Operacional R07: COD_PART e CNPJ tratados como string)."""
+    config   = load_config()
+    arquivos = _localizar_arquivos_sped(config)
+    meta: dict = {"arquivos": [str(a) for a in arquivos], "origem_dados": "DECLARACAO_PARTICIPANTES", "erros": []}
+
+    if not arquivos:
+        meta["erros"].append(f"Nenhum arquivo SPED encontrado em {_resolver_path(config, 'sped_path', '2-DECLARACAO/SPED')}")
+        return pd.DataFrame(), meta
+
+    df = _parse_registros_sped(arquivos, "0150", _CAMPOS_0150)
+    if df.empty:
+        meta["erros"].append("Nenhum registro 0150 encontrado nos arquivos SPED.")
+        return df, meta
+
+    df = _forcar_colunas_string(df, ["COD_PART", "CNPJ"])
+
+    meta["total_linhas"]  = len(df)
+    meta["total_colunas"] = len(df.columns)
+    meta["colunas"]       = df.columns.tolist()
+    return df, meta
+
+
 def _enriquecer_itens_com_cadastro(
     df_itens: pd.DataFrame, df_produtos: pd.DataFrame, df_unidades: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -596,10 +628,11 @@ def _enriquecer_itens_com_cadastro(
 def load_declaracao_entradas_terceiros() -> "tuple[pd.DataFrame, dict]":
     """Chaves de entrada de emissão de terceiros: C100 com IND_OPER=0 (entrada)
     e IND_EMIT=1 (emitido por terceiros) + itens C170, enriquecidos com o
-    cadastro de produto (0200) e de unidade de medida (0190). Os filtros de
-    CFOP e situação (Regra Operacional R07) são exclusivos do lado XML
-    (_carregar_nfe) — não se aplicam à declaração (EFD/SPED). COD_ITEM,
-    UNID e CHV_NFE tratados como string."""
+    cadastro de produto (0200), de unidade de medida (0190) e o CNPJ do
+    emitente via cadastro de participantes (0150, ligado por COD_PART). Os
+    filtros de CFOP e situação (Regra Operacional R07) são exclusivos do lado
+    XML (_carregar_nfe) — não se aplicam à declaração (EFD/SPED). COD_ITEM,
+    UNID, CHV_NFE e CNPJ tratados como string."""
     df_itens, meta_itens = load_declaracao_itens()
     if df_itens.empty:
         meta_itens["origem_dados"] = "DECLARACAO_ENTRADAS_TERCEIROS"
@@ -610,10 +643,18 @@ def load_declaracao_entradas_terceiros() -> "tuple[pd.DataFrame, dict]":
         & (df_itens["IND_EMIT"].astype(str).str.strip() == "1")
     ].copy()
 
-    df_produtos, _  = load_declaracao_produtos()
-    df_unidades, _  = load_declaracao_unidades()
+    df_produtos, _     = load_declaracao_produtos()
+    df_unidades, _     = load_declaracao_unidades()
+    df_participantes, _ = load_declaracao_participantes()
     df = _enriquecer_itens_com_cadastro(df, df_produtos, df_unidades)
-    df = _forcar_colunas_string(df, ["COD_ITEM", "UNID", "CHV_NFE"])
+
+    if not df_participantes.empty and "COD_PART" in df.columns and "CNPJ" in df_participantes.columns:
+        cadastro_part = df_participantes[["COD_PART", "CNPJ"]].drop_duplicates("COD_PART")
+        df = df.merge(cadastro_part, on="COD_PART", how="left")
+    else:
+        df["CNPJ"] = ""
+
+    df = _forcar_colunas_string(df, ["COD_ITEM", "UNID", "CHV_NFE", "CNPJ"])
 
     meta = {
         "origem_dados": "DECLARACAO_ENTRADAS_TERCEIROS",

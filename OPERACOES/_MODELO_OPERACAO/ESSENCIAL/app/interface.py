@@ -159,8 +159,8 @@ def render_carga_operacao() -> None:
 
 _COLUNAS_PREVIEW_ENTRADAS_TERCEIROS = [
     "COMPETENCIA", "ARQUIVO_ORIGEM", "CHV_NFE", "NUM_DOC", "DT_DOC",
-    "NUM_ITEM", "COD_ITEM", "DESCR_ITEM", "COD_NCM", "COD_BARRA",
-    "UNID", "DESCR_UNID", "QTD", "VL_ITEM",
+    "COD_PART", "CNPJ", "NUM_ITEM", "COD_ITEM", "DESCR_ITEM", "COD_NCM",
+    "COD_BARRA", "UNID", "DESCR_UNID", "QTD", "VL_ITEM",
 ]
 
 
@@ -168,12 +168,14 @@ def render_entradas_terceiros() -> None:
     """Botão dedicado (exibido só após a carga): gera e persiste as chaves de
     entrada de emissão de terceiros — C100 com IND_OPER=0 (entrada) e
     IND_EMIT=1 (emitido por terceiros), enriquecido com o cadastro de produto
-    (0200) e de unidade de medida (0190). Se já foram geradas antes (mesma
-    lógica de dados_ja_carregados), mostra direto o resultado persistido —
-    não reprocessa a cada reabertura do front."""
+    (0200), de unidade de medida (0190) e o CNPJ do emitente via cadastro de
+    participantes (0150, ligado por COD_PART). Se já foram geradas antes
+    (mesma lógica de dados_ja_carregados), mostra direto o resultado
+    persistido — não reprocessa a cada reabertura do front."""
     st.subheader("Chaves de entrada de emissão de terceiros da declaração (base comparativa1)")
     st.caption(
-        "C100 (IND_OPER=0 + IND_EMIT=1) + C170, enriquecido com 0200 (produto) e 0190 (unidade)."
+        "C100 (IND_OPER=0 + IND_EMIT=1) + C170, enriquecido com 0200 (produto), "
+        "0190 (unidade) e 0150 (CNPJ do emitente)."
     )
 
     if "entradas_terceiros_geradas" not in st.session_state:
