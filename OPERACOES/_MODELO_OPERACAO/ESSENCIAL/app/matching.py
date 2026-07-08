@@ -25,8 +25,25 @@ Matching em seis níveis, os cinco primeiros sempre dentro da MESMA CHV_NFE
     Cobre fornecedores cujo código interno varia mas cuja descrição de texto
     é estável. Roda sobre o que sobrou 'nd'/'nm' após o Tipo 3. Ver
     _match_tipo3_1.
+  - Tipo 3.2 (aprendizado histórico por código, sem exigir mesmo ano):
+    fallback do Tipo 3 — mesma chave (CNPJ_EMITENTE + COD_ITEM), mas sem o
+    ANO_EMISSAO. Cobre o caso de um fornecedor/código já 100% reconhecido em
+    um ano (ex.: 2024, via Tipo 1/2), mas sem nenhuma âncora confirmada no
+    ano da nota pendente (ex.: 2023) — sem essa chave mais ampla, o Tipo 3
+    nunca recupera essas notas, mesmo sendo claramente o mesmo produto. Roda
+    sobre o que sobrou 'nd'/'nm' após o Tipo 3.1. Ver _match_tipo3_2.
+  - Tipo 3.3 (aprendizado histórico por descrição, sem exigir mesmo ano):
+    mesma ideia do Tipo 3.2, mas com a chave do Tipo 3.1 (CNPJ_EMITENTE +
+    DESCR_ITEM exata), também sem ANO_EMISSAO. Roda sobre o que sobrou
+    'nd'/'nm' após o Tipo 3.2. Ver _match_tipo3_3.
+  - Tipo 3.4 (aprendizado histórico por descrição, sem exigir CNPJ nem
+    ano): fallback do Tipo 3.3, relaxando também o CNPJ_EMITENTE — chave só
+    a descrição exata do XML (DESCR_ITEM). Nível mais amplo/permissivo da
+    família de aprendizado por descrição: cobre a mesma descrição de texto
+    vinda de fornecedores diferentes. Roda sobre o que sobrou 'nd'/'nm'
+    após o Tipo 3.3. Ver _match_tipo3_4.
   - Tipo 4 (integridade de nota): para os itens que ainda sobraram 'nd'/'nm'
-    após o Tipo 3.1, restringe às CHV_NFE onde a nota é "íntegra" — mesma
+    após o Tipo 3.4, restringe às CHV_NFE onde a nota é "íntegra" — mesma
     contagem de itens **e** mesmo somatório de VL_ITEM entre o lado XML (BC2)
     e o lado SPED (BC1), ver _integridade_por_nota — e casa, só dentro
     dessas notas, por similaridade de descrição > LIMIAR_TIPO4 (0,70),
@@ -36,13 +53,14 @@ Matching em seis níveis, os cinco primeiros sempre dentro da MESMA CHV_NFE
     > LIMIAR_TIPO5 (0,70), 1-para-1, sem exigir GTIN, valor ou integridade
     de nota. Ver _match_tipo5_por_nota.
 
-Não Declarados e Não Matches (antes do Tipo 3/3.1/4/5):
+Não Declarados e Não Matches (antes do Tipo 3/3.1/3.2/3.3/3.4/4/5):
   - 'nd' (Não Declarado) — a CHV_NFE inteira não aparece na BC1.
   - 'nm' (Não Match) — a CHV_NFE existe na BC1, mas o item não passou nem no
     Tipo 1 nem no Tipo 2.
-Itens 'nd'/'nm' recuperados pelo Tipo 3, 3.1, 4 ou 5 mudam de status para
-'TIPO_3'/'TIPO_3_1'/'TIPO_4'/'TIPO_5'; os que não encontram correspondência
-em nenhum deles mantêm 'ND'/'NM'.
+Itens 'nd'/'nm' recuperados pelo Tipo 3, 3.1, 3.2, 3.3, 3.4, 4 ou 5 mudam de
+status para
+'TIPO_3'/'TIPO_3_1'/'TIPO_3_2'/'TIPO_3_3'/'TIPO_3_4'/'TIPO_4'/'TIPO_5'; os
+que não encontram correspondência em nenhum deles mantêm 'ND'/'NM'.
 
 Consistência de Unicidade — um item da BC1 (declaração) não pode ser
 "consumido" por dois matches diferentes (1 para 1), nem entre os dois tipos.
@@ -335,6 +353,192 @@ def _match_tipo3_1(df_bc3: pd.DataFrame) -> int:
     return int(achou.sum())
 
 
+def _chave_aprendizado_32(df: pd.DataFrame) -> pd.Series:
+    """Monta a chave de vínculo do dicionário de aprendizado (Tipo 3.2):
+    igual à do Tipo 3 (_chave_aprendizado), mas sem o ANO_EMISSAO —
+    CNPJ_EMITENTE + COD_ITEM (XML, normalizado). Fallback para quando o
+    Tipo 3 não encontra âncora confirmada (Tipo 1/Tipo 2) no mesmo ano da
+    nota pendente, mesmo com o fornecedor/código já reconhecido em outro
+    ano."""
+    return pd.Series(
+        df[_COL_CNPJ_EMIT_XML].astype(str).str.strip().to_numpy()
+        + "|" + _normalizar_codigo(df["COD_ITEM"]),
+        index=df.index,
+    )
+
+
+def _montar_dicionario_aprendizado_32(df_bc3: pd.DataFrame) -> pd.DataFrame:
+    """Constrói o dicionário de aprendizado do Tipo 3.2 exclusivamente a
+    partir dos matches já confirmados de Tipo 1 e Tipo 2 (mesma base do
+    Tipo 3 — ver _montar_dicionario_aprendizado): mapeia CNPJ_EMITENTE +
+    COD_ITEM (XML) -> COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO já vinculados
+    historicamente, sem distinguir por ano. Em caso de chaves repetidas
+    (mesmo fornecedor/código em anos diferentes com pares históricos
+    diferentes), prevalece a primeira ocorrência."""
+    confirmados = df_bc3[df_bc3["MATCH_TIPO"].isin(("TIPO_1", "TIPO_2"))]
+    if confirmados.empty:
+        return pd.DataFrame(columns=["COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO"])
+
+    aprendizado = pd.DataFrame({
+        "_CHAVE": _chave_aprendizado_32(confirmados),
+        "COD_ITEM_DECLARACAO": confirmados["COD_ITEM_DECLARACAO"].to_numpy(),
+        "DESCR_ITEM_DECLARACAO": confirmados["DESCR_ITEM_DECLARACAO"].to_numpy(),
+    })
+    return aprendizado.drop_duplicates("_CHAVE").set_index("_CHAVE")
+
+
+def _match_tipo3_2(df_bc3: pd.DataFrame) -> int:
+    """Tipo 3.2 (aprendizado histórico por código, sem exigir mesmo ano):
+    fallback do Tipo 3 (_match_tipo3) para itens 'ND'/'NM' cujo CNPJ+código
+    não tem nenhuma âncora confirmada (Tipo 1/Tipo 2) no próprio ano da
+    nota, mas tem em outro ano — cobre fornecedor/código estável ano a ano.
+    Roda sobre o que sobrou 'ND'/'NM' após o Tipo 3.1. Sem correspondência,
+    mantém o status original. Devolve a quantidade recuperada. Muta df_bc3
+    in-place."""
+    dicionario = _montar_dicionario_aprendizado_32(df_bc3)
+    if dicionario.empty:
+        return 0
+
+    alvo_mask = df_bc3["MATCH_TIPO"].isin(("ND", "NM"))
+    if not alvo_mask.any():
+        return 0
+
+    chave_alvo = _chave_aprendizado_32(df_bc3.loc[alvo_mask])
+    cod_encontrado   = chave_alvo.map(dicionario["COD_ITEM_DECLARACAO"])
+    descr_encontrado = chave_alvo.map(dicionario["DESCR_ITEM_DECLARACAO"])
+    achou = cod_encontrado.notna()
+    if not achou.any():
+        return 0
+
+    idx_achou = achou[achou].index
+    df_bc3.loc[idx_achou, "MATCH_TIPO"]            = "TIPO_3_2"
+    df_bc3.loc[idx_achou, "COD_ITEM_DECLARACAO"]   = cod_encontrado.loc[idx_achou].values
+    df_bc3.loc[idx_achou, "DESCR_ITEM_DECLARACAO"] = descr_encontrado.loc[idx_achou].values
+    return int(achou.sum())
+
+
+def _chave_aprendizado_33(df: pd.DataFrame) -> pd.Series:
+    """Monta a chave de vínculo do dicionário de aprendizado (Tipo 3.3):
+    igual à do Tipo 3.1 (_chave_aprendizado_31), mas sem o ANO_EMISSAO —
+    CNPJ_EMITENTE + DESCR_ITEM (XML, exata). Mesma ideia de fallback do
+    Tipo 3.2, só que pela descrição exata em vez do código."""
+    return pd.Series(
+        df[_COL_CNPJ_EMIT_XML].astype(str).str.strip().to_numpy()
+        + "|" + df[_COL_DESCR_XML].astype(str).str.strip().str.upper().to_numpy(),
+        index=df.index,
+    )
+
+
+def _montar_dicionario_aprendizado_33(df_bc3: pd.DataFrame) -> pd.DataFrame:
+    """Constrói o dicionário de aprendizado do Tipo 3.3 exclusivamente a
+    partir dos matches já confirmados de Tipo 1 e Tipo 2 (mesma base do
+    Tipo 3 — ver _montar_dicionario_aprendizado): mapeia CNPJ_EMITENTE +
+    DESCR_ITEM (XML, exata) -> COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO já
+    vinculados historicamente, sem distinguir por ano. Em caso de chaves
+    repetidas, prevalece a primeira ocorrência."""
+    confirmados = df_bc3[df_bc3["MATCH_TIPO"].isin(("TIPO_1", "TIPO_2"))]
+    if confirmados.empty:
+        return pd.DataFrame(columns=["COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO"])
+
+    aprendizado = pd.DataFrame({
+        "_CHAVE": _chave_aprendizado_33(confirmados),
+        "COD_ITEM_DECLARACAO": confirmados["COD_ITEM_DECLARACAO"].to_numpy(),
+        "DESCR_ITEM_DECLARACAO": confirmados["DESCR_ITEM_DECLARACAO"].to_numpy(),
+    })
+    return aprendizado.drop_duplicates("_CHAVE").set_index("_CHAVE")
+
+
+def _match_tipo3_3(df_bc3: pd.DataFrame) -> int:
+    """Tipo 3.3 (aprendizado histórico por descrição, sem exigir mesmo ano):
+    fallback do Tipo 3.1 (_match_tipo3_1), mesma lógica de relaxamento de
+    ano do Tipo 3.2, mas usando a descrição exata do XML como chave. Roda
+    sobre o que sobrou 'ND'/'NM' após o Tipo 3.2. Sem correspondência,
+    mantém o status original. Devolve a quantidade recuperada. Muta df_bc3
+    in-place."""
+    dicionario = _montar_dicionario_aprendizado_33(df_bc3)
+    if dicionario.empty:
+        return 0
+
+    alvo_mask = df_bc3["MATCH_TIPO"].isin(("ND", "NM"))
+    if not alvo_mask.any():
+        return 0
+
+    chave_alvo = _chave_aprendizado_33(df_bc3.loc[alvo_mask])
+    cod_encontrado   = chave_alvo.map(dicionario["COD_ITEM_DECLARACAO"])
+    descr_encontrado = chave_alvo.map(dicionario["DESCR_ITEM_DECLARACAO"])
+    achou = cod_encontrado.notna()
+    if not achou.any():
+        return 0
+
+    idx_achou = achou[achou].index
+    df_bc3.loc[idx_achou, "MATCH_TIPO"]            = "TIPO_3_3"
+    df_bc3.loc[idx_achou, "COD_ITEM_DECLARACAO"]   = cod_encontrado.loc[idx_achou].values
+    df_bc3.loc[idx_achou, "DESCR_ITEM_DECLARACAO"] = descr_encontrado.loc[idx_achou].values
+    return int(achou.sum())
+
+
+def _chave_aprendizado_34(df: pd.DataFrame) -> pd.Series:
+    """Monta a chave de vínculo do dicionário de aprendizado (Tipo 3.4):
+    igual à do Tipo 3.3 (_chave_aprendizado_33), mas sem o CNPJ_EMITENTE —
+    só a descrição exata do produto no XML (_COL_DESCR_XML, normalizada por
+    strip/upper). Fallback mais amplo da família "descrição exata": cobre a
+    mesma descrição de texto vinda de fornecedores diferentes, quando nem o
+    CNPJ nem o ano têm âncora confirmada em comum."""
+    return pd.Series(
+        df[_COL_DESCR_XML].astype(str).str.strip().str.upper().to_numpy(),
+        index=df.index,
+    )
+
+
+def _montar_dicionario_aprendizado_34(df_bc3: pd.DataFrame) -> pd.DataFrame:
+    """Constrói o dicionário de aprendizado do Tipo 3.4 exclusivamente a
+    partir dos matches já confirmados de Tipo 1 e Tipo 2 (mesma base do
+    Tipo 3 — ver _montar_dicionario_aprendizado): mapeia DESCR_ITEM (XML,
+    exata) -> COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO já vinculados
+    historicamente, sem distinguir por CNPJ nem por ano. Em caso de chaves
+    repetidas, prevalece a primeira ocorrência."""
+    confirmados = df_bc3[df_bc3["MATCH_TIPO"].isin(("TIPO_1", "TIPO_2"))]
+    if confirmados.empty:
+        return pd.DataFrame(columns=["COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO"])
+
+    aprendizado = pd.DataFrame({
+        "_CHAVE": _chave_aprendizado_34(confirmados),
+        "COD_ITEM_DECLARACAO": confirmados["COD_ITEM_DECLARACAO"].to_numpy(),
+        "DESCR_ITEM_DECLARACAO": confirmados["DESCR_ITEM_DECLARACAO"].to_numpy(),
+    })
+    return aprendizado.drop_duplicates("_CHAVE").set_index("_CHAVE")
+
+
+def _match_tipo3_4(df_bc3: pd.DataFrame) -> int:
+    """Tipo 3.4 (aprendizado histórico por descrição, sem exigir CNPJ nem
+    ano): fallback do Tipo 3.3 (_match_tipo3_3), relaxando também o
+    CNPJ_EMITENTE — usa só a descrição exata do XML como chave. É o nível
+    mais amplo/permissivo da família de aprendizado por descrição, por isso
+    roda por último dentro dela, sobre o que sobrou 'ND'/'NM' após o Tipo
+    3.3. Sem correspondência, mantém o status original. Devolve a
+    quantidade recuperada. Muta df_bc3 in-place."""
+    dicionario = _montar_dicionario_aprendizado_34(df_bc3)
+    if dicionario.empty:
+        return 0
+
+    alvo_mask = df_bc3["MATCH_TIPO"].isin(("ND", "NM"))
+    if not alvo_mask.any():
+        return 0
+
+    chave_alvo = _chave_aprendizado_34(df_bc3.loc[alvo_mask])
+    cod_encontrado   = chave_alvo.map(dicionario["COD_ITEM_DECLARACAO"])
+    descr_encontrado = chave_alvo.map(dicionario["DESCR_ITEM_DECLARACAO"])
+    achou = cod_encontrado.notna()
+    if not achou.any():
+        return 0
+
+    idx_achou = achou[achou].index
+    df_bc3.loc[idx_achou, "MATCH_TIPO"]            = "TIPO_3_4"
+    df_bc3.loc[idx_achou, "COD_ITEM_DECLARACAO"]   = cod_encontrado.loc[idx_achou].values
+    df_bc3.loc[idx_achou, "DESCR_ITEM_DECLARACAO"] = descr_encontrado.loc[idx_achou].values
+    return int(achou.sum())
+
+
 def _integridade_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> set:
     """Calcula, por CHV_NFE, a contagem de itens e o somatório de VL_ITEM em
     cada lado (XML/BC2 e SPED/BC1) e devolve o conjunto de CHV_NFE onde
@@ -476,6 +680,15 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     # ── Tipo 3.1: mesmo aprendizado, por descrição exata (não COD_ITEM) ────
     _match_tipo3_1(df_bc3)
 
+    # ── Tipo 3.2: mesmo aprendizado do Tipo 3, sem exigir o mesmo ano ──────
+    _match_tipo3_2(df_bc3)
+
+    # ── Tipo 3.3: mesmo aprendizado do Tipo 3.1, sem exigir o mesmo ano ────
+    _match_tipo3_3(df_bc3)
+
+    # ── Tipo 3.4: mesmo aprendizado do Tipo 3.3, sem exigir o mesmo CNPJ ───
+    _match_tipo3_4(df_bc3)
+
     # ── Tipo 4: integridade de nota sobre o que ainda sobrou ND/NM ──────────
     idx_pendente_tipo4 = df_bc3.index[df_bc3["MATCH_TIPO"].isin(("ND", "NM"))]
     df_bc2_pend_tipo4 = df_bc2.loc[idx_pendente_tipo4]
@@ -500,6 +713,9 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
         "match_tipo2": contagem_tipo.get("TIPO_2", 0),
         "match_tipo3": contagem_tipo.get("TIPO_3", 0),
         "match_tipo3_1": contagem_tipo.get("TIPO_3_1", 0),
+        "match_tipo3_2": contagem_tipo.get("TIPO_3_2", 0),
+        "match_tipo3_3": contagem_tipo.get("TIPO_3_3", 0),
+        "match_tipo3_4": contagem_tipo.get("TIPO_3_4", 0),
         "match_tipo4": contagem_tipo.get("TIPO_4", 0),
         "match_tipo5": contagem_tipo.get("TIPO_5", 0),
         "nao_declarado": contagem_tipo.get("ND", 0),   # chave inteira ausente do SPED (apos Tipo 3/4/5)

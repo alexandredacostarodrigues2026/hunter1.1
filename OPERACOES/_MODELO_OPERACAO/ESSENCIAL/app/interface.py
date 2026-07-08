@@ -360,6 +360,11 @@ def render_bc3() -> None:
         "código do produto (XML) + ano de emissão já confirmado em Tipo 1/Tipo 2. "
         "Tipo 3.1 (aprendizado por descrição) = igual ao Tipo 3, trocando o código do produto pela "
         "descrição exata do produto (XML). "
+        "Tipo 3.2/3.3 (aprendizado sem exigir o mesmo ano) = mesmos critérios do Tipo 3/3.1 "
+        "(código e descrição, respectivamente), mas sem exigir âncora confirmada no mesmo ano da "
+        "nota — cobre fornecedor/código estável entre anos. "
+        "Tipo 3.4 (aprendizado só por descrição) = igual ao Tipo 3.3, relaxando também o CNPJ do "
+        "emitente — cobre a mesma descrição exata vinda de fornecedores diferentes. "
         "Tipo 4 (integridade de nota) = itens 'nd'/'nm' restantes, recuperados só em notas onde a "
         "contagem de itens e o valor total batem entre XML e SPED, por similaridade > 70%. "
         "Tipo 5 (último recurso) = itens 'nd'/'nm' restantes, casados só por similaridade > 70% "
@@ -374,20 +379,25 @@ def render_bc3() -> None:
         total_itens = sum(totais.values())
         total_casados = (
             totais["TIPO_1"] + totais["TIPO_2"] + totais["TIPO_3"] + totais["TIPO_3_1"]
+            + totais["TIPO_3_2"] + totais["TIPO_3_3"] + totais["TIPO_3_4"]
             + totais["TIPO_4"] + totais["TIPO_5"]
         )
         taxa_match = (total_casados / total_itens * 100) if total_itens else 0.0
 
-        col1, col2, col3, col4, col5, col6, col7, col8, col9 = st.columns(9)
+        (col1, col2, col3, col4, col5, col6, col7,
+         col8, col9, col10, col11, col12) = st.columns(12)
         col1.metric("Matches Tipo 1", f"{totais['TIPO_1']:,}".replace(",", "."))
         col2.metric("Matches Tipo 2", f"{totais['TIPO_2']:,}".replace(",", "."))
         col3.metric("Matches Tipo 3", f"{totais['TIPO_3']:,}".replace(",", "."))
         col4.metric("Matches Tipo 3.1", f"{totais['TIPO_3_1']:,}".replace(",", "."))
-        col5.metric("Matches Tipo 4", f"{totais['TIPO_4']:,}".replace(",", "."))
-        col6.metric("Matches Tipo 5", f"{totais['TIPO_5']:,}".replace(",", "."))
-        col7.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
-        col8.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
-        col9.metric("Taxa de Match", f"{taxa_match:.1f}%".replace(".", ","))
+        col5.metric("Matches Tipo 3.2", f"{totais['TIPO_3_2']:,}".replace(",", "."))
+        col6.metric("Matches Tipo 3.3", f"{totais['TIPO_3_3']:,}".replace(",", "."))
+        col7.metric("Matches Tipo 3.4", f"{totais['TIPO_3_4']:,}".replace(",", "."))
+        col8.metric("Matches Tipo 4", f"{totais['TIPO_4']:,}".replace(",", "."))
+        col9.metric("Matches Tipo 5", f"{totais['TIPO_5']:,}".replace(",", "."))
+        col10.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
+        col11.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
+        col12.metric("Taxa de Match", f"{taxa_match:.1f}%".replace(".", ","))
         st.success("✅ Matching (BC3) pronto.")
 
         with st.expander("Visualizar resultado do Matching (BC3)"):
