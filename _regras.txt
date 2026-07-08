@@ -24,6 +24,10 @@ as ligações devem ser feitas dentro da declaração
 	16 — Tipo 4 (integridade de nota: contagem + valor total + similaridade > 70%)
 	17 — correção da vírgula decimal do SPED
 	18 — Tipo 5 (último recurso: mesma chave + similaridade > 70%, sem gtin/valor/integridade de nota)
+	19 — Tipo 3.1 (aprendizado histórico: CNPJ + descrição exata do XML + ano)
+	20 — Tipo 3.2 (aprendizado histórico: CNPJ + código, sem exigir mesmo ano — fallback do Tipo 3)
+	21 — Tipo 3.3 (aprendizado histórico: CNPJ + descrição exata do XML, sem exigir mesmo ano — fallback do Tipo 3.1)
+	22 — Tipo 3.4 (aprendizado histórico: só descrição exata do XML, sem exigir CNPJ nem ano — fallback do Tipo 3.3)
 
 
 
