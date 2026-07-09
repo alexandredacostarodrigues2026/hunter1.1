@@ -353,21 +353,23 @@ def render_bc3() -> None:
     explícito em vez de rodar automaticamente na carga geral."""
     st.subheader("Matching (Etapa 1) — BC2 × BC1 = BC3")
     st.caption(
-        "Cruza os itens de Emissão de Terceiros (BC2, XML) com a declaração (BC1, SPED), dentro "
-        "da mesma CHV_NFE, em dois níveis: Tipo 1 = mesmo GTIN/EAN + similaridade > 90%; "
-        "Tipo 2 (fallback) = mesmo Valor Total + similaridade > 60% — sem depender de NUM_ITEM. "
-        "Tipo 3 (aprendizado) = itens 'nd'/'nm' recuperados por histórico de CNPJ do emitente + "
-        "código do produto (XML) + ano de emissão já confirmado em Tipo 1/Tipo 2. "
-        "Tipo 3.1 (aprendizado por descrição) = igual ao Tipo 3, trocando o código do produto pela "
+        "Cruza os itens de Emissão de Terceiros (BC2, XML) com a declaração (BC1, SPED) em duas "
+        "famílias: Direto (D1-D4, sempre dentro da mesma CHV_NFE) e Aprendizado (A1-A5, dicionário "
+        "histórico, não exige mesma CHV_NFE). "
+        "D1 = mesmo GTIN/EAN + similaridade > 90%; "
+        "D2 (fallback) = mesmo Valor Total + similaridade > 60% — sem depender de NUM_ITEM. "
+        "A1 (aprendizado) = itens 'nd'/'nm' recuperados por histórico de CNPJ do emitente + "
+        "código do produto (XML) + ano de emissão já confirmado em D1/D2. "
+        "A2 (aprendizado por descrição) = igual ao A1, trocando o código do produto pela "
         "descrição exata do produto (XML). "
-        "Tipo 3.2/3.3 (aprendizado sem exigir o mesmo ano) = mesmos critérios do Tipo 3/3.1 "
+        "A3/A4 (aprendizado sem exigir o mesmo ano) = mesmos critérios do A1/A2 "
         "(código e descrição, respectivamente), mas sem exigir âncora confirmada no mesmo ano da "
         "nota — cobre fornecedor/código estável entre anos. "
-        "Tipo 3.4 (aprendizado só por descrição) = igual ao Tipo 3.3, relaxando também o CNPJ do "
+        "A5 (aprendizado só por descrição) = igual ao A4, relaxando também o CNPJ do "
         "emitente — cobre a mesma descrição exata vinda de fornecedores diferentes. "
-        "Tipo 4 (integridade de nota) = itens 'nd'/'nm' restantes, recuperados só em notas onde a "
+        "D3 (integridade de nota) = itens 'nd'/'nm' restantes, recuperados só em notas onde a "
         "contagem de itens e o valor total batem entre XML e SPED, por similaridade > 70%. "
-        "Tipo 5 (último recurso) = itens 'nd'/'nm' restantes, casados só por similaridade > 70% "
+        "D4 (último recurso) = itens 'nd'/'nm' restantes, casados só por similaridade > 70% "
         "dentro da mesma CHV_NFE, sem exigir GTIN, valor ou integridade de nota."
     )
 
@@ -378,23 +380,23 @@ def render_bc3() -> None:
         totais = loader.consultar_totais_bc3()
         total_itens = sum(totais.values())
         total_casados = (
-            totais["TIPO_1"] + totais["TIPO_2"] + totais["TIPO_3"] + totais["TIPO_3_1"]
-            + totais["TIPO_3_2"] + totais["TIPO_3_3"] + totais["TIPO_3_4"]
-            + totais["TIPO_4"] + totais["TIPO_5"]
+            totais["D1"] + totais["D2"] + totais["A1"] + totais["A2"]
+            + totais["A3"] + totais["A4"] + totais["A5"]
+            + totais["D3"] + totais["D4"]
         )
         taxa_match = (total_casados / total_itens * 100) if total_itens else 0.0
 
         (col1, col2, col3, col4, col5, col6, col7,
          col8, col9, col10, col11, col12) = st.columns(12)
-        col1.metric("Matches Tipo 1", f"{totais['TIPO_1']:,}".replace(",", "."))
-        col2.metric("Matches Tipo 2", f"{totais['TIPO_2']:,}".replace(",", "."))
-        col3.metric("Matches Tipo 3", f"{totais['TIPO_3']:,}".replace(",", "."))
-        col4.metric("Matches Tipo 3.1", f"{totais['TIPO_3_1']:,}".replace(",", "."))
-        col5.metric("Matches Tipo 3.2", f"{totais['TIPO_3_2']:,}".replace(",", "."))
-        col6.metric("Matches Tipo 3.3", f"{totais['TIPO_3_3']:,}".replace(",", "."))
-        col7.metric("Matches Tipo 3.4", f"{totais['TIPO_3_4']:,}".replace(",", "."))
-        col8.metric("Matches Tipo 4", f"{totais['TIPO_4']:,}".replace(",", "."))
-        col9.metric("Matches Tipo 5", f"{totais['TIPO_5']:,}".replace(",", "."))
+        col1.metric("Matches D1", f"{totais['D1']:,}".replace(",", "."))
+        col2.metric("Matches D2", f"{totais['D2']:,}".replace(",", "."))
+        col3.metric("Matches A1", f"{totais['A1']:,}".replace(",", "."))
+        col4.metric("Matches A2", f"{totais['A2']:,}".replace(",", "."))
+        col5.metric("Matches A3", f"{totais['A3']:,}".replace(",", "."))
+        col6.metric("Matches A4", f"{totais['A4']:,}".replace(",", "."))
+        col7.metric("Matches A5", f"{totais['A5']:,}".replace(",", "."))
+        col8.metric("Matches D3", f"{totais['D3']:,}".replace(",", "."))
+        col9.metric("Matches D4", f"{totais['D4']:,}".replace(",", "."))
         col10.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
         col11.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
         col12.metric("Taxa de Match", f"{taxa_match:.1f}%".replace(".", ","))

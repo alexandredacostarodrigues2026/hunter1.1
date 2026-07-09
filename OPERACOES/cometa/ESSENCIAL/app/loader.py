@@ -1216,17 +1216,17 @@ def consultar_bc3(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
 
 
 def consultar_totais_bc3() -> dict:
-    """Retorna a contagem de itens da BC3 por tipo de match (TIPO_1, TIPO_2,
-    TIPO_3, TIPO_3_1, TIPO_3_2, TIPO_3_3, TIPO_3_4, TIPO_4, TIPO_5, ND, NM),
-    lendo direto do DuckDB (sem reprocessar) — alimenta os KPIs do painel de
-    Matching. Rótulos de versões anteriores da lógica de matching
-    (SECUNDARIO_FUZZY, SECUNDARIO_GTIN, PRINCIPAL_VALOR) podem ainda
-    aparecer em bases já geradas antes dessas mudanças e não regeradas —
-    por isso não são somados a nenhum tipo atual, só deixam de ter contador
-    próprio."""
+    """Retorna a contagem de itens da BC3 por tipo de match (D1, D2,
+    A1, A2, A3, A4, A5, D3, D4, ND, NM) — numeração renomeada em 2026-07-09,
+    ver HIERARQUIA_TIPOS_TP_ALEXANDRE_vs_TP_IA.md), lendo direto do DuckDB
+    (sem reprocessar) — alimenta os KPIs do painel de Matching. Rótulos de
+    versões anteriores da lógica de matching (SECUNDARIO_FUZZY,
+    SECUNDARIO_GTIN, PRINCIPAL_VALOR, TIPO_1..TIPO_5) podem ainda aparecer em
+    bases já geradas antes dessas mudanças e não regeradas — por isso não são
+    somados a nenhum tipo atual, só deixam de ter contador próprio."""
     totais = {
-        "TIPO_1": 0, "TIPO_2": 0, "TIPO_3": 0, "TIPO_3_1": 0, "TIPO_3_2": 0,
-        "TIPO_3_3": 0, "TIPO_3_4": 0, "TIPO_4": 0, "TIPO_5": 0, "ND": 0, "NM": 0,
+        "D1": 0, "D2": 0, "A1": 0, "A2": 0, "A3": 0,
+        "A4": 0, "A5": 0, "D3": 0, "D4": 0, "ND": 0, "NM": 0,
     }
     if not _BANCO_PATH.exists():
         return totais
