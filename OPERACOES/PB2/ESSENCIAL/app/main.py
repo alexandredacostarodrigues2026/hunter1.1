@@ -47,6 +47,8 @@ def main() -> None:
         interface.render_bc3()
         st.divider()
         interface.render_fluxos_fisicos()
+        st.divider()
+        interface.render_estoque_anual()
 
 
 if __name__ == "__main__":

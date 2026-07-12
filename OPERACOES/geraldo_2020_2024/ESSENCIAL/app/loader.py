@@ -583,6 +583,36 @@ def _parse_itens_c170_com_c100(arquivos: list) -> pd.DataFrame:
     return _gerar_id_unico(df, ["CHV_NFE", "NUM_ITEM"])
 
 
+def _parse_estoque_h005_h010(arquivos: list) -> pd.DataFrame:
+    """Percorre H005/H010 sequencialmente — cada H010 herda DT_INV (Campo 02)
+    e MOT_INV (Campo 04) do H005 mais recente (registro pai, ver Guia
+    Prático EFD). Diferente de C100/C170 (repete N vezes por arquivo), H005
+    aparece no máximo uma vez por arquivo — o inventário é declarado uma vez
+    por ano, tipicamente no primeiro mês competente. Alicerce do Estágio 5
+    (ver montar_estoque_anual_consolidado())."""
+    linhas = []
+    for arquivo in arquivos:
+        h005_atual: dict = {}
+        for campos in _iter_linhas_sped(arquivo):
+            reg = campos[1]
+            if reg == "H005":
+                h005_atual = {
+                    "DT_INV": campos[2] if len(campos) > 2 else "",
+                    "VL_INV": campos[3] if len(campos) > 3 else "",
+                    "MOT_INV": campos[4] if len(campos) > 4 else "",
+                }
+            elif reg == "H010":
+                valores = campos[2:2 + len(_CAMPOS_H010)]
+                valores += [""] * (len(_CAMPOS_H010) - len(valores))
+                linha = dict(zip(_CAMPOS_H010, valores))
+                linha["DT_INV"]         = h005_atual.get("DT_INV", "")
+                linha["MOT_INV"]        = h005_atual.get("MOT_INV", "")
+                linha["ARQUIVO_ORIGEM"] = arquivo.name
+                linhas.append(linha)
+    df = pd.DataFrame(linhas)
+    return _forcar_colunas_string(df, ["COD_ITEM", "UNID", "DT_INV", "MOT_INV"])
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_declaracao_itens() -> "tuple[pd.DataFrame, dict]":
     """Carrega itens de NF da declaração (C100+C170) — lado DECLARAÇÃO."""
@@ -1335,7 +1365,7 @@ def persistir_sped(callback=None) -> dict:
             if callback:
                 callback("sped_unidades", resultado["sped_unidades"])
 
-            df_sped_est = _parse_registros_sped(arquivos_sped, "H010", _CAMPOS_H010)
+            df_sped_est = _parse_estoque_h005_h010(arquivos_sped)
             if not df_sped_est.empty:
                 con.register("_df_sped_est", df_sped_est)
                 con.execute("CREATE OR REPLACE TABLE sped_estoque AS SELECT * FROM _df_sped_est")
@@ -1760,7 +1790,9 @@ def pre_visualizar_carga() -> dict:
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_declaracao_estoque() -> "tuple[pd.DataFrame, dict]":
-    """Carrega o inventário da declaração (registro H010 — estoque real, não o template ESTOQUE/base.csv)."""
+    """Carrega o inventário da declaração (Bloco H — H005+H010, estoque
+    real, não o template ESTOQUE/base.csv). Inclui DT_INV/MOT_INV do H005
+    pai — alicerce do Estágio 5 (ver montar_estoque_anual_consolidado())."""
     config   = load_config()
     arquivos = _localizar_arquivos_sped(config)
     meta: dict = {"arquivos": [str(a) for a in arquivos], "origem_dados": "DECLARACAO_ESTOQUE", "erros": []}
@@ -1769,7 +1801,7 @@ def load_declaracao_estoque() -> "tuple[pd.DataFrame, dict]":
         meta["erros"].append(f"Nenhum arquivo SPED encontrado em {_resolver_path(config, 'sped_path', '2-DECLARACAO/SPED')}")
         return pd.DataFrame(), meta
 
-    df = _parse_registros_sped(arquivos, "H010", _CAMPOS_H010)
+    df = _parse_estoque_h005_h010(arquivos)
     if df.empty:
         meta["erros"].append("Nenhum registro H010 encontrado nos arquivos SPED.")
         return df, meta
@@ -1778,6 +1810,153 @@ def load_declaracao_estoque() -> "tuple[pd.DataFrame, dict]":
     meta["total_colunas"] = len(df.columns)
     meta["colunas"]       = df.columns.tolist()
     return df, meta
+
+
+# ── Estágio 5 — Tabela de Estoque (estoque_anual_consolidado) ───────────────
+# Foco exclusivo: consolidar o inventário JÁ DECLARADO no SPED (Bloco H) por
+# item x ano, aplicando a regra de continuidade cronológica. Não calcula
+# entradas/saídas nem divergências (RN1, EI+C=V+EF) — isso fica pra uma
+# etapa futura, que cruzaria esta tabela com estoque_entradas/estoque_saidas
+# (Estágio 4). Achado real na base do geraldo: o MOT_INV (motivo do
+# inventário) do H005 é sempre "05" nesta operação, nunca "01" ("No final
+# do período") — a especificação original citava "01", mas filtrar por esse
+# valor literal zeraria a tabela nesta base real. Em vez de filtrar por um
+# motivo específico, todo H005 encontrado é tratado como um fechamento de
+# inventário válido (H005 é opcional no SPED — só aparece quando a empresa
+# de fato declara Bloco H naquele período).
+_COLUNAS_ESTOQUE_ANUAL = [
+    "ANO_REFERENCIA", "COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO",
+    "UNIDADE", "QUANTIDADE_INICIAL", "QUANTIDADE_FINAL",
+]
+
+
+def montar_estoque_anual_consolidado() -> pd.DataFrame:
+    """Estágio 5: consolida o inventário declarado (H005+H010, ver
+    load_declaracao_estoque()) numa linha por item x ano. Regra de
+    continuidade: cada inventário declarado (identificado por DT_INV) vira,
+    na MESMA linha física, o Estoque Final do ano anterior a DT_INV e o
+    Estoque Inicial do ano de DT_INV — não são duas contagens diferentes, é
+    a mesma foto vista dos dois lados da virada do ano (ex.: inventário com
+    DT_INV=31/12/2020 é EF(2020) e, ao mesmo tempo, EI(2021)). O último ano
+    coberto fica sem QUANTIDADE_FINAL até o inventário seguinte ser
+    declarado (correto: ainda não fechou). DESCR_ITEM_DECLARACAO vem do
+    cadastro de produto (Registro 0200), por COD_ITEM. Regra R07:
+    ANO_REFERENCIA/COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/UNIDADE sempre
+    string; QUANTIDADE_INICIAL/QUANTIDADE_FINAL são medidas numéricas de
+    verdade (não códigos), ficam float."""
+    df_est, _ = load_declaracao_estoque()
+    if df_est.empty or "DT_INV" not in df_est.columns:
+        return pd.DataFrame(columns=_COLUNAS_ESTOQUE_ANUAL)
+
+    df = df_est.copy()
+    ano_valido = df["DT_INV"].str.fullmatch(r"\d{8}")
+    df = df[ano_valido].copy()
+    if df.empty:
+        return pd.DataFrame(columns=_COLUNAS_ESTOQUE_ANUAL)
+
+    ano_inv = df["DT_INV"].str[4:8].astype(int)  # DDMMAAAA -> AAAA
+    qtd_num = _numero_decimal_br(df["QTD"])
+
+    base_ei = pd.DataFrame({
+        "ANO_REFERENCIA":      ano_inv.astype(str),
+        "COD_ITEM_DECLARACAO": df["COD_ITEM"].to_numpy(),
+        "UNIDADE_EI":          df["UNID"].to_numpy(),
+        "QUANTIDADE_INICIAL":  qtd_num.to_numpy(),
+    })
+    base_ef = pd.DataFrame({
+        "ANO_REFERENCIA":      (ano_inv - 1).astype(str),
+        "COD_ITEM_DECLARACAO": df["COD_ITEM"].to_numpy(),
+        "UNIDADE_EF":          df["UNID"].to_numpy(),
+        "QUANTIDADE_FINAL":    qtd_num.to_numpy(),
+    })
+
+    consolidado = base_ei.merge(
+        base_ef, on=["ANO_REFERENCIA", "COD_ITEM_DECLARACAO"], how="outer",
+    )
+    consolidado["UNIDADE"] = consolidado["UNIDADE_EI"].fillna(consolidado["UNIDADE_EF"])
+    consolidado = consolidado.drop(columns=["UNIDADE_EI", "UNIDADE_EF"])
+
+    df_produtos, _ = load_declaracao_produtos()
+    if not df_produtos.empty and {"COD_ITEM", "DESCR_ITEM"} <= set(df_produtos.columns):
+        cadastro = (
+            df_produtos[["COD_ITEM", "DESCR_ITEM"]]
+            .drop_duplicates("COD_ITEM")
+            .rename(columns={"COD_ITEM": "COD_ITEM_DECLARACAO", "DESCR_ITEM": "DESCR_ITEM_DECLARACAO"})
+        )
+        consolidado = consolidado.merge(cadastro, on="COD_ITEM_DECLARACAO", how="left")
+    else:
+        consolidado["DESCR_ITEM_DECLARACAO"] = ""
+    consolidado["DESCR_ITEM_DECLARACAO"] = consolidado["DESCR_ITEM_DECLARACAO"].fillna("")
+
+    consolidado = (
+        consolidado[_COLUNAS_ESTOQUE_ANUAL]
+        .sort_values(["COD_ITEM_DECLARACAO", "ANO_REFERENCIA"])
+        .reset_index(drop=True)
+    )
+    return _forcar_colunas_string(
+        consolidado, ["ANO_REFERENCIA", "COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO", "UNIDADE"]
+    )
+
+
+def persistir_estoque_anual_consolidado(callback=None) -> dict:
+    """Estágio 5: persiste estoque_anual_consolidado no DuckDB — inventário
+    declarado (H005+H010) consolidado por item x ano com a regra de
+    continuidade cronológica (ver montar_estoque_anual_consolidado()). Sem
+    cálculo de entradas/saídas/divergências nesta etapa. callback(etapa, n)
+    chamado ao final."""
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    resultado = {}
+    try:
+        df = montar_estoque_anual_consolidado()
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            if not df.empty:
+                con.register("_df_estoque_anual", df)
+                con.execute("CREATE OR REPLACE TABLE estoque_anual_consolidado AS SELECT * FROM _df_estoque_anual")
+                con.unregister("_df_estoque_anual")
+        resultado["estoque_anual_consolidado"] = len(df)
+        if callback:
+            callback("estoque_anual_consolidado", resultado["estoque_anual_consolidado"])
+    except Exception as exc:
+        logger.exception("Erro ao persistir estoque_anual_consolidado: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def estoque_anual_ja_gerado() -> bool:
+    """True se a tabela estoque_anual_consolidado (Estágio 5) já existe no
+    DuckDB da operação (mesma lógica de bc3_ja_gerada()/analise_ja_gerada())."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            return "estoque_anual_consolidado" in tabelas
+    except Exception:
+        logger.exception("Erro ao verificar estoque_anual_consolidado existente em %s", _BANCO_PATH)
+        return False
+
+
+def consultar_estoque_anual_consolidado(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê estoque_anual_consolidado já persistida (sem reprocessar),
+    devolvendo uma amostra (até 'limite' linhas) e o total real de linhas.
+    limite=None devolve a tabela inteira (exportação completa)."""
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estoque_anual_consolidado" not in tabelas:
+                return pd.DataFrame(), 0
+            total = con.execute("SELECT COUNT(*) FROM estoque_anual_consolidado").fetchone()[0]
+            query = (
+                "SELECT * FROM estoque_anual_consolidado" if limite is None
+                else f"SELECT * FROM estoque_anual_consolidado LIMIT {limite}"
+            )
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar estoque_anual_consolidado em %s", _BANCO_PATH)
+        return pd.DataFrame(), 0
 
 
 if __name__ == "__main__":

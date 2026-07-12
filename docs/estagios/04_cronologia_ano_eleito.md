@@ -96,17 +96,24 @@ inferência numérica (`ANO_ELEITO`, apesar de só conter dígitos, nunca vira
 `int`). Forçado explicitamente antes de persistir
 (`loader._forcar_colunas_string()`).
 
-## Pendente (fecha o Estágio 4)
+## Estágio 4 concluído — cálculo de divergência fica pra uma etapa futura
 
-- Cálculo de saldo de estoque (Estoque Inicial + Compras = Vendas + Estoque
-  Final — regra RN1, ver `regra de negócios unificadas/regra
-  negocio_pu_rn1_ei+c=v+ef_1.txt`, raiz do projeto) usando `ANO_ELEITO`
-  como chave de agrupamento anual.
+`DATA_ELEITA`/`ANO_ELEITO` fecham o escopo deste estágio. O cálculo de
+saldo de estoque em si (regra RN1 — Estoque Inicial + Compras = Vendas +
+Estoque Final, ver `regra de negócios unificadas/regra
+negocio_pu_rn1_ei+c=v+ef_1.txt`, raiz do projeto) foi deliberadamente
+**redefinido pra fora** do Estágio 4/5: o [Estágio 5](05_tabela_estoque.md)
+só consolida o inventário já declarado (sem fórmula nenhuma); comparar esse
+inventário com `estoque_entradas`/`estoque_saidas` (agrupados por
+`ANO_ELEITO`) pra aplicar a RN1 e achar divergências fica pra uma etapa
+futura, ainda sem número definido.
 
 ## Ver também
 
 - [Estágio 3 — Fluxos Físicos](03_fluxos_fisicos.md) — origem de
   `xml_entradas_real`/`xml_saidas_real`/`AUDITADA_PAPEL`.
+- [Estágio 5 — Tabela de Estoque](05_tabela_estoque.md) — consolidação do
+  inventário declarado (Bloco H), usa a mesma base de dados desta etapa.
 - [Estágio 2 — Criação BC3](02_criacao_bc3.md) — origem de `DT_E_S`/`DT_FIN`
   via `bc3`.
 - [Estágio 1 — Extração](01_extracao.md) — origem de `DT_E_S`/`DT_FIN` na

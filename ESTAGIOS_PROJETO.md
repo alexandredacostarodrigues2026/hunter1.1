@@ -8,8 +8,9 @@ Fonte original da lista: `estágios.txt` (raiz).
 |---|---|---|---|
 | 1 | Extração | ✅ Implementado | [docs/estagios/01_extracao.md](docs/estagios/01_extracao.md) |
 | 2 | Criação BC3 — busca de código de produto do auditado para produtos ET do fornecedor | ✅ Implementado | [docs/estagios/02_criacao_bc3.md](docs/estagios/02_criacao_bc3.md) |
-| 3 | Criação das entradas, saídas e estoques para fins de cruzamento | ✅ Implementado (xml_entradas_real/xml_saidas_real — falta a etapa de estoque em si, coberta pelo Estágio 4) | [docs/estagios/03_fluxos_fisicos.md](docs/estagios/03_fluxos_fisicos.md) |
-| 4 | Implantação das regras das datas nas ET e nas EP | 🚧 Em andamento (DATA_ELEITA/ANO_ELEITO e estoque_entradas/estoque_saidas implementados; cálculo de saldo de estoque ainda pendente) | [docs/estagios/04_cronologia_ano_eleito.md](docs/estagios/04_cronologia_ano_eleito.md) |
+| 3 | Criação das entradas, saídas e estoques (movimentação) para fins de cruzamento | ✅ Implementado (xml_entradas_real/xml_saidas_real) | [docs/estagios/03_fluxos_fisicos.md](docs/estagios/03_fluxos_fisicos.md) |
+| 4 | Implantação das regras das datas nas ET e nas EP | ✅ Implementado (DATA_ELEITA/ANO_ELEITO, estoque_entradas/estoque_saidas) | [docs/estagios/04_cronologia_ano_eleito.md](docs/estagios/04_cronologia_ano_eleito.md) |
+| 5 | Geração da Tabela de Estoque (consolidação do inventário declarado, Bloco H) | ✅ Implementado (estoque_anual_consolidado — foco só em consolidação; cálculo de divergência/RN1 fica pra uma etapa futura) | [docs/estagios/05_tabela_estoque.md](docs/estagios/05_tabela_estoque.md) |
 
 ## Como usar este índice
 

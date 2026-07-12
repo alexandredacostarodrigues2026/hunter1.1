@@ -556,3 +556,59 @@ def render_fluxos_fisicos() -> None:
         st.info(f"Nenhum registro em xml_{ativo}_real.")
     else:
         st.dataframe(_preparar_preview(df_preview, _COLUNAS_PREVIEW_FLUXOS_REAIS), use_container_width=True)
+
+
+_COLUNAS_PREVIEW_ESTOQUE_ANUAL = [
+    "ANO_REFERENCIA", "COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO",
+    "UNIDADE", "QUANTIDADE_INICIAL", "QUANTIDADE_FINAL",
+]
+
+
+def render_estoque_anual() -> None:
+    """Estágio 5 — Tabela de Estoque: consolida o inventário já declarado no
+    SPED (Bloco H — H005+H010, ver loader.montar_estoque_anual_consolidado())
+    por item x ano, aplicando a regra de continuidade cronológica (Estoque
+    Final de 31/12 do ano N-1 vira Estoque Inicial de 01/01 do ano N — mesma
+    linha física). Sem cálculo de entradas/saídas nem divergências nesta
+    etapa (foco exclusivo em consolidação)."""
+    st.subheader("Estágio 5 — Tabela de Estoque")
+    st.caption(
+        "Consolida o inventário já declarado no SPED (Bloco H — H005+H010) por item e por ano, "
+        "aplicando a regra de continuidade: o Estoque Final de 31/12 do ano anterior vira o "
+        "Estoque Inicial de 01/01 do ano seguinte — o mesmo inventário físico, visto dos dois "
+        "lados da virada do ano. Não calcula entradas, saídas nem divergências — só consolida "
+        "o que já foi declarado."
+    )
+
+    if "estoque_anual_gerado" not in st.session_state:
+        st.session_state["estoque_anual_gerado"] = loader.estoque_anual_ja_gerado()
+
+    if st.session_state["estoque_anual_gerado"]:
+        df_preview, total = loader.consultar_estoque_anual_consolidado(limite=200)
+        st.success(f"✅ {total:,} registro(s) em `estoque_anual_consolidado`.".replace(",", "."))
+        st.markdown(f"Prévia limitada a 200 linhas de {total:,}".replace(",", "."))
+        if df_preview.empty:
+            st.info("Nenhum registro na tabela de estoque.")
+        else:
+            st.dataframe(_preparar_preview(df_preview, _COLUNAS_PREVIEW_ESTOQUE_ANUAL), use_container_width=True)
+
+        clicou = st.button(
+            "Regerar Tabela de Estoque",
+            key="btn_regerar_estoque_anual",
+            help="Reprocessa o Bloco H (H005+H010) e atualiza a tabela.",
+        )
+    else:
+        clicou = st.button("Gerar Tabela de Estoque", key="btn_gerar_estoque_anual")
+
+    if not clicou:
+        return
+
+    with st.spinner("Consolidando a tabela de estoque..."):
+        resultado = loader.persistir_estoque_anual_consolidado()
+
+    if "erro" in resultado:
+        st.error(f"Erro: {resultado['erro']}")
+        return
+
+    st.session_state["estoque_anual_gerado"] = True
+    st.rerun()
