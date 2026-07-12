@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 import duckdb
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -148,22 +149,28 @@ def _localizar_arquivos_nfe_subpasta(config: dict, subpasta: str) -> list:
 
 _BUCKETS_NFE = (
     "entradas", "saidas", "analise_et", "analise_ep", "situacao_et", "situacao_ep",
+    "entradas_real", "saidas_real",
 )
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def _classificar_itens_nfe() -> dict:
     """Lê todos os .txt de nfe_path (ET+EP) e segrega POR ITEM (não por chave
-    inteira) em 6 grupos, sem descartar nenhum registro:
+    inteira) em 8 grupos, sem descartar nenhum registro:
       1. situação inválida (fora de A/O — canceladas, denegadas, inutilizadas)
          -> nfe_situacao_et / nfe_situacao_ep (pelo CNPJ nunca ir ao cruzamento
          físico nem à conferência de CFOP simbólico);
       2. dentre os de situação válida, CFOP na watchlist (faturamento futuro,
          venda à ordem, baixa de estoque/ECF) -> nfe_analise_et / nfe_analise_ep;
       3. o restante (situação válida + CFOP fora da watchlist) -> entradas/
-         saídas (fluxo principal de cruzamento), conforme o tpnf.
+         saídas (fluxo principal de cruzamento), conforme o tpnf;
+      4. desse mesmo restante, movimentação física real da auditada (não só
+         tpnf isolado — cruza com o papel da auditada na nota, emitente ou
+         destinatária, ver bloco "entradas/saídas reais" abaixo) ->
+         entradas_real / saidas_real.
     Devolve {'entradas','saidas','analise_et','analise_ep','situacao_et',
-    'situacao_ep': DataFrame, 'erros': list, 'arquivos': list}."""
+    'situacao_ep','entradas_real','saidas_real': DataFrame, 'erros': list,
+    'arquivos': list}."""
     config   = load_config()
     arquivos = _localizar_arquivos_nfe(config)
     vazio    = pd.DataFrame()
@@ -236,10 +243,68 @@ def _classificar_itens_nfe() -> dict:
     df_situacao_ep = combined[mask_situacao_ep].copy()
     df_situacao_ep["ORIGEM_DADOS"] = "SITUACAO_EP"
 
+    # ── Entradas/saídas REAIS — movimentação física da auditada ─────────────
+    # tpnf isolado (0=entrada/1=saída) reflete a perspectiva de quem EMITE a
+    # NF-e, não necessariamente a da auditada: numa ET normal (fornecedor
+    # emite, auditada é destinatária), o fornecedor registra tpnf=1 (saída
+    # dele) para o que é, fisicamente, uma ENTRADA na auditada. Cruza tpnf
+    # com o papel da auditada na nota (emit/dest, via CNPJ já fixado em
+    # obter_entidade_auditada()) pra chegar na direção física real — ver
+    # "regra de negócios unificadas/CNPJ EMIT = CNPJ DEST.txt" (raiz).
+    # Roda só sobre mask_principal (situação válida + fora da watchlist) —
+    # mesma base de entradas/saídas acima — pra conter só movimentação
+    # física válida (situação irregular e CFOP de watchlist já segregados).
+    entidade_auditada = obter_entidade_auditada()
+    cnpj_auditada = (entidade_auditada or {}).get("cnpj")
+
+    if cnpj_auditada:
+        emit_cnpj = (
+            combined["fatonfe_infnfe_emit_cnpj"].apply(_normalizar_cnpj)
+            if "fatonfe_infnfe_emit_cnpj" in combined.columns
+            else pd.Series("", index=combined.index)
+        )
+        dest_cnpj = (
+            combined["fatonfe_infnfe_dest_cnpj"].apply(_normalizar_cnpj)
+            if "fatonfe_infnfe_dest_cnpj" in combined.columns
+            else pd.Series("", index=combined.index)
+        )
+        auditada_destinataria = dest_cnpj == cnpj_auditada
+        auditada_emitente     = emit_cnpj == cnpj_auditada
+    else:
+        # Entidade auditada ainda não fixada (garantir_entidade_auditada()
+        # não rodou) — sem CNPJ de referência não dá pra determinar o papel
+        # da auditada na nota; grupos reais ficam vazios (não quebram a carga).
+        auditada_destinataria = pd.Series(False, index=combined.index)
+        auditada_emitente     = pd.Series(False, index=combined.index)
+
+    mask_entrada_real = mask_principal & (
+        (auditada_destinataria & (tpnf == "1")) | (auditada_emitente & (tpnf == "0"))
+    )
+    mask_saida_real = mask_principal & (
+        (auditada_destinataria & (tpnf == "0")) | (auditada_emitente & (tpnf == "1"))
+    )
+    # Papel da auditada na nota (não é PASTA_ORIGEM/ET-EP por pasta — é o
+    # papel real por CNPJ, ver bloco acima) — persistido junto com
+    # entradas_real/saidas_real como alicerce do Estágio 4 (cenário A/B da
+    # hierarquia de DATA_ELEITA, ver montar_estoque_entradas/_saidas()):
+    # Cenário A (auditada destinatária) e Cenário B (auditada emitente) usam
+    # prioridades diferentes de data.
+    combined["AUDITADA_PAPEL"] = np.select(
+        [auditada_destinataria, auditada_emitente],
+        ["DESTINATARIA", "EMITENTE"],
+        default="",
+    )
+
+    df_entradas_real = combined[mask_entrada_real].copy()
+    df_entradas_real["ORIGEM_DADOS"] = "ENTRADAS_REAL"
+    df_saidas_real = combined[mask_saida_real].copy()
+    df_saidas_real["ORIGEM_DADOS"] = "SAIDAS_REAL"
+
     return {
         "entradas": df_entradas, "saidas": df_saidas,
         "analise_et": df_analise_et, "analise_ep": df_analise_ep,
         "situacao_et": df_situacao_et, "situacao_ep": df_situacao_ep,
+        "entradas_real": df_entradas_real, "saidas_real": df_saidas_real,
         "erros": erros, "arquivos": [str(a) for a in arquivos],
     }
 
@@ -404,6 +469,19 @@ def _competencia_arquivo(arquivo: Path) -> str:
     return ""
 
 
+def _dt_fin_arquivo(arquivo: Path) -> str:
+    """Lê o registro 0000 do arquivo e devolve DT_FIN (Campo 05) — data final
+    do período de apuração a que a declaração se refere (ex.: 31012024,
+    DDMMAAAA cru, sem conversão), propagada depois pra todos os itens (C170)
+    daquele arquivo (ver _parse_itens_c170_com_c100()). Usada para auditoria
+    temporal: cruzar com DT_E_S do C170/C100 identifica escrituração
+    extemporânea (nota de um mês declarada só no mês seguinte)."""
+    for campos in _iter_linhas_sped(arquivo):
+        if campos[1] == "0000":
+            return campos[5] if len(campos) > 5 else ""
+    return ""
+
+
 def _parse_registros_sped(arquivos: list, reg: str, campos_nomes: list) -> pd.DataFrame:
     """Extrai todas as ocorrências de um registro SPED (ex.: 0200, H010) dos arquivos."""
     linhas = []
@@ -419,6 +497,19 @@ def _parse_registros_sped(arquivos: list, reg: str, campos_nomes: list) -> pd.Da
             linha["ARQUIVO_ORIGEM"] = arquivo.name
             linhas.append(linha)
     return pd.DataFrame(linhas)
+
+
+def _numero_decimal_br(serie: pd.Series) -> pd.Series:
+    """Converte string numérica em formato BR (vírgula decimal, ex.:
+    "33,60") pra float, tolerando também vir em ponto — o SPED/EFD grava
+    campos numéricos com vírgula, mas alguns valores já vêm em ponto.
+    Mesma lógica de matching._valor_numerico(), duplicada aqui (não
+    importada) porque loader.py é importado por matching.py — importar de
+    volta criaria ciclo."""
+    return pd.to_numeric(
+        serie.astype(str).str.strip().str.replace(",", ".", regex=False),
+        errors="coerce",
+    )
 
 
 def _forcar_colunas_string(df: pd.DataFrame, colunas: "list[str]") -> pd.DataFrame:
@@ -453,10 +544,15 @@ def _gerar_id_unico(df: pd.DataFrame, colunas: "list[str]", nome_coluna: str = "
 
 
 def _parse_itens_c170_com_c100(arquivos: list) -> pd.DataFrame:
-    """Percorre C100/C170 sequencialmente — cada C170 herda dados do C100 mais recente."""
+    """Percorre C100/C170 sequencialmente — cada C170 herda dados do C100 mais
+    recente, inclusive DT_E_S (Campo 11 do C100 — data de entrada/saída
+    efetiva da mercadoria) e DT_FIN (Campo 05 do Registro 0000 — data final
+    do período de apuração do arquivo), usadas para auditoria temporal
+    (identificar escrituração extemporânea)."""
     linhas = []
     for arquivo in arquivos:
         competencia = _competencia_arquivo(arquivo)
+        dt_fin = _dt_fin_arquivo(arquivo)
         c100_atual: dict = {}
         for campos in _iter_linhas_sped(arquivo):
             reg = campos[1]
@@ -474,12 +570,16 @@ def _parse_itens_c170_com_c100(arquivos: list) -> pd.DataFrame:
                 linha["NUM_DOC"]        = c100_atual.get("NUM_DOC", "")
                 linha["CHV_NFE"]        = c100_atual.get("CHV_NFE", "")
                 linha["DT_DOC"]         = c100_atual.get("DT_DOC", "")
+                linha["DT_E_S"]         = c100_atual.get("DT_E_S", "")
+                linha["DT_FIN"]         = dt_fin
                 linha["COD_MOD"]        = c100_atual.get("COD_MOD", "")
                 linha["COMPETENCIA"]    = competencia
                 linha["ARQUIVO_ORIGEM"] = arquivo.name
                 linhas.append(linha)
     df = pd.DataFrame(linhas)
-    df = _forcar_colunas_string(df, ["COD_ITEM", "UNID", "CHV_NFE", "NUM_ITEM", "COD_PART"])
+    df = _forcar_colunas_string(
+        df, ["COD_ITEM", "UNID", "CHV_NFE", "NUM_ITEM", "COD_PART", "DT_E_S", "DT_FIN"]
+    )
     return _gerar_id_unico(df, ["CHV_NFE", "NUM_ITEM"])
 
 
@@ -629,10 +729,16 @@ def load_declaracao_entradas_terceiros() -> "tuple[pd.DataFrame, dict]":
     """Chaves de entrada de emissão de terceiros: C100 com IND_OPER=0 (entrada)
     e IND_EMIT=1 (emitido por terceiros) + itens C170, enriquecidos com o
     cadastro de produto (0200), de unidade de medida (0190) e o CNPJ do
-    emitente via cadastro de participantes (0150, ligado por COD_PART). Os
-    filtros de CFOP e situação (Regra Operacional R07) são exclusivos do lado
-    XML (_carregar_nfe) — não se aplicam à declaração (EFD/SPED). COD_ITEM,
-    UNID, CHV_NFE e CNPJ tratados como string."""
+    emitente via cadastro de participantes (0150, ligado por COD_PART).
+    Inclui DT_E_S (Campo 11 do C100 — data de entrada/saída efetiva da
+    mercadoria) e DT_FIN (Campo 05 do Registro 0000 — data final do período
+    de apuração), herdados de load_declaracao_itens()/
+    _parse_itens_c170_com_c100() sem filtragem adicional aqui — usados para
+    auditoria temporal (escrituração extemporânea, ver REGRAS_MATCHING.md/
+    docs/estagios). Os filtros de CFOP e situação (Regra Operacional R07)
+    são exclusivos do lado XML (_carregar_nfe) — não se aplicam à declaração
+    (EFD/SPED). COD_ITEM, UNID, CHV_NFE, CNPJ, DT_E_S e DT_FIN tratados como
+    string."""
     df_itens, meta_itens = load_declaracao_itens()
     if df_itens.empty:
         meta_itens["origem_dados"] = "DECLARACAO_ENTRADAS_TERCEIROS"
@@ -653,6 +759,19 @@ def load_declaracao_entradas_terceiros() -> "tuple[pd.DataFrame, dict]":
         df = df.merge(cadastro_part, on="COD_PART", how="left")
     else:
         df["CNPJ"] = ""
+
+    # Valor unitário do produto na declaração: a BC1 (SPED/EFD) não traz um
+    # campo de valor unitário direto no C170 — só QTD e VL_ITEM (valor total
+    # da linha) — diferente da BC2 (XML), que traz o unitário faturado
+    # (vUnCom) direto. Derivado aqui como VL_ITEM/QTD pra poder comparar com
+    # o unitário do XML (_VALOR_UNIT_ORIGINAL) e sinalizar divergência de
+    # unidade/embalagem entre as duas bases (ex.: XML fatura por caixa, SPED
+    # escritura por unidade — o valor TOTAL do item pode bater mesmo assim,
+    # mas o unitário difere por um fator múltiplo). QTD == 0 ou ausente
+    # produz NaN (não dá pra derivar), sem tentar adivinhar.
+    qtd_num = _numero_decimal_br(df["QTD"]) if "QTD" in df.columns else pd.Series(dtype=float)
+    vl_item_num = _numero_decimal_br(df["VL_ITEM"]) if "VL_ITEM" in df.columns else pd.Series(dtype=float)
+    df["VALOR_UNITARIO_DECLARACAO"] = (vl_item_num / qtd_num.replace(0, np.nan)).round(4)
 
     df = _forcar_colunas_string(df, ["COD_ITEM", "UNID", "CHV_NFE", "CNPJ"])
 
@@ -905,10 +1024,13 @@ def persistir_nfe(callback=None) -> dict:
     principal — situação válida e CFOP fora da watchlist), nfe_analise_et/
     nfe_analise_ep (situação válida mas CFOP de watchlist),
     nfe_situacao_et/nfe_situacao_ep (situação inválida — canceladas,
-    denegadas, inutilizadas) e nfe_bc2 (Base Comparativa 2 — itens de
-    Emissão de Terceiros já com nomes de coluna normalizados para cruzar
-    com a BC1/SPED). callback(etapa, n) chamado apos cada tabela.
-    Retorna {tabela: n_linhas}."""
+    denegadas, inutilizadas), xml_entradas_real/xml_saidas_real (mesmo
+    universo de nfe_entradas/nfe_saidas, mas reclassificado pela
+    movimentação física real da auditada — tpnf cruzado com o papel dela
+    na nota, emitente ou destinatária — ver _classificar_itens_nfe()) e
+    nfe_bc2 (Base Comparativa 2 — itens de Emissão de Terceiros já com
+    nomes de coluna normalizados para cruzar com a BC1/SPED).
+    callback(etapa, n) chamado apos cada tabela. Retorna {tabela: n_linhas}."""
     _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
     resultado = {}
     try:
@@ -924,6 +1046,11 @@ def persistir_nfe(callback=None) -> dict:
                 ("nfe_analise_ep",  "analise_ep",  "_df_nfe_analise_ep",  True),
                 ("nfe_situacao_et", "situacao_et", "_df_nfe_situacao_et", True),
                 ("nfe_situacao_ep", "situacao_ep", "_df_nfe_situacao_ep", True),
+                # xml_entradas_real/xml_saidas_real também sempre criadas
+                # (mesmo vazias, ex.: entidade auditada ainda não fixada) —
+                # o painel principal consulta essas tabelas direto.
+                ("xml_entradas_real", "entradas_real", "_df_xml_entradas_real", True),
+                ("xml_saidas_real",   "saidas_real",   "_df_xml_saidas_real",   True),
             ):
                 df = classificado[chave]
                 if not df.empty or sempre_criar:
@@ -944,6 +1071,229 @@ def persistir_nfe(callback=None) -> dict:
                 callback("nfe_bc2", resultado["nfe_bc2"])
     except Exception as exc:
         logger.exception("Erro ao persistir NF-e: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+_TABELAS_ENTRADAS_SAIDAS_REAL = ("xml_entradas_real", "xml_saidas_real")
+_TABELAS_ENTRADAS_SAIDAS_REAL_POR_DIRECAO = {
+    "entradas": "xml_entradas_real", "saidas": "xml_saidas_real",
+}
+
+
+def consultar_totais_entradas_saidas_real() -> dict:
+    """Retorna {'xml_entradas_real': n, 'xml_saidas_real': n} lendo direto do
+    DuckDB (sem reprocessar) — alimenta os KPIs do painel principal (Carga de
+    XML) com a movimentação física real da auditada (ver _classificar_itens_nfe()).
+    0 tanto se a tabela ainda não existe (carga não rodou) quanto se existe
+    vazia (ex.: entidade auditada ainda não fixada em obter_entidade_auditada())."""
+    totais = {t: 0 for t in _TABELAS_ENTRADAS_SAIDAS_REAL}
+    if not _BANCO_PATH.exists():
+        return totais
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            for tabela in totais:
+                if tabela in tabelas:
+                    totais[tabela] = con.execute(f"SELECT COUNT(*) FROM {tabela}").fetchone()[0]
+    except Exception:
+        logger.exception("Erro ao consultar totais de entradas/saídas reais em %s", _BANCO_PATH)
+    return totais
+
+
+def consultar_fluxo_real(direcao: str, limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê xml_entradas_real (direcao='entradas') ou xml_saidas_real
+    (direcao='saidas') já persistidas (sem reprocessar) — mesma movimentação
+    física real da auditada de consultar_totais_entradas_saidas_real().
+    Mesmo padrão de consultar_bc3()/consultar_entradas_terceiros(): devolve
+    uma amostra (até 'limite' linhas) e o total real. limite=None devolve a
+    tabela inteira. direcao fora de {'entradas','saidas'} devolve vazio."""
+    tabela = _TABELAS_ENTRADAS_SAIDAS_REAL_POR_DIRECAO.get(direcao)
+    if tabela is None or not _BANCO_PATH.exists():
+        return pd.DataFrame(), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if tabela not in tabelas:
+                return pd.DataFrame(), 0
+            total = con.execute(f"SELECT COUNT(*) FROM {tabela}").fetchone()[0]
+            query = f"SELECT * FROM {tabela}" if limite is None else f"SELECT * FROM {tabela} LIMIT {limite}"
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar %s em %s", tabela, _BANCO_PATH)
+        return pd.DataFrame(), 0
+
+
+# ── Estágio 4 — Cronologia e Ano Eleito (estoque_entradas/estoque_saidas) ───
+# DATA_ELEITA/ANO_ELEITO: hierarquia de datas por cenário ("Figura 1"),
+# aplicada sobre xml_entradas_real/xml_saidas_real (Estágio 3) enriquecidos
+# com DT_E_S/DT_FIN da bc3 (Estágio 2 — Matching, propagados em
+# matching.executar_matching(), ver REGRAS_MATCHING.md).
+#   Cenário A (AUDITADA_PAPEL='DESTINATARIA', ET): DT_E_S > DT_FIN >
+#     dhSaiEnt (XML) > dhEmi (XML).
+#   Cenário B (AUDITADA_PAPEL='EMITENTE', EP): dhSaiEnt (XML) > DT_E_S >
+#     DT_FIN > dhEmi (XML).
+# 'nd'/'nm' (sentinelas da bc3 — item não declarado/sem match) e NULL
+# genuíno (LEFT JOIN sem correspondência) são tratados como ausentes —
+# cascade automático pras prioridades seguintes, sem checar MATCH_TIPO
+# explicitamente: o valor sentinela/NULL já reprova a validação de formato.
+_COL_DHSAIENT_XML = "fatonfe_infnfe_ide_dhsaient"  # campo opcional do XML
+# (dhSaiEnt); não populado neste pipeline de extração até a data desta
+# implementação (2026-07-12) — ausente da tabela, cascade automático pra
+# próxima prioridade. Mantido pelo nome pra funcionar sozinho se a extração
+# passar a trazê-lo no futuro.
+_COL_DHEMI_XML = "fatonfe_infnfe_ide_dhemi"
+
+_ORDEM_CENARIO_A_ET = ["DT_E_S", "DT_FIN", _COL_DHSAIENT_XML, _COL_DHEMI_XML]
+_ORDEM_CENARIO_B_EP = [_COL_DHSAIENT_XML, "DT_E_S", "DT_FIN", _COL_DHEMI_XML]
+
+
+def _so_string_valida(serie: pd.Series, regex: str) -> pd.Series:
+    """Valida uma série de datas contra 'regex' (fullmatch). NaN genuíno
+    (ex.: LEFT JOIN sem correspondência em bc3) e valores fora do padrão
+    (inclusive sentinelas 'nd'/'nm') viram NaN — nunca convertidos na string
+    literal 'None'/'nan' (só stringifica valores realmente presentes)."""
+    presente = serie.notna()
+    valores_str = pd.Series(np.nan, index=serie.index, dtype=object)
+    valores_str.loc[presente] = serie.loc[presente].astype(str).str.strip()
+    bate = valores_str.notna() & valores_str.str.fullmatch(regex).fillna(False)
+    return valores_str.where(bate)
+
+
+def _candidato_data_ano(df: pd.DataFrame, coluna: str) -> "tuple[pd.Series, pd.Series]":
+    """Valida e extrai (valor, ano) de uma coluna candidata da hierarquia de
+    DATA_ELEITA — formato SPED DDMMAAAA (DT_E_S/DT_FIN, vindas da BC1 via
+    bc3) ou ISO 8601 (campos do XML, dhEmi/dhSaiEnt). Coluna ausente do
+    DataFrame (ex.: dhSaiEnt não extraído) devolve tudo NaN — cascade
+    automático pra próxima prioridade."""
+    if coluna not in df.columns:
+        vazio = pd.Series(np.nan, index=df.index, dtype=object)
+        return vazio, vazio
+    if coluna in ("DT_E_S", "DT_FIN"):
+        valor = _so_string_valida(df[coluna], r"\d{8}")
+        ano = valor.where(valor.isna(), valor.str[4:8])
+    else:
+        valor = _so_string_valida(df[coluna], r"\d{4}-\d{2}-\d{2}.*")
+        ano = valor.where(valor.isna(), valor.str[:4])
+    return valor, ano
+
+
+def _aplicar_hierarquia_data(df: pd.DataFrame, ordem: "list[str]") -> "tuple[pd.Series, pd.Series]":
+    """Aplica a hierarquia de datas (Figura 1): 'ordem' é a lista de colunas
+    candidatas já na ordem de prioridade (1a a 4a). Usa a 1a data válida
+    encontrada (pandas combine_first) tanto pro valor cru (DATA_ELEITA)
+    quanto pro ano (ANO_ELEITO) — sempre alinhados, porque o ano é derivado
+    do mesmo valor já validado em _candidato_data_ano(). Devolve
+    (data_eleita, ano_eleito), string, vazias quando nenhuma das 4 fontes
+    tem data válida (Regra Operacional R07 — sem inferência numérica)."""
+    valor_final = pd.Series(np.nan, index=df.index, dtype=object)
+    ano_final = pd.Series(np.nan, index=df.index, dtype=object)
+    for coluna in ordem:
+        valor, ano = _candidato_data_ano(df, coluna)
+        valor_final = valor_final.combine_first(valor)
+        ano_final = ano_final.combine_first(ano)
+    return valor_final.fillna("").astype(str), ano_final.fillna("").astype(str)
+
+
+def _enriquecer_fluxo_real_com_bc3(direcao: str) -> pd.DataFrame:
+    """Lê xml_entradas_real/xml_saidas_real (Estágio 3, já persistida) e
+    enriquece com DT_E_S/DT_FIN da bc3 (Estágio 2 — Matching) via LEFT JOIN
+    por ID_UNICO — mesmo padrão de consultar_nfe_entradas_bc3(). LEFT JOIN
+    (não INNER) pra não descartar item cuja bc3 ainda não foi gerada ou sem
+    correspondência — fica com DT_E_S/DT_FIN NULL (cascade automático pro
+    XML em _candidato_data_ano()). Alicerce do Estágio 4."""
+    tabela = _TABELAS_ENTRADAS_SAIDAS_REAL_POR_DIRECAO.get(direcao)
+    if tabela is None or not _BANCO_PATH.exists():
+        return pd.DataFrame()
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if tabela not in tabelas:
+                return pd.DataFrame()
+            # tem_bc3 exige DT_E_S no schema da bc3 — bases persistidas com
+            # uma bc3 gerada antes de matching.py propagar DT_E_S/DT_FIN
+            # (ver executar_matching()) caem no fallback (NULL), sem quebrar.
+            colunas_bc3 = (
+                {r[0] for r in con.execute("DESCRIBE bc3").fetchall()} if "bc3" in tabelas else set()
+            )
+            tem_bc3 = "DT_E_S" in colunas_bc3
+            colunas_bc1 = (
+                "b.DT_E_S, b.DT_FIN" if tem_bc3 else
+                "CAST(NULL AS VARCHAR) AS DT_E_S, CAST(NULL AS VARCHAR) AS DT_FIN"
+            )
+            join_bc3 = "LEFT JOIN bc3 b ON n.ID_UNICO = b.ID_UNICO" if tem_bc3 else ""
+            df = con.execute(f"SELECT n.*, {colunas_bc1} FROM {tabela} n {join_bc3}").df()
+        return df
+    except Exception:
+        logger.exception("Erro ao enriquecer %s com bc3 em %s", tabela, _BANCO_PATH)
+        return pd.DataFrame()
+
+
+def _aplicar_data_eleita(df: pd.DataFrame) -> pd.DataFrame:
+    """Cria DATA_ELEITA/ANO_ELEITO em 'df' (precisa de AUDITADA_PAPEL, DT_E_S,
+    DT_FIN, dhSaiEnt/dhEmi já presentes — ver montar_estoque_entradas()/
+    montar_estoque_saidas()): Cenário A (AUDITADA_PAPEL='DESTINATARIA', ET)
+    usa _ORDEM_CENARIO_A_ET; Cenário B (AUDITADA_PAPEL='EMITENTE', EP) usa
+    _ORDEM_CENARIO_B_EP. Regra R07: DATA_ELEITA/ANO_ELEITO sempre string."""
+    df = df.copy()
+    papel = df["AUDITADA_PAPEL"] if "AUDITADA_PAPEL" in df.columns else pd.Series("", index=df.index)
+    mask_cenario_a = papel == "DESTINATARIA"
+
+    data_a, ano_a = _aplicar_hierarquia_data(df, _ORDEM_CENARIO_A_ET)
+    data_b, ano_b = _aplicar_hierarquia_data(df, _ORDEM_CENARIO_B_EP)
+
+    df["DATA_ELEITA"] = data_a.where(mask_cenario_a, data_b)
+    df["ANO_ELEITO"]  = ano_a.where(mask_cenario_a, ano_b)
+    return df
+
+
+def montar_estoque_entradas() -> pd.DataFrame:
+    """Estágio 4: xml_entradas_real (Estágio 3) enriquecido com DT_E_S/DT_FIN
+    da bc3 (Estágio 2) + DATA_ELEITA/ANO_ELEITO (hierarquia da Figura 1)."""
+    return _aplicar_data_eleita(_enriquecer_fluxo_real_com_bc3("entradas"))
+
+
+def montar_estoque_saidas() -> pd.DataFrame:
+    """Estágio 4: xml_saidas_real (Estágio 3) enriquecido com DT_E_S/DT_FIN
+    da bc3 (Estágio 2) + DATA_ELEITA/ANO_ELEITO (hierarquia da Figura 1)."""
+    return _aplicar_data_eleita(_enriquecer_fluxo_real_com_bc3("saidas"))
+
+
+_TABELAS_ESTOQUE = {
+    "estoque_entradas": montar_estoque_entradas, "estoque_saidas": montar_estoque_saidas,
+}
+
+
+def persistir_estoque_entradas_saidas(callback=None) -> dict:
+    """Estágio 4: persiste estoque_entradas/estoque_saidas no DuckDB —
+    xml_entradas_real/xml_saidas_real (Estágio 3) enriquecidos com DT_E_S/
+    DT_FIN da bc3 (Estágio 2) e DATA_ELEITA/ANO_ELEITO (hierarquia da Figura
+    1, ver _aplicar_data_eleita()). Exige xml_entradas_real/xml_saidas_real
+    já persistidas (persistir_nfe()) — bc3 é opcional (sem ela, DT_E_S/DT_FIN
+    ficam NULL e a hierarquia cai direto pras datas do XML). callback(etapa,
+    n) chamado após cada tabela. Retorna {tabela: n_linhas}."""
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    resultado = {}
+    try:
+        # Monta os DataFrames ANTES de abrir a conexão de escrita —
+        # montar_fn() (montar_estoque_entradas/_saidas) abre sua própria
+        # conexão de leitura em _enriquecer_fluxo_real_com_bc3(); o DuckDB
+        # não permite duas conexões (leitura + escrita) simultâneas pro
+        # mesmo arquivo com configuração diferente.
+        dados = {tabela: montar_fn() for tabela, montar_fn in _TABELAS_ESTOQUE.items()}
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            for tabela, df in dados.items():
+                df = _forcar_colunas_string(df, ["DT_E_S", "DT_FIN", "DATA_ELEITA", "ANO_ELEITO"])
+                if not df.empty:
+                    con.register("_df_tmp_estoque", df)
+                    con.execute(f"CREATE OR REPLACE TABLE {tabela} AS SELECT * FROM _df_tmp_estoque")
+                    con.unregister("_df_tmp_estoque")
+                resultado[tabela] = len(df)
+                if callback:
+                    callback(tabela, resultado[tabela])
+    except Exception as exc:
+        logger.exception("Erro ao persistir estoque_entradas/estoque_saidas: %s", exc)
         resultado["erro"] = str(exc)
     return resultado
 
@@ -1215,18 +1565,101 @@ def consultar_bc3(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
         return pd.DataFrame(), 0
 
 
+def consultar_nfe_entradas_bc3(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Expande a BC3 (resultado do Matching) de volta para o dataset bruto de
+    ET em `nfe_entradas` — LEFT JOIN por ID_UNICO (chave sintética presente
+    nos dois lados, ver _gerar_id_unico()) entre `nfe_entradas` (filtrado a
+    PASTA_ORIGEM='ET' — todas as colunas originais do XML, não só as ~12
+    reduzidas da BC2/BC3: data, participante etc.) e `bc3` (só as colunas de
+    enriquecimento do Matching: COD_ITEM_DECLARACAO, DESCR_ITEM_DECLARACAO,
+    MATCH_TIPO, MATCH_SCORE, FATOR_MULTIPLICADOR_SUGERIDO, DT_E_S, DT_FIN
+    — as duas últimas só se a bc3 persistida já tiver esse schema, ver
+    Estágio 4 em docs/estagios/04_cronologia_ano_eleito.md). Preserva a
+    hierarquia de 11 níveis do Matching (D1-D6/A1-A5, ver REGRAS_MATCHING.md)
+    porque MATCH_TIPO vem direto da bc3 sem nenhuma transformação. Item de ET
+    sem `bc3` gerada ainda (ou sem correspondência) some/fica NULL nas
+    colunas de enriquecimento (LEFT JOIN), nunca derruba a linha do ET.
+    Devolve uma amostra (até 'limite' linhas) e o total real de linhas.
+    limite=None devolve a tabela inteira (exportação completa)."""
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "nfe_entradas" not in tabelas:
+                return pd.DataFrame(), 0
+            colunas_nfe_entradas = {r[0] for r in con.execute("DESCRIBE nfe_entradas").fetchall()}
+            if "ID_UNICO" not in colunas_nfe_entradas:
+                # nfe_entradas persistida antes do ID_UNICO existir no schema
+                # (versão antiga de loader.py) — sem a chave de junção não dá
+                # pra expandir com a bc3. Precisa recarregar (Carregar
+                # novamente) pra regravar nfe_entradas com o schema atual;
+                # não regerado aqui de forma automática (Regra: nunca
+                # persistir_* como diagnóstico silencioso).
+                logger.warning(
+                    "nfe_entradas em %s não tem ID_UNICO (schema desatualizado) — "
+                    "recarregue os dados (Carregar novamente) para habilitar a prévia enriquecida.",
+                    _BANCO_PATH,
+                )
+                return pd.DataFrame(), 0
+            tem_bc3 = "bc3" in tabelas
+            colunas_schema_bc3 = (
+                {r[0] for r in con.execute("DESCRIBE bc3").fetchall()} if tem_bc3 else set()
+            )
+            tem_datas_bc3 = "DT_E_S" in colunas_schema_bc3
+            colunas_bc3 = (
+                "b.COD_ITEM_DECLARACAO, b.DESCR_ITEM_DECLARACAO, b.MATCH_TIPO, "
+                "b.MATCH_SCORE, b.FATOR_MULTIPLICADOR_SUGERIDO"
+                if tem_bc3 else
+                "CAST(NULL AS VARCHAR) AS COD_ITEM_DECLARACAO, "
+                "CAST(NULL AS VARCHAR) AS DESCR_ITEM_DECLARACAO, "
+                "CAST(NULL AS VARCHAR) AS MATCH_TIPO, "
+                "CAST(NULL AS DOUBLE) AS MATCH_SCORE, "
+                "CAST(NULL AS DOUBLE) AS FATOR_MULTIPLICADOR_SUGERIDO"
+            )
+            colunas_bc3 += (
+                ", b.DT_E_S, b.DT_FIN" if tem_datas_bc3 else
+                ", CAST(NULL AS VARCHAR) AS DT_E_S, CAST(NULL AS VARCHAR) AS DT_FIN"
+            )
+            join_bc3 = "LEFT JOIN bc3 b ON n.ID_UNICO = b.ID_UNICO" if tem_bc3 else ""
+            base_sql = (
+                f"SELECT n.*, {colunas_bc3} "
+                f"FROM nfe_entradas n {join_bc3} "
+                "WHERE n.PASTA_ORIGEM = 'ET'"
+            )
+            total = con.execute(f"SELECT COUNT(*) FROM ({base_sql})").fetchone()[0]
+            query = base_sql if limite is None else f"{base_sql} LIMIT {limite}"
+            df = con.execute(query).df()
+        # Regra Operacional R07: códigos expandidos da declaração seguem
+        # como string (nunca inferência numérica) — mesmo com NULL do LEFT
+        # JOIN misturado a 'nd'/'nm' (itens ND/NM) e a códigos reais. Não usa
+        # _forcar_colunas_string() aqui (ela faz astype(str) cru, que
+        # transformaria NULL genuíno de LEFT JOIN — item de ET sem
+        # correspondência em bc3 — no literal "None" na tela): só converte
+        # os valores não nulos, preservando NULL como NULL.
+        for col in ("COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO", "MATCH_TIPO", "DT_E_S", "DT_FIN"):
+            if col in df.columns:
+                df[col] = df[col].where(df[col].isna(), df[col].astype(str))
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar nfe_entradas x bc3 em %s", _BANCO_PATH)
+        return pd.DataFrame(), 0
+
+
 def consultar_totais_bc3() -> dict:
     """Retorna a contagem de itens da BC3 por tipo de match (D1, D2,
-    A1, A2, A3, A4, A5, D3, D4, ND, NM) — numeração renomeada em 2026-07-09,
-    ver HIERARQUIA_TIPOS_TP_ALEXANDRE_vs_TP_IA.md), lendo direto do DuckDB
-    (sem reprocessar) — alimenta os KPIs do painel de Matching. Rótulos de
+    A1, A2, A3, A4, A5, D3, D4, D5, D6, ND, NM) — numeração renomeada em
+    2026-07-09, ver HIERARQUIA_TIPOS_TP_ALEXANDRE_vs_TP_IA.md; D3
+    (consolidação N-para-1) adicionado em 2026-07-10; D6 (nota íntegra, só
+    valor) adicionado em 2026-07-10), lendo direto do DuckDB (sem
+    reprocessar) — alimenta os KPIs do painel de Matching. Rótulos de
     versões anteriores da lógica de matching (SECUNDARIO_FUZZY,
     SECUNDARIO_GTIN, PRINCIPAL_VALOR, TIPO_1..TIPO_5) podem ainda aparecer em
     bases já geradas antes dessas mudanças e não regeradas — por isso não são
     somados a nenhum tipo atual, só deixam de ter contador próprio."""
     totais = {
         "D1": 0, "D2": 0, "A1": 0, "A2": 0, "A3": 0,
-        "A4": 0, "A5": 0, "D3": 0, "D4": 0, "ND": 0, "NM": 0,
+        "A4": 0, "A5": 0, "D3": 0, "D4": 0, "D5": 0, "D6": 0, "ND": 0, "NM": 0,
     }
     if not _BANCO_PATH.exists():
         return totais

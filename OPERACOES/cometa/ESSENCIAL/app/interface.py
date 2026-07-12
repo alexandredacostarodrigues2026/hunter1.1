@@ -82,9 +82,11 @@ def _barra_progresso(titulo: str, n_passos: int, fn_persistir) -> bool:
 def render_carga_operacao() -> None:
     """Prévia + botão de carga: 3 barras de progresso independentes.
       1. XML pendentes  — classificação arquivo a arquivo
-      2. NF-e           — nfe_entradas + nfe_saidas + nfe_analise_et/ep + nfe_situacao_et/ep no DuckDB
+      2. NF-e           — nfe_entradas + nfe_saidas + nfe_analise_et/ep + nfe_situacao_et/ep
+                           + xml_entradas_real/xml_saidas_real no DuckDB
       3. SPED           — sped_itens + sped_produtos + sped_unidades + sped_estoque no DuckDB
-    Quando já carregado e sem pendentes, exibe "Carregar novamente"."""
+    Quando já carregado e sem pendentes, exibe "Carregar novamente" (KPIs de
+    entradas/saídas reais ficam no painel dedicado, ver render_fluxos_fisicos())."""
     st.subheader("Carga de XML")
 
     with st.spinner("Verificando pastas..."):
@@ -147,7 +149,7 @@ def render_carga_operacao() -> None:
         fase_sped = "**2. SPED (declaração)**"
 
     # ── Barra 2: NF-e ─────────────────────────────────────────────────────────
-    ok_nfe = _barra_progresso(fase_nfe, n_passos=7, fn_persistir=loader.persistir_nfe)
+    ok_nfe = _barra_progresso(fase_nfe, n_passos=9, fn_persistir=loader.persistir_nfe)
 
     # ── Barra 3: SPED ─────────────────────────────────────────────────────────
     ok_sped = _barra_progresso(fase_sped, n_passos=4, fn_persistir=loader.persistir_sped)
@@ -159,6 +161,7 @@ def render_carga_operacao() -> None:
 
 _COLUNAS_PREVIEW_ENTRADAS_TERCEIROS = [
     "COMPETENCIA", "ARQUIVO_ORIGEM", "CHV_NFE", "NUM_DOC", "DT_DOC",
+    "DT_E_S", "DT_FIN",
     "COD_PART", "CNPJ", "NUM_ITEM", "COD_ITEM", "DESCR_ITEM", "COD_NCM",
     "COD_BARRA", "UNID", "DESCR_UNID", "QTD", "VL_ITEM",
 ]
@@ -175,7 +178,9 @@ def render_entradas_terceiros() -> None:
     st.subheader("Chaves de entrada de emissão de terceiros da declaração (base comparativa1)")
     st.caption(
         "C100 (IND_OPER=0 + IND_EMIT=1) + C170, enriquecido com 0200 (produto), "
-        "0190 (unidade) e 0150 (CNPJ do emitente)."
+        "0190 (unidade) e 0150 (CNPJ do emitente). Inclui DT_E_S (data de entrada/saída "
+        "efetiva, Campo 11 do C100) e DT_FIN (data final do período de apuração, "
+        "Campo 05 do Registro 0000) — base para auditoria de escrituração extemporânea."
     )
 
     if "entradas_terceiros_geradas" not in st.session_state:
@@ -339,9 +344,14 @@ def render_painel_analise() -> None:
 
 
 _COLUNAS_PREVIEW_BC3 = [
-    "CHV_NFE", "COD_ITEM", "NUM_ITEM", "fatoitemnfe_infnfe_det_prod_xprod",
-    "VL_ITEM", "COD_BARRA", "MATCH_TIPO", "MATCH_SCORE",
-    "COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO", "ID_UNICO",
+    "fatonfe_infprot_chnfe", "fatoitemnfe_infnfe_det_nitem",
+    # produto do fornecedor (XML, BC2) e produto da auditada (declaração,
+    # BC1 — via bc3) lado a lado, para conferência direta pelo auditor.
+    "fatoitemnfe_infnfe_det_prod_cprod", "fatoitemnfe_infnfe_det_prod_xprod",
+    "COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO",
+    "fatoitemnfe_infnfe_det_prod_vprod", "fatoitemnfe_infnfe_det_prod_cean",
+    "MATCH_TIPO", "MATCH_SCORE", "FATOR_MULTIPLICADOR_SUGERIDO",
+    "DT_E_S", "DT_FIN", "ID_UNICO",
 ]
 
 
@@ -350,11 +360,16 @@ def render_bc3() -> None:
     mostra o resultado (BC3) — KPIs por tipo de match + botão de geração sob
     demanda + expander com prévia. A geração pode levar cerca de 1 minuto
     (similaridade de texto item a item), por isso fica atrás de um botão
-    explícito em vez de rodar automaticamente na carga geral."""
+    explícito em vez de rodar automaticamente na carga geral.
+    A prévia expande a BC3 de volta pro dataset bruto de ET (`nfe_entradas`,
+    via loader.consultar_nfe_entradas_bc3(), join por ID_UNICO), mostrando
+    produto do fornecedor (XML) e produto da auditada (declaração) lado a
+    lado; a exportação completa (CSV) continua servindo direto a tabela
+    `bc3`."""
     st.subheader("Matching (Etapa 1) — BC2 × BC1 = BC3")
     st.caption(
         "Cruza os itens de Emissão de Terceiros (BC2, XML) com a declaração (BC1, SPED) em duas "
-        "famílias: Direto (D1-D4, sempre dentro da mesma CHV_NFE) e Aprendizado (A1-A5, dicionário "
+        "famílias: Direto (D1-D6, sempre dentro da mesma CHV_NFE) e Aprendizado (A1-A5, dicionário "
         "histórico, não exige mesma CHV_NFE). "
         "D1 = mesmo GTIN/EAN + similaridade > 90%; "
         "D2 (fallback) = mesmo Valor Total + similaridade > 60% — sem depender de NUM_ITEM. "
@@ -367,10 +382,19 @@ def render_bc3() -> None:
         "nota — cobre fornecedor/código estável entre anos. "
         "A5 (aprendizado só por descrição) = igual ao A4, relaxando também o CNPJ do "
         "emitente — cobre a mesma descrição exata vinda de fornecedores diferentes. "
-        "D3 (integridade de nota) = itens 'nd'/'nm' restantes, recuperados só em notas onde a "
+        "D3 (consolidação N-para-1) = vários itens 'nd'/'nm' do XML agrupados numa única linha "
+        "'sortido'/consolidada do SPED, quando a soma dos valores do grupo bate exatamente com "
+        "o valor da linha do SPED e a descrição do SPED está coberta (por token, ponderado por "
+        "raridade) nos itens do grupo. "
+        "D4 (integridade de nota) = itens 'nd'/'nm' restantes, recuperados só em notas onde a "
         "contagem de itens e o valor total batem entre XML e SPED, por similaridade > 70%. "
-        "D4 (último recurso) = itens 'nd'/'nm' restantes, casados só por similaridade > 70% "
-        "dentro da mesma CHV_NFE, sem exigir GTIN, valor ou integridade de nota."
+        "D5 (último recurso) = itens 'nd'/'nm' restantes, casados só por similaridade > 70% "
+        "dentro da mesma CHV_NFE, sem exigir GTIN, valor ou integridade de nota. "
+        "D6 (valor + desempate por texto) = itens 'nd'/'nm' restantes, casados dentro da mesma "
+        "CHV_NFE por valor idêntico, sem exigir nota íntegra nem similaridade de texto — cobre "
+        "descrição do SPED genérica ou errada. Valor empatado entre 2+ itens desempata por "
+        "similaridade de descrição (ou confirma direto se for a mesma duplicata dos dois lados); "
+        "só fica sem match se a similaridade também empatar."
     )
 
     if "bc3_gerada" not in st.session_state:
@@ -381,13 +405,13 @@ def render_bc3() -> None:
         total_itens = sum(totais.values())
         total_casados = (
             totais["D1"] + totais["D2"] + totais["A1"] + totais["A2"]
-            + totais["A3"] + totais["A4"] + totais["A5"]
-            + totais["D3"] + totais["D4"]
+            + totais["A3"] + totais["A4"] + totais["A5"] + totais["D3"]
+            + totais["D4"] + totais["D5"] + totais["D6"]
         )
         taxa_match = (total_casados / total_itens * 100) if total_itens else 0.0
 
-        (col1, col2, col3, col4, col5, col6, col7,
-         col8, col9, col10, col11, col12) = st.columns(12)
+        (col1, col2, col3, col4, col5, col6, col7, col8,
+         col9, col10, col11, col12, col13, col14) = st.columns(14)
         col1.metric("Matches D1", f"{totais['D1']:,}".replace(",", "."))
         col2.metric("Matches D2", f"{totais['D2']:,}".replace(",", "."))
         col3.metric("Matches A1", f"{totais['A1']:,}".replace(",", "."))
@@ -397,19 +421,30 @@ def render_bc3() -> None:
         col7.metric("Matches A5", f"{totais['A5']:,}".replace(",", "."))
         col8.metric("Matches D3", f"{totais['D3']:,}".replace(",", "."))
         col9.metric("Matches D4", f"{totais['D4']:,}".replace(",", "."))
-        col10.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
-        col11.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
-        col12.metric("Taxa de Match", f"{taxa_match:.1f}%".replace(".", ","))
+        col10.metric("Matches D5", f"{totais['D5']:,}".replace(",", "."))
+        col11.metric("Matches D6", f"{totais['D6']:,}".replace(",", "."))
+        col12.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
+        col13.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
+        col14.metric("Taxa de Match", f"{taxa_match:.1f}%".replace(".", ","))
         st.success("✅ Matching (BC3) pronto.")
 
         with st.expander("Visualizar resultado do Matching (BC3)"):
-            df_bc3, total = loader.consultar_bc3(limite=200)
+            df_bc3, total = loader.consultar_nfe_entradas_bc3(limite=200)
             st.markdown(
-                f"**Amostra** — {total:,} registro(s) no total (prévia limitada a 200 linhas; "
-                "use o botão abaixo para exportar tudo)".replace(",", ".")
+                f"**Amostra** — {total:,} registro(s) de ET no total, expandidos com o resultado "
+                "do Matching (prévia limitada a 200 linhas; use o botão abaixo para exportar tudo)"
+                .replace(",", ".")
             )
             if df_bc3.empty:
-                st.info("Nenhum registro na BC3.")
+                if total_itens > 0:
+                    st.warning(
+                        "A BC3 tem registros, mas a prévia enriquecida veio vazia — "
+                        "provavelmente `nfe_entradas` foi persistida com uma versão antiga "
+                        "do schema (sem ID_UNICO). Use \"Carregar novamente\" na Carga de XML "
+                        "para regravar `nfe_entradas` com o schema atual."
+                    )
+                else:
+                    st.info("Nenhum registro de ET encontrado.")
             else:
                 st.dataframe(_preparar_preview(df_bc3, _COLUNAS_PREVIEW_BC3), use_container_width=True)
 
@@ -421,6 +456,10 @@ def render_bc3() -> None:
             if preparar:
                 with st.spinner("Preparando exportação completa..."):
                     df_completo, total_completo = loader.consultar_bc3(limite=None)
+                    # VL_ITEM vem do XML (BC2) sempre com ponto decimal (ver
+                    # matching.py) — normaliza pra vírgula (padrão BR) só na
+                    # exportação, sem alterar o valor armazenado no banco.
+                    df_completo["VL_ITEM"] = df_completo["VL_ITEM"].astype(str).str.replace(".", ",", regex=False)
                     csv_completo = df_completo.rename(columns=loader.carregar_dicionario_campos())
                     st.session_state["bc3_csv_bytes"] = csv_completo.to_csv(index=False, sep=";").encode("utf-8-sig")
                     st.session_state["bc3_csv_total"] = total_completo
@@ -458,3 +497,62 @@ def render_bc3() -> None:
 
     st.session_state["bc3_gerada"] = True
     st.rerun()
+
+
+_COLUNAS_PREVIEW_FLUXOS_REAIS = [
+    "PASTA_ORIGEM", "ARQUIVO_ORIGEM", "fatonfe_infprot_chnfe",
+    "fatonfe_infnfe_ide_tpnf",
+    "fatonfe_infnfe_emit_cnpj", "fatonfe_infnfe_emit_xnome",
+    "fatonfe_infnfe_dest_cnpj", "fatonfe_infnfe_dest_xnome",
+    "fatoitemnfe_infnfe_det_nitem", "fatoitemnfe_infnfe_det_prod_xprod",
+    "fatoitemnfe_infnfe_det_prod_vprod", "ID_UNICO",
+]
+
+
+def render_fluxos_fisicos() -> None:
+    """Estágio 3 — Fluxos Físicos (Lado XML): KPIs + prévia sob demanda de
+    xml_entradas_real/xml_saidas_real (loader._classificar_itens_nfe()) —
+    movimentação física real da auditada, cruzando tpnf com o papel dela na
+    nota (emitente ou destinatária), não só o tpnf isolado (ver
+    "regra de negócios unificadas/CNPJ EMIT = CNPJ DEST.txt", raiz do
+    projeto). Visualização exclusiva: só uma prévia (entradas OU saídas) fica
+    visível por vez, controlada por st.session_state["fluxo_fisico_ativo"]."""
+    st.subheader("Estágio 3 — Fluxos Físicos (Lado XML)")
+    st.caption(
+        "Reclassificação da movimentação física real da auditada: cruza o tpnf da nota com "
+        "o papel dela na operação (emitente ou destinatária) — não só o tpnf isolado, que "
+        "reflete a perspectiva de quem emite a NF-e. Roda sobre o mesmo universo de "
+        "nfe_entradas/nfe_saidas (situação válida + CFOP fora da watchlist)."
+    )
+
+    totais = loader.consultar_totais_entradas_saidas_real()
+    col1, col2 = st.columns(2)
+    col1.metric("Entradas Reais (XML)", f"{totais['xml_entradas_real']:,}".replace(",", "."))
+    col2.metric("Saídas Reais (XML)", f"{totais['xml_saidas_real']:,}".replace(",", "."))
+
+    if not sum(totais.values()) and not loader.obter_entidade_auditada():
+        st.info(
+            "⚠️ Entradas/saídas reais dependem da entidade auditada (CNPJ) já fixada — "
+            "veja a seção \"Entidade Auditada\"."
+        )
+
+    if "fluxo_fisico_ativo" not in st.session_state:
+        st.session_state["fluxo_fisico_ativo"] = None
+
+    col_btn1, col_btn2 = st.columns(2)
+    if col_btn1.button("Visualizar Entradas", key="btn_ver_entradas_real"):
+        st.session_state["fluxo_fisico_ativo"] = "entradas"
+    if col_btn2.button("Visualizar Saídas", key="btn_ver_saidas_real"):
+        st.session_state["fluxo_fisico_ativo"] = "saidas"
+
+    ativo = st.session_state["fluxo_fisico_ativo"]
+    if ativo is None:
+        return
+
+    rotulo = "Entradas Reais" if ativo == "entradas" else "Saídas Reais"
+    df_preview, total = loader.consultar_fluxo_real(ativo, limite=200)
+    st.markdown(f"**Prévia — {rotulo}** — {total:,} registro(s) no total (limitada a 200 linhas)".replace(",", "."))
+    if df_preview.empty:
+        st.info(f"Nenhum registro em xml_{ativo}_real.")
+    else:
+        st.dataframe(_preparar_preview(df_preview, _COLUNAS_PREVIEW_FLUXOS_REAIS), use_container_width=True)

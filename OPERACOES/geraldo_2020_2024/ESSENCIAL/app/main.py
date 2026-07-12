@@ -45,6 +45,8 @@ def main() -> None:
         interface.render_painel_analise()
         st.divider()
         interface.render_bc3()
+        st.divider()
+        interface.render_fluxos_fisicos()
 
 
 if __name__ == "__main__":
