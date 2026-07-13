@@ -141,6 +141,66 @@ def obter_periodo_auditoria() -> "dict | None":
         return None
 
 
+_TABELAS_XML_COBERTURA = (
+    "nfe_entradas", "nfe_saidas", "nfe_analise_et", "nfe_analise_ep",
+    "nfe_situacao_et", "nfe_situacao_ep",
+)
+
+
+def verificar_cobertura_periodo() -> dict:
+    """Estágio 1 — Alerta de Carga: confere se os dados já persistidos
+    (XML e SPED) cobrem os anos exigidos pelo Período de Auditoria já
+    configurado (ver `obter_periodo_auditoria()`). Não bloqueia nada — é um
+    alerta informativo, não um filtro de carga. Anos exigidos: XML de
+    `AnoInicial-1` até `AnoFinal` (a virada anterior ao início do período já
+    precisa da base de comparação); SPED de `AnoInicial` até `AnoFinal+1`
+    (o inventário de fechamento do último ano) — mesma regra usada no
+    resumo informativo de `interface.render_configuracao_periodo()`. Ano
+    presente = pelo menos 1 registro daquele ano em qualquer tabela
+    correspondente (não confere os 12 meses, só presença). `aplicavel` é
+    `False` quando não há período configurado — nada a checar."""
+    periodo = obter_periodo_auditoria()
+    if not periodo:
+        return {"aplicavel": False}
+
+    ano_ini = int(periodo["ano_inicial"])
+    ano_fim = int(periodo["ano_final"])
+    anos_xml_necessarios = list(range(ano_ini - 1, ano_fim + 1))
+    anos_sped_necessarios = list(range(ano_ini, ano_fim + 2))
+
+    anos_xml_presentes: set = set()
+    anos_sped_presentes: set = set()
+    if _BANCO_PATH.exists():
+        try:
+            with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+                tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+                tabelas_xml = [t for t in _TABELAS_XML_COBERTURA if t in tabelas]
+                if tabelas_xml:
+                    uniao = " UNION ALL ".join(
+                        f"SELECT CAST('20' || SUBSTR(fatonfe_infprot_chnfe, 3, 2) AS INTEGER) AS ANO FROM {t}"
+                        for t in tabelas_xml
+                    )
+                    linhas = con.execute(f"SELECT DISTINCT ANO FROM ({uniao})").fetchall()
+                    anos_xml_presentes = {r[0] for r in linhas}
+                if "sped_itens" in tabelas:
+                    linhas = con.execute(
+                        "SELECT DISTINCT CAST(SUBSTR(COMPETENCIA, 1, 4) AS INTEGER) AS ANO FROM sped_itens"
+                    ).fetchall()
+                    anos_sped_presentes = {r[0] for r in linhas}
+        except Exception:
+            logger.exception("Erro ao verificar cobertura do período em %s", _BANCO_PATH)
+
+    return {
+        "aplicavel": True,
+        "ano_inicial": ano_ini,
+        "ano_final": ano_fim,
+        "anos_xml_necessarios": anos_xml_necessarios,
+        "anos_xml_faltando": [a for a in anos_xml_necessarios if a not in anos_xml_presentes],
+        "anos_sped_necessarios": anos_sped_necessarios,
+        "anos_sped_faltando": [a for a in anos_sped_necessarios if a not in anos_sped_presentes],
+    }
+
+
 def _normalizar_str(s: str) -> str:
     """Remove acentos, uppercase, trim."""
     s = str(s).strip().upper()

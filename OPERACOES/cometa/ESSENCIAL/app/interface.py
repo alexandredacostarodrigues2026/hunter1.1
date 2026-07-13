@@ -138,6 +138,36 @@ def _barra_progresso(titulo: str, n_passos: int, fn_persistir) -> bool:
     return True
 
 
+def _render_alerta_cobertura_periodo() -> None:
+    """Alerta de Carga (Estágio 1): confere se os dados persistidos cobrem
+    os anos exigidos pelo Período de Auditoria já configurado (ver
+    render_configuracao_periodo()/loader.verificar_cobertura_periodo()).
+    Não bloqueia a carga — só avisa. Silencioso se nenhum período estiver
+    configurado ainda (nada a checar)."""
+    cobertura = loader.verificar_cobertura_periodo()
+    if not cobertura.get("aplicavel"):
+        return
+
+    faltando_xml = cobertura["anos_xml_faltando"]
+    faltando_sped = cobertura["anos_sped_faltando"]
+    if not faltando_xml and not faltando_sped:
+        st.caption(
+            f"✅ Cobertura completa para o Período de Auditoria "
+            f"({cobertura['ano_inicial']} a {cobertura['ano_final']})."
+        )
+        return
+
+    partes = []
+    if faltando_xml:
+        partes.append(f"**XML**: {', '.join(str(a) for a in faltando_xml)}")
+    if faltando_sped:
+        partes.append(f"**Declarações (SPED)**: {', '.join(str(a) for a in faltando_sped)}")
+    st.warning(
+        f"⚠️ Alerta de Carga — faltam arquivos para o Período de Auditoria "
+        f"({cobertura['ano_inicial']} a {cobertura['ano_final']}): " + " · ".join(partes)
+    )
+
+
 def render_carga_operacao() -> None:
     """Prévia + botão de carga: 3 barras de progresso independentes.
       1. XML pendentes  — classificação arquivo a arquivo
@@ -173,6 +203,7 @@ def render_carga_operacao() -> None:
 
     if ja_carregado and sem_pendentes:
         st.success("✅ Dados carregados.")
+        _render_alerta_cobertura_periodo()
         clicou = st.button(
             "Carregar novamente",
             key="btn_recarregar",
