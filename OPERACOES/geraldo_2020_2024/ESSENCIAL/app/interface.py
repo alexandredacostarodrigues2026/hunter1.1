@@ -49,7 +49,7 @@ def render_configuracao_periodo() -> None:
         return
 
     ano_atual = datetime.now().year
-    anos_disponiveis = [str(a) for a in range(ano_atual - 5, ano_atual + 1)]
+    anos_disponiveis = [str(a) for a in range(ano_atual - 8, ano_atual + 1)]
 
     st.markdown("**Configuração do Período de Auditoria**")
     col1, col2 = st.columns(2)
