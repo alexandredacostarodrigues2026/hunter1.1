@@ -33,6 +33,7 @@ def main() -> None:
 
     st.title("Hunter 1.1")
     st.subheader(f"Operação ativa: {loader.nome_operacao()}")
+    interface.render_configuracao_periodo()
     st.divider()
     interface.render_carga_operacao()
     st.info("Demais módulos (carregamento completo, equalização) ainda não implementados.")
@@ -49,6 +50,7 @@ def main() -> None:
         interface.render_fluxos_fisicos()
         st.divider()
         interface.render_estoque_anual()
+        interface.render_auditoria_divergencia_entradas()
 
 
 if __name__ == "__main__":

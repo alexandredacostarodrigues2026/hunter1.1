@@ -99,6 +99,48 @@ def _resolver_path(config: dict, chave: str, default: str) -> Path:
     return (_OPERACAO_DIR / raw).resolve()
 
 
+# ── Estágio 1 — Período de Auditoria (trava inicial de escopo temporal) ────
+# Define o intervalo de anos que a auditoria cobre — gravado uma única vez
+# por operação (config_auditoria, 1 linha, CREATE OR REPLACE substitui a
+# anterior). Alimenta o resumo informativo de quais pastas de XML/SPED
+# precisam existir pra garantir os cruzamentos de "virada de ano" (Estágio
+# 4 — DATA_ELEITA; Estágio 5 — continuidade Estoque Final/Inicial): a
+# virada anterior ao início do período (XML de AnoInicial-1) e o
+# fechamento de inventário do fim do período (Declarações de AnoFinal+1).
+
+def salvar_periodo_auditoria(ano_inicial: str, ano_final: str) -> None:
+    """Grava o período de auditoria (Estágio 1) em `config_auditoria` no
+    DuckDB da operação — sempre 1 linha (`CREATE OR REPLACE` substitui a
+    config anterior, mesmo padrão de outras tabelas de configuração única
+    deste projeto). Regra Operacional R07: anos sempre string."""
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    df = pd.DataFrame({"ano_inicial": [str(ano_inicial)], "ano_final": [str(ano_final)]})
+    with duckdb.connect(str(_BANCO_PATH)) as con:
+        con.register("_df_config_auditoria", df)
+        con.execute("CREATE OR REPLACE TABLE config_auditoria AS SELECT * FROM _df_config_auditoria")
+        con.unregister("_df_config_auditoria")
+
+
+def obter_periodo_auditoria() -> "dict | None":
+    """Lê o período de auditoria já gravado (`config_auditoria`) — `None`
+    se ainda não foi definido (tabela/banco ainda não existem) ou em caso
+    de erro de leitura."""
+    if not _BANCO_PATH.exists():
+        return None
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "config_auditoria" not in tabelas:
+                return None
+            linha = con.execute("SELECT ano_inicial, ano_final FROM config_auditoria LIMIT 1").fetchone()
+        if linha is None:
+            return None
+        return {"ano_inicial": str(linha[0]), "ano_final": str(linha[1])}
+    except Exception:
+        logger.exception("Erro ao ler config_auditoria em %s", _BANCO_PATH)
+        return None
+
+
 def _normalizar_str(s: str) -> str:
     """Remove acentos, uppercase, trim."""
     s = str(s).strip().upper()
@@ -1957,6 +1999,187 @@ def consultar_estoque_anual_consolidado(limite: "int | None" = 200) -> "tuple[pd
     except Exception:
         logger.exception("Erro ao consultar estoque_anual_consolidado em %s", _BANCO_PATH)
         return pd.DataFrame(), 0
+
+
+# ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
+# Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
+# de referência de outra aplicação do usuário com estoque_entradas (Estágio
+# 4), só por CHV_NFE + contagem de itens por nota, pra explicar a origem de
+# uma diferença de volume total (achado real: 19.177 itens no Excel x
+# 16.420 em estoque_entradas, operação geraldo — resíduo de 2.757).
+
+def _localizar_excel_entradas_referencia() -> "Path | None":
+    """Localiza o Excel de referência de entradas na raiz da operação (ex.:
+    'TABELA ENTRADAS A SE EXPORTADA AO HUNTER(<uuid>).xlsx') — nome com
+    sufixo aleatório, por isso busca por prefixo. Ignora arquivos
+    temporários do Excel (~$...). None se a operação não tiver esse arquivo
+    (normal — é um estudo pontual da geraldo, não um dado de todo estágio)."""
+    candidatos = sorted(
+        p for p in _OPERACAO_DIR.glob("TABELA ENTRADAS*.xlsx") if not p.name.startswith("~$")
+    )
+    return candidatos[0] if candidatos else None
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def carregar_excel_entradas_referencia() -> "tuple[pd.DataFrame, dict]":
+    """Carrega o Excel de referência de entradas (outra aplicação do
+    usuário) — só a coluna `CHAVE` (renomeada `CHV_NFE`) importa pro estudo
+    de divergência, que não cruza código de item. Regra R07: `CHV_NFE`
+    sempre string."""
+    caminho = _localizar_excel_entradas_referencia()
+    meta: dict = {"arquivo": str(caminho) if caminho else None, "erros": []}
+    if caminho is None:
+        meta["erros"].append("Nenhum arquivo 'TABELA ENTRADAS*.xlsx' encontrado na pasta da operação.")
+        return pd.DataFrame(), meta
+    try:
+        df = pd.read_excel(caminho, dtype=str)
+    except Exception as exc:
+        meta["erros"].append(str(exc))
+        logger.exception("Erro ao ler Excel de referência de entradas em %s: %s", caminho, exc)
+        return pd.DataFrame(), meta
+    if "CHAVE" not in df.columns:
+        meta["erros"].append(f"Coluna 'CHAVE' não encontrada em {caminho.name}.")
+        return pd.DataFrame(), meta
+    df = df.rename(columns={"CHAVE": "CHV_NFE"})
+    df["CHV_NFE"] = df["CHV_NFE"].astype(str).str.strip()
+    meta["total_linhas"] = len(df)
+    meta["total_chaves"] = df["CHV_NFE"].nunique()
+    return df, meta
+
+
+def _contagem_por_chave_nfe(tabela: str) -> pd.Series:
+    """Conta linhas por CHV_NFE (`fatonfe_infprot_chnfe`) numa tabela do
+    DuckDB da operação — Series vazia se a tabela ou o banco não existirem
+    (não quebra a auditoria, só fica sem essa fonte de reconciliação)."""
+    if not _BANCO_PATH.exists():
+        return pd.Series(dtype=int)
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if tabela not in tabelas:
+                return pd.Series(dtype=int)
+            df = con.execute(
+                f"SELECT fatonfe_infprot_chnfe AS CHV_NFE, COUNT(*) AS N "
+                f"FROM {tabela} GROUP BY fatonfe_infprot_chnfe"
+            ).df()
+        return df.set_index("CHV_NFE")["N"]
+    except Exception:
+        logger.exception("Erro ao contar %s por CHV_NFE em %s", tabela, _BANCO_PATH)
+        return pd.Series(dtype=int)
+
+
+def _chaves_autoemissao_duplicada() -> set:
+    """CHV_NFE de notas autoemitidas (`CNPJ_EMITENTE == CNPJ_DESTINATARIO
+    == CNPJ da auditada`) que aparecem tanto em `PASTA_ORIGEM='ET'` quanto
+    em `'EP'` — caso real conhecido desde 2026-07-05 (11 notas, 241 linhas
+    duplicadas em `nfe_entradas`; não corrigido, decisão do usuário na
+    época). Usado só pra anotar/cruzar contra a auditoria de divergência
+    (ver `auditar_divergencia_entradas()`), não corrige o dado em si."""
+    entidade = obter_entidade_auditada()
+    cnpj_auditada = (entidade or {}).get("cnpj")
+    if not cnpj_auditada:
+        return set()
+    r = _classificar_itens_nfe()
+    combinado = pd.concat(
+        [r["entradas"], r["saidas"], r["analise_et"], r["analise_ep"], r["situacao_et"], r["situacao_ep"]],
+        ignore_index=True,
+    )
+    if combinado.empty or "fatonfe_infnfe_emit_cnpj" not in combinado.columns:
+        return set()
+    emit = combinado["fatonfe_infnfe_emit_cnpj"].apply(_normalizar_cnpj)
+    dest = combinado["fatonfe_infnfe_dest_cnpj"].apply(_normalizar_cnpj)
+    autoemissao = (emit == cnpj_auditada) & (dest == cnpj_auditada)
+    if not autoemissao.any():
+        return set()
+    sub = combinado.loc[autoemissao, [_COL_CHAVE_NFE, "PASTA_ORIGEM"]]
+    contagem_pastas = sub.groupby(_COL_CHAVE_NFE)["PASTA_ORIGEM"].nunique()
+    return set(contagem_pastas[contagem_pastas > 1].index)
+
+
+def auditar_divergencia_entradas() -> dict:
+    """Estudo de diferenças Hunter × Excel de referência, SEM cruzar código
+    de item — só `CHV_NFE` + contagem de itens por nota. Pra cada chave do
+    Excel, reconcilia o resíduo (itens do Excel não explicados por
+    `estoque_entradas`) num waterfall, nesta ordem: `xml_saidas_real`
+    (Estágio 3 — reclassificado como saída física pelo papel da auditada),
+    `nfe_situacao_et`/`nfe_situacao_ep` (situação irregular) e
+    `nfe_analise_et`/`nfe_analise_ep` (CFOP de watchlist — inclui EP porque
+    uma chave pode ter sido lida originalmente da pasta EP e só
+    reclassificada como entrada real pelo Estágio 3) — cada nível só
+    reconcilia o que sobrou do anterior, evitando contar o mesmo item em
+    mais de uma categoria. O que sobrar depois é 'divergência não
+    identificada' — na prática, majoritariamente chaves cujo XML
+    simplesmente não existe em `1-DOCFISCAIS/nf/` (nem ET nem EP), não uma
+    diferença de classificação (ver `chaves_divergentes` pra investigar
+    caso a caso). Devolve `{'resumo': dict, 'chaves_divergentes':
+    DataFrame, 'erros': list}` — `erros` não-vazio quando não há Excel de
+    referência nesta operação (não é uma falha, só indica que o estudo não
+    se aplica)."""
+    df_excel, meta_excel = carregar_excel_entradas_referencia()
+    if df_excel.empty:
+        return {"resumo": {}, "chaves_divergentes": pd.DataFrame(), "erros": meta_excel.get("erros", [])}
+
+    excel_por_chave = df_excel.groupby("CHV_NFE").size().rename("EXCEL_QTD_ITENS")
+    hunter_entradas = _contagem_por_chave_nfe("estoque_entradas").rename("HUNTER_ENTRADAS_QTD")
+    hunter_saidas   = _contagem_por_chave_nfe("xml_saidas_real").rename("HUNTER_SAIDAS_QTD")
+    hunter_situacao = (
+        _contagem_por_chave_nfe("nfe_situacao_et").add(_contagem_por_chave_nfe("nfe_situacao_ep"), fill_value=0)
+    ).rename("HUNTER_SITUACAO_QTD")
+    hunter_analise = (
+        _contagem_por_chave_nfe("nfe_analise_et").add(_contagem_por_chave_nfe("nfe_analise_ep"), fill_value=0)
+    ).rename("HUNTER_ANALISE_QTD")
+
+    base = pd.DataFrame(excel_por_chave)
+    for serie in (hunter_entradas, hunter_saidas, hunter_situacao, hunter_analise):
+        base = base.join(serie, how="left")
+    base = base.fillna(0).astype(int)
+
+    # Waterfall: entradas reais primeiro (o "lar" natural do item), depois
+    # o resíduo é testado contra saídas/situação/análise nessa ordem. tpnf +
+    # papel da auditada (que decide entrada x saída real) é atributo da
+    # NOTA inteira, então raramente se sobrepõe com CFOP de watchlist (que é
+    # por ITEM) dentro da mesma nota — daí a ordem evitar dupla contagem na
+    # prática, não só na teoria.
+    base["ITENS_ENTRADAS_REAIS"] = base[["EXCEL_QTD_ITENS", "HUNTER_ENTRADAS_QTD"]].min(axis=1)
+    residual_1 = base["EXCEL_QTD_ITENS"] - base["ITENS_ENTRADAS_REAIS"]
+    base["ITENS_SAIDAS_REAIS"] = pd.concat([residual_1, base["HUNTER_SAIDAS_QTD"]], axis=1).min(axis=1)
+    residual_2 = residual_1 - base["ITENS_SAIDAS_REAIS"]
+    base["ITENS_SITUACAO"] = pd.concat([residual_2, base["HUNTER_SITUACAO_QTD"]], axis=1).min(axis=1)
+    residual_3 = residual_2 - base["ITENS_SITUACAO"]
+    base["ITENS_ANALISE_CFOP"] = pd.concat([residual_3, base["HUNTER_ANALISE_QTD"]], axis=1).min(axis=1)
+    base["ITENS_NAO_IDENTIFICADOS"] = residual_3 - base["ITENS_ANALISE_CFOP"]
+
+    # total_hunter_entradas aqui é restrito às chaves que TAMBÉM estão no
+    # Excel (índice de 'base' = chaves do Excel) — não é o total real de
+    # `estoque_entradas`. hunter_so_entradas mede o inverso: itens que o
+    # Hunter tem e o Excel não (chave nem aparece no Excel) — gap na
+    # direção oposta, pequeno mas real.
+    total_real_hunter_entradas = int(hunter_entradas.sum())
+    hunter_so_entradas = total_real_hunter_entradas - int(base["HUNTER_ENTRADAS_QTD"].sum())
+
+    resumo = {
+        "total_excel": int(base["EXCEL_QTD_ITENS"].sum()),
+        "total_hunter_entradas": total_real_hunter_entradas,
+        "itens_hunter_ausentes_no_excel": hunter_so_entradas,
+        "itens_entradas_reais": int(base["ITENS_ENTRADAS_REAIS"].sum()),
+        "itens_saidas_reais": int(base["ITENS_SAIDAS_REAIS"].sum()),
+        "itens_situacao": int(base["ITENS_SITUACAO"].sum()),
+        "itens_analise_cfop": int(base["ITENS_ANALISE_CFOP"].sum()),
+        "itens_nao_identificados": int(base["ITENS_NAO_IDENTIFICADOS"].sum()),
+    }
+
+    chaves_autoemissao = _chaves_autoemissao_duplicada()
+    base["CASO_AUTOEMISSAO_DUPLICADA"] = base.index.isin(chaves_autoemissao)
+    resumo["chaves_autoemissao_na_divergencia"] = int(
+        (base.index.isin(chaves_autoemissao) & (base["ITENS_NAO_IDENTIFICADOS"] > 0)).sum()
+    )
+
+    divergentes = base[base["EXCEL_QTD_ITENS"] != base["HUNTER_ENTRADAS_QTD"]].copy()
+    divergentes.index.name = "CHV_NFE"
+    divergentes = divergentes.reset_index().sort_values("ITENS_NAO_IDENTIFICADOS", ascending=False)
+    divergentes["CHV_NFE"] = divergentes["CHV_NFE"].astype(str)
+
+    return {"resumo": resumo, "chaves_divergentes": divergentes, "erros": []}
 
 
 if __name__ == "__main__":

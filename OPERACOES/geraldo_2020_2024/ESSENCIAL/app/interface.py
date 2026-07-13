@@ -1,6 +1,7 @@
 """Componentes de interface (painéis, tabs, cards) do Hunter 1.1."""
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 _APP_DIR = Path(__file__).parent
@@ -21,6 +22,64 @@ _STATUS_RENDER = {
 }
 
 _DELAY = 0.25   # segundos por passo — garante visibilidade da barra mesmo em cargas rápidas
+
+
+def render_configuracao_periodo() -> None:
+    """Estágio 1 — trava inicial de escopo temporal da auditoria: define
+    Ano Inicial/Final, persistido em `config_auditoria`
+    (`loader.salvar_periodo_auditoria()`/`obter_periodo_auditoria()`). Uma
+    vez confirmado, mostra um resumo fixo ("Período Gravado") em vez dos
+    seletores, com botão "Alterar" pra reabrir a edição. Calcula e exibe
+    quais pastas de XML/Declaração precisam existir pra garantir os
+    cruzamentos de "virada de ano" dos Estágios 4/5 (`DATA_ELEITA`,
+    continuidade Estoque Final/Inicial): XML cobre um ano a mais pra trás
+    (a virada anterior ao início do período já precisa da base de
+    comparação); Declarações cobre um ano a mais pra frente (o inventário
+    de fechamento do último ano do período)."""
+    periodo = loader.obter_periodo_auditoria()
+
+    if periodo and not st.session_state.get("editando_periodo_auditoria"):
+        col1, col2 = st.columns([6, 1])
+        col1.markdown(
+            f"📅 **Período de Auditoria:** {periodo['ano_inicial']} a {periodo['ano_final']}"
+        )
+        if col2.button("Alterar", key="btn_alterar_periodo_auditoria"):
+            st.session_state["editando_periodo_auditoria"] = True
+            st.rerun()
+        return
+
+    ano_atual = datetime.now().year
+    anos_disponiveis = [str(a) for a in range(ano_atual - 5, ano_atual + 1)]
+
+    st.markdown("**Configuração do Período de Auditoria**")
+    col1, col2 = st.columns(2)
+    idx_inicial = (
+        anos_disponiveis.index(periodo["ano_inicial"])
+        if periodo and periodo["ano_inicial"] in anos_disponiveis else 0
+    )
+    idx_final = (
+        anos_disponiveis.index(periodo["ano_final"])
+        if periodo and periodo["ano_final"] in anos_disponiveis else len(anos_disponiveis) - 1
+    )
+    ano_inicial = col1.selectbox("Ano Inicial", anos_disponiveis, index=idx_inicial, key="sel_ano_inicial_auditoria")
+    ano_final = col2.selectbox("Ano Final", anos_disponiveis, index=idx_final, key="sel_ano_final_auditoria")
+
+    periodo_valido = int(ano_inicial) <= int(ano_final)
+    if not periodo_valido:
+        st.warning("Ano Inicial não pode ser maior que Ano Final.")
+    else:
+        st.info(
+            f"Base XML: pastas de **{int(ano_inicial) - 1}** até **{ano_final}**.  \n"
+            f"Base Declarações (SPED): pastas de **{ano_inicial}** até **{int(ano_final) + 1}**."
+        )
+
+    if st.button("Confirmar Período", key="btn_confirmar_periodo_auditoria"):
+        if not periodo_valido:
+            st.error("Corrija o período antes de confirmar: Ano Inicial não pode ser maior que Ano Final.")
+        else:
+            loader.salvar_periodo_auditoria(ano_inicial, ano_final)
+            st.session_state["editando_periodo_auditoria"] = False
+            st.rerun()
 
 
 def render_entidade_auditada() -> None:
@@ -612,3 +671,79 @@ def render_estoque_anual() -> None:
 
     st.session_state["estoque_anual_gerado"] = True
     st.rerun()
+
+
+_COLUNAS_PREVIEW_DIVERGENCIA = [
+    "CHV_NFE", "EXCEL_QTD_ITENS", "HUNTER_ENTRADAS_QTD", "ITENS_ENTRADAS_REAIS",
+    "ITENS_SAIDAS_REAIS", "ITENS_SITUACAO", "ITENS_ANALISE_CFOP",
+    "ITENS_NAO_IDENTIFICADOS", "CASO_AUTOEMISSAO_DUPLICADA",
+]
+
+
+def render_auditoria_divergencia_entradas() -> None:
+    """Estudo de diferenças Hunter × Excel de referência (2026-07-13), SEM
+    cruzar código de item — ver loader.auditar_divergencia_entradas().
+    Diagnóstico pontual pra explicar a origem de uma diferença de volume
+    total entre um Excel de outra aplicação do usuário e `estoque_entradas`
+    (Estágio 4). Não aparece nada útil se a operação não tiver o Excel de
+    referência (`TABELA ENTRADAS*.xlsx` na pasta da operação) — normal pra
+    quem não é a geraldo."""
+    resultado = loader.auditar_divergencia_entradas()
+    if resultado["erros"]:
+        return  # sem Excel de referência nesta operação — painel não se aplica, fica invisível
+
+    st.divider()
+    st.subheader("Auditoria — Divergência de Entradas (Hunter × Excel)")
+    st.caption(
+        "Compara o Excel de referência ('TABELA ENTRADAS...xlsx' na pasta da operação) com "
+        "estoque_entradas por CHV_NFE + contagem de itens por nota — sem cruzar código de "
+        "item. Reconcilia o resíduo checando xml_saidas_real (Estágio 3), nfe_situacao_et/ep "
+        "(situação irregular) e nfe_analise_et/ep (CFOP de watchlist), nessa ordem."
+    )
+
+    resumo = resultado["resumo"]
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Itens em Entradas Reais", f"{resumo['itens_entradas_reais']:,}".replace(",", "."))
+    col2.metric("Itens em Saídas Reais", f"{resumo['itens_saidas_reais']:,}".replace(",", "."))
+    col3.metric("Itens Cancelados/Situação", f"{resumo['itens_situacao']:,}".replace(",", "."))
+    col4.metric("Itens em Análise CFOP", f"{resumo['itens_analise_cfop']:,}".replace(",", "."))
+    col5.metric("Divergência não identificada", f"{resumo['itens_nao_identificados']:,}".replace(",", "."))
+
+    st.caption(
+        f"Total Excel: {resumo['total_excel']:,} · Total estoque_entradas: "
+        f"{resumo['total_hunter_entradas']:,} ({resumo['itens_hunter_ausentes_no_excel']:,} "
+        "item(ns) do Hunter sem chave correspondente no Excel — direção oposta). Da "
+        f"divergência não identificada, {resumo['chaves_autoemissao_na_divergencia']} chave(s) "
+        "fazem parte do caso conhecido de autoemissão duplicada entre ET/EP (2026-07-05)."
+        .replace(",", ".")
+    )
+
+    if "mostrar_chaves_divergentes" not in st.session_state:
+        st.session_state["mostrar_chaves_divergentes"] = False
+    if st.button("Investigar Chaves Divergentes", key="btn_investigar_chaves_divergentes"):
+        st.session_state["mostrar_chaves_divergentes"] = True
+
+    if st.session_state["mostrar_chaves_divergentes"]:
+        df_div = resultado["chaves_divergentes"]
+        st.markdown(
+            f"**{len(df_div):,} chave(s) com contagem diferente entre Excel e Hunter**"
+            .replace(",", ".")
+        )
+        if df_div.empty:
+            st.info("Nenhuma chave divergente encontrada.")
+        else:
+            nao_identificado = df_div[df_div["ITENS_NAO_IDENTIFICADOS"] > 0].copy()
+            if not nao_identificado.empty:
+                # Quebra por ano da CHV_NFE (dígitos 3-4, "AA" da chave de
+                # acesso) — achado real na base do geraldo: 100% do resíduo
+                # não identificado concentrado em CHV_NFE de 2019, sinal de
+                # ausência de XML na origem (1-DOCFISCAIS/nf/), não erro de
+                # classificação.
+                nao_identificado["ANO_NFE"] = "20" + nao_identificado["CHV_NFE"].str[2:4]
+                por_ano = (
+                    nao_identificado.groupby("ANO_NFE")["ITENS_NAO_IDENTIFICADOS"]
+                    .sum().sort_index()
+                )
+                st.markdown("**Divergência não identificada, por ano da CHV_NFE:**")
+                st.dataframe(por_ano.rename("Itens").to_frame(), use_container_width=True)
+            st.dataframe(df_div[_COLUNAS_PREVIEW_DIVERGENCIA], use_container_width=True)

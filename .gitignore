@@ -62,3 +62,12 @@ NF/
 regra de negócios unificadas/**/*.pdf
 regra de negócios unificadas/**/*.docx
 regra de negócios unificadas/**/*.xlsx
+
+# Excel de referência de outra aplicação do usuário, colado direto na pasta
+# da operação (ex.: "TABELA ENTRADAS A SE EXPORTADA AO HUNTER(<uuid>).xlsx",
+# "ESTOQUE(<uuid>).xlsx") — dado fiscal real do cliente (descrição de
+# produto, valores, CNPJ), usado só como insumo local pra estudos de
+# divergência (loader.auditar_divergencia_entradas()), não deve ser
+# versionado.
+OPERACOES/*/TABELA *.xlsx
+OPERACOES/*/ESTOQUE(*.xlsx
