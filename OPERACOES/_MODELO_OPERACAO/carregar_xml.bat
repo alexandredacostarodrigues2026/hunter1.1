@@ -1,5 +1,5 @@
 @echo off
-title Equalizador de Produtos - Carregar XML desta operacao
+title Hunter 1.1 - Carregar XML desta operacao
 setlocal enabledelayedexpansion
 
 set "OP_DIR=%~dp0"

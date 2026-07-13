@@ -1,4 +1,4 @@
-# ARQUITETURA — Equalizador de Produtos (geraldo_2020_2024)
+# ARQUITETURA — Hunter 1.1 (geraldo_2020_2024)
 
 ## Estado atual: PS0 — esqueleto (2026-06-27)
 

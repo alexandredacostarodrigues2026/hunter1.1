@@ -1,5 +1,5 @@
 ======================================================
-  EQUALIZADOR DE PRODUTOS — GECOF / OPERAÇÕES
+  HUNTER 1.1 — GECOF / OPERAÇÕES
   Manual do Usuário
 ======================================================
 

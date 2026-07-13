@@ -3,7 +3,7 @@ title Build - iniciar_sistema.exe
 
 echo.
 echo  ======================================================
-echo    BUILD - Equalizador de Produtos
+echo    BUILD - Hunter 1.1
 echo    Gerando iniciar_sistema.exe com PyInstaller
 echo  ======================================================
 echo.

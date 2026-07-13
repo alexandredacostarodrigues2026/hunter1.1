@@ -1,4 +1,4 @@
-"""Componentes de interface (painéis, tabs, cards) do Equalizador de Produtos."""
+"""Componentes de interface (painéis, tabs, cards) do Hunter 1.1."""
 import sys
 import time
 from pathlib import Path

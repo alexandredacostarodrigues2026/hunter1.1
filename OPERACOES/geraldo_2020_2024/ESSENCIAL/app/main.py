@@ -1,4 +1,4 @@
-"""Ponto de entrada Streamlit do Equalizador de Produtos (geraldo_2020_2024).
+"""Ponto de entrada Streamlit do Hunter 1.1 (geraldo_2020_2024).
 
 Esqueleto inicial — sem lógica de negócio ainda. Serve para validar que
 iniciar_sistema.bat/.exe consegue subir o servidor e abrir o navegador.
@@ -16,11 +16,11 @@ import interface
 import loader
 
 st.set_page_config(
-    page_title="Equalizador de Produtos",
+    page_title="Hunter 1.1",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="collapsed",
-    menu_items={"About": "Equalizador de Produtos v0.1.0 — GECOF/OPERAÇÕES"},
+    menu_items={"About": "Hunter 1.1 — GECOF/OPERAÇÕES"},
 )
 
 
@@ -31,7 +31,7 @@ def main() -> None:
         # False e obrigar uma nova carga toda vez.
         st.session_state["dados_carregados"] = loader.dados_ja_carregados()
 
-    st.title("Equalizador de Produtos")
+    st.title("Hunter 1.1")
     st.subheader(f"Operação ativa: {loader.nome_operacao()}")
     st.divider()
     interface.render_carga_operacao()

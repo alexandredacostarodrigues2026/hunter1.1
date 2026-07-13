@@ -1,5 +1,5 @@
 @echo off
-title Setup - Equalizador de Produtos
+title Setup - Hunter 1.1
 
 echo.
 echo  ======================================================

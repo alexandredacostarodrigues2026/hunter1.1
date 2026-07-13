@@ -1,5 +1,5 @@
 ======================================================
-  MODELO DE OPERACAO - Equalizador de Produtos
+  MODELO DE OPERACAO - Hunter 1.1
 ======================================================
 
 COMO USAR PARA UMA OPERACAO/CLIENTE NOVO

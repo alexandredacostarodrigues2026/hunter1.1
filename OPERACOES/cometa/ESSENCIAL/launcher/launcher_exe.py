@@ -1,5 +1,5 @@
 """
-Launcher do Equalizador de Produtos.
+Launcher do Hunter 1.1.
 
 Este script é compilado com PyInstaller para gerar iniciar_sistema.exe.
 Funciona também como .py puro (para desenvolvimento e testes).
@@ -24,7 +24,7 @@ import webbrowser
 from pathlib import Path
 
 
-APP_TITULO = "Equalizador de Produtos"
+APP_TITULO = "Hunter 1.1"
 
 
 # ---------------------------------------------------------------------------

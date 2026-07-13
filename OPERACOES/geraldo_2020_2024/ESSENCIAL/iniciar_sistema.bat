@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-title Equalizador de Produtos - GECOF/OPERACOES
+title Hunter 1.1 - GECOF/OPERACOES
 
 set "ROOT=%~dp0"
 cd /d "%ROOT%"
