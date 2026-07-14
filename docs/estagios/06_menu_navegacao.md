@@ -13,19 +13,25 @@ sobre painéis que já existiam.
 ## Como funciona
 
 Controlado por `st.session_state["pagina_ativa"]` (`None` = Menu Principal;
-`"extracao"`; `"segregados"`; `"construcao"`), inicializado em `main.py` no
-início de `main()`. `main.py` despacha para uma das funções de
-`interface.py` conforme o valor:
+`"extracao"`; `"matching"`; `"segregados"`; `"construcao"`), inicializado
+em `main.py` no início de `main()`. `main.py` despacha para uma das
+funções de `interface.py` conforme o valor:
 
-- **`interface.render_menu_principal()`** — 3 botões (`st.columns(3)`):
-  "📥 EXTRAÇÃO", "🔀 SEGREGADOS" e "🚧 PAINÉIS EM CONSTRUÇÃO". Cada um seta
-  `pagina_ativa` e chama `st.rerun()`.
+- **`interface.render_menu_principal()`** — 4 botões (`st.columns(4)`):
+  "📥 EXTRAÇÃO", "🧩 MATCHING (BC3)", "🔀 SEGREGADOS" e "🚧 PAINÉIS EM
+  CONSTRUÇÃO". Cada um seta `pagina_ativa` e chama `st.rerun()`.
 - **`interface.render_pagina_extracao()`** — botão de retorno
   (`_botao_voltar_menu()`) + `render_configuracao_periodo()` +
   `render_carga_operacao()` (já inclui os alertas de cobertura do Período
   de Auditoria e de Ancoragem de Estoque/Bloco H) + `render_entidade_auditada()`
   (só depois de `dados_carregados=True`). Mesmo conteúdo que antes ficava
   direto em `main.py`, sem nenhuma mudança de comportamento.
+- **`interface.render_pagina_matching()`** (botão próprio desde
+  2026-07-14, mesmo dia da promoção de "Segregados") — botão de retorno +
+  (se `dados_carregados`) só `render_bc3()` (Estágio 2). Posicionado logo
+  após "Extração" a pedido do usuário — BC3 é o motor que "completa" as
+  notas de entrada e viabiliza os estágios seguintes (Fluxos Físicos,
+  Cronologia).
 - **`interface.render_pagina_segregados()`** (botão próprio desde
   2026-07-14) — botão de retorno + (se `dados_carregados`)
   `render_painel_analise()`: "CFOPs Não Autorizados" (com o botão "CFOPS
@@ -34,12 +40,12 @@ início de `main()`. `main.py` despacha para uma das funções de
   abaixo).
 - **`interface.render_pagina_construcao()`** — botão de retorno + (se
   `dados_carregados`) `render_entradas_terceiros()` (BC1),
-  `render_bc3()` (Estágio 2), `render_fluxos_fisicos()` (Estágio 3),
-  `render_estoque_anual()` (Estágio 5) e
-  `render_auditoria_divergencia_entradas()`. Sem `dados_carregados`, mostra
-  só um aviso orientando a ir em "Extração" primeiro.
+  `render_fluxos_fisicos()` (Estágio 3), `render_estoque_anual()`
+  (Estágio 5) e `render_auditoria_divergencia_entradas()`. Sem
+  `dados_carregados`, mostra só um aviso orientando a ir em "Extração"
+  primeiro.
 - **`interface._botao_voltar_menu()`** — botão "⬅️ Voltar ao Menu
-  Principal" no topo dos 3 painéis; seta `pagina_ativa=None` e chama
+  Principal" no topo das 4 páginas; seta `pagina_ativa=None` e chama
   `st.rerun()`.
 
 **O Estágio 4** (Cronologia/`DATA_ELEITA`) não tem painel próprio (ver
@@ -85,17 +91,31 @@ não uma afirmação fiscal de que o CFOP em si carece de autorização. Só
 `fatonfe_informix_stnfeletronica` fora de `{"A","O"}` — mais próximo do
 sentido literal do nome.
 
+## "Matching (BC3)" ganhou botão próprio (2026-07-14, mesmo dia)
+
+BC3 entrou em "Painéis em Construção" primeiro (como primeiro item do
+grupo, a pedido do usuário), depois foi promovido a botão de primeiro
+nível no Menu Principal, posicionado logo após "Extração" — mesmo
+tratamento que "Segregados" já tinha recebido antes no mesmo dia. Razão:
+BC3 (Matching BC2×BC1, Estágio 2) não é só "mais um painel de resultado"
+— é o motor central que produz o dado que os estágios seguintes (Fluxos
+Físicos, Cronologia) dependem para fazer sentido, então mereceu destaque
+equivalente ao de "Extração" em vez de ficar agrupado com Fluxos
+Físicos/Estoque Anual/Auditoria.
+
 ## Decisão de agrupamento — BC1/Auditoria em "Construção"
 
 A especificação original só detalhou o conteúdo de "Extração" (Período +
 Carga + Entidade Auditada) e citou "Painéis em Construção" como "Estágios 2
-ao 5 (Matching BC3, Fluxos Físicos, Estoque Anual, etc.)". Dois painéis não
-foram explicitamente posicionados: `render_entradas_terceiros()` (geração
-da BC1/`sped_entradas_terceiros`) e `render_auditoria_divergencia_entradas()`
-(Excel × Hunter). Ambos ficaram em "Painéis em Construção" — são painéis de
-análise/conferência sobre o resultado do cruzamento, não dados desviados
-dele (diferente de "Segregados") — mas essa é uma interpretação, não uma
-instrução explícita; ajustar se o usuário quiser outro agrupamento.
+ao 5 (Matching BC3, Fluxos Físicos, Estoque Anual, etc.)" — na época BC3
+ainda fazia parte desse grupo (ver seção acima para a promoção posterior).
+Dois painéis não foram explicitamente posicionados:
+`render_entradas_terceiros()` (geração da BC1/`sped_entradas_terceiros`) e
+`render_auditoria_divergencia_entradas()` (Excel × Hunter). Ambos ficaram
+em "Painéis em Construção" — são painéis de análise/conferência sobre o
+resultado do cruzamento, não dados desviados dele (diferente de
+"Segregados") — mas essa é uma interpretação, não uma instrução explícita;
+ajustar se o usuário quiser outro agrupamento.
 
 ## Ver também
 

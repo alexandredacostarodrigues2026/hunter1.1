@@ -879,12 +879,12 @@ def render_auditoria_divergencia_entradas() -> None:
 
 
 # ── Estágio 6 — VAMOS ORGANIZAR (Menu de Navegação) ─────────────────────────
-# Reorganiza a tela única (todos os painéis empilhados) em 3 grupos
+# Reorganiza a tela única (todos os painéis empilhados) em 4 grupos
 # navegáveis, controlados por st.session_state["pagina_ativa"]
-# (None -> menu; "extracao"; "segregados"; "construcao"). Não cria nem
-# apaga nenhuma tabela do DuckDB — é só uma reorganização de UI sobre os
-# painéis que já existiam; os dados carregados sobrevivem à troca de
-# página porque vivem no DuckDB, não em session_state.
+# (None -> menu; "extracao"; "matching"; "segregados"; "construcao"). Não
+# cria nem apaga nenhuma tabela do DuckDB — é só uma reorganização de UI
+# sobre os painéis que já existiam; os dados carregados sobrevivem à troca
+# de página porque vivem no DuckDB, não em session_state.
 # "Segregados" (2026-07-14) foi promovido a botão próprio, separado de
 # "Construção": são dados que a Etapa 1 desviou do cruzamento principal de
 # propósito (CFOPs Não Autorizados, Notas Não Autorizadas — nomes de
@@ -892,20 +892,28 @@ def render_auditoria_divergencia_entradas() -> None:
 # entram no cômputo do Matching/cruzamento, então misturá-los com os
 # painéis que mostram RESULTADO de cruzamento (BC3, Fluxos Físicos, Estoque
 # Anual) confundia o que é o quê.
+# "Matching (BC3)" (2026-07-14, mesmo dia) também ganhou botão próprio,
+# posicionado logo após "Extração" — é o motor central que viabiliza os
+# estágios seguintes (Fluxos Físicos, Cronologia), então o usuário pediu
+# destaque equivalente ao de "Extração", à frente de "Segregados" e
+# "Painéis em Construção".
 
 def render_menu_principal() -> None:
-    """Menu principal (Estágio 6): 3 botões despacham para
-    render_pagina_extracao()/render_pagina_segregados()/
-    render_pagina_construcao()."""
+    """Menu principal (Estágio 6): 4 botões despacham para
+    render_pagina_extracao()/render_pagina_matching()/
+    render_pagina_segregados()/render_pagina_construcao()."""
     st.subheader("Menu Principal")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     if col1.button("📥 EXTRAÇÃO", key="btn_menu_extracao", use_container_width=True):
         st.session_state["pagina_ativa"] = "extracao"
         st.rerun()
-    if col2.button("🔀 SEGREGADOS", key="btn_menu_segregados", use_container_width=True):
+    if col2.button("🧩 MATCHING (BC3)", key="btn_menu_matching", use_container_width=True):
+        st.session_state["pagina_ativa"] = "matching"
+        st.rerun()
+    if col3.button("🔀 SEGREGADOS", key="btn_menu_segregados", use_container_width=True):
         st.session_state["pagina_ativa"] = "segregados"
         st.rerun()
-    if col3.button("🚧 PAINÉIS EM CONSTRUÇÃO", key="btn_menu_construcao", use_container_width=True):
+    if col4.button("🚧 PAINÉIS EM CONSTRUÇÃO", key="btn_menu_construcao", use_container_width=True):
         st.session_state["pagina_ativa"] = "construcao"
         st.rerun()
 
@@ -935,6 +943,21 @@ def render_pagina_extracao() -> None:
         render_entidade_auditada()
 
 
+def render_pagina_matching() -> None:
+    """Painel 'Matching (BC3)' (Estágio 6), próprio desde 2026-07-14: mostra
+    só render_bc3() (Estágio 2) — motor de 11 níveis (D1-D6/A1-A5) que casa
+    o produto do fornecedor (XML) com o código interno da auditada (SPED).
+    Promovido a botão de primeiro nível (logo após "Extração") porque é o
+    que "completa" as notas de entrada e viabiliza os estágios seguintes
+    (Fluxos Físicos, Cronologia) — tratamento equivalente ao que
+    "Segregados" já tinha ganhado no mesmo dia. Exige dados_carregados."""
+    _botao_voltar_menu()
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        return
+    render_bc3()
+
+
 def render_pagina_segregados() -> None:
     """Painel 'Segregados' (Estágio 6), próprio desde 2026-07-14: mostra só
     render_painel_analise() — CFOPs Não Autorizados (com o botão "CFOPS
@@ -952,13 +975,11 @@ def render_pagina_segregados() -> None:
 
 def render_pagina_construcao() -> None:
     """Painel 'Painéis em Construção' (Estágio 6): agrupa as visualizações
-    dos Estágios 1 (complementos)/2/3/5 — Matching (BC3), BC1 (Entradas de
-    Terceiros), Fluxos Físicos (Estágio 3) e Tabela de Estoque (Estágio 5)
-    — mais a Auditoria de Divergência de Entradas. BC3 (Estágio 2) é o
-    primeiro item de propósito (2026-07-14): é o motor de 11 níveis
-    (D1-D6/A1-A5) que casa o produto do fornecedor (XML) com o código
-    interno da auditada (SPED) — "completa" as notas de entrada e
-    viabiliza os estágios seguintes (Fluxos Físicos, Cronologia). O
+    dos Estágios 1 (complementos)/3/5 — BC1 (Entradas de Terceiros),
+    Fluxos Físicos (Estágio 3) e Tabela de Estoque (Estágio 5) — mais a
+    Auditoria de Divergência de Entradas. Matching (BC3, Estágio 2) saiu
+    daqui em 2026-07-14 (mesmo dia da promoção de "Segregados") — ver
+    render_pagina_matching(), ganhou botão de primeiro nível próprio. O
     Estágio 4 (Cronologia/DATA_ELEITA) não tem painel próprio (ver
     docs/estagios/04_cronologia_ano_eleito.md), por isso não aparece aqui.
     Registros Segregados (CFOPs Não Autorizados/Notas Não Autorizadas)
@@ -970,8 +991,6 @@ def render_pagina_construcao() -> None:
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
-    render_bc3()
-    st.divider()
     render_entradas_terceiros()
     st.divider()
     render_fluxos_fisicos()
