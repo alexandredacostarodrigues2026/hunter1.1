@@ -82,3 +82,7 @@ fatoitemnfe_infnfe_det_prod_cprod;Codigo do produto ou servico
 fatoitemnfe_infnfe_det_prod_cean;GTIN (Global Trade Item Number) do produto
 fatoitemnfe_infnfe_det_imposto_icms_vbc;Valor da BC da partilha do ICMS
 fatoitemnfe_infnfe_det_imposto_icms_vicms;Valor do ICMS
+
+# Novos campos - 2026-07-14 (colunas sinteticas da bc3, Estagio 2 - Matching, incorporadas na previa de Entradas Reais)
+COD_ITEM_DECLARACAO;Cod. Auditada
+FATOR_MULTIPLICADOR_SUGERIDO;Fator Sugerido

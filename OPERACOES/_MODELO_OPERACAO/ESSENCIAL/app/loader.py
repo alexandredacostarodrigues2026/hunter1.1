@@ -201,6 +201,21 @@ def verificar_cobertura_periodo() -> dict:
     }
 
 
+def anos_declaracao_disponiveis() -> set:
+    """Anos de competência presentes nos arquivos brutos de 2-DECLARACAO/SPED
+    (lido do registro 0000 via `_competencia_arquivo()`, sem depender de
+    persistência prévia) — usado pelo aviso de Ancoragem de Estoque (Bloco H)
+    em `interface.render_carga_operacao()`: o estoque final de um ano é
+    declarado no SPED de competência do início do ano seguinte."""
+    config = load_config()
+    anos = set()
+    for arquivo in _localizar_arquivos_sped(config):
+        competencia = _competencia_arquivo(arquivo)
+        if len(competencia) >= 4:
+            anos.add(competencia[:4])
+    return anos
+
+
 def _normalizar_str(s: str) -> str:
     """Remove acentos, uppercase, trim."""
     s = str(s).strip().upper()
@@ -1233,10 +1248,54 @@ def consultar_totais_entradas_saidas_real() -> dict:
     return totais
 
 
+def _montar_join_bc3(con, tabelas: set, incluir_match: bool = False) -> "tuple[str, str]":
+    """Monta os fragmentos SQL (colunas, join) pra trazer os campos da bc3
+    (Estágio 2 — Matching) via LEFT JOIN por ID_UNICO — reusado por
+    consultar_fluxo_real() (Estágio 3), _enriquecer_fluxo_real_com_bc3()
+    (Estágio 4) e consultar_nfe_entradas_bc3() (prévia do Estágio 2). LEFT
+    JOIN (não INNER) pra não descartar item sem bc3 gerada ainda ou sem
+    correspondência. Degrada graciosamente com colunas NULL tipadas quando a
+    tabela bc3 não existe, ou quando existe mas é de uma versão anterior à
+    propagação de DT_E_S/DT_FIN (checa o schema antes de referenciar essas
+    duas colunas — as demais, COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/
+    FATOR_MULTIPLICADOR_SUGERIDO, existem desde a primeira versão da bc3, ver
+    matching.py). incluir_match=True também traz MATCH_TIPO/MATCH_SCORE (só
+    usado pela prévia enriquecida do Estágio 2, consultar_nfe_entradas_bc3())."""
+    tem_bc3 = "bc3" in tabelas
+    colunas_schema_bc3 = (
+        {r[0] for r in con.execute("DESCRIBE bc3").fetchall()} if tem_bc3 else set()
+    )
+    tem_datas_bc3 = "DT_E_S" in colunas_schema_bc3
+    colunas = (
+        "b.COD_ITEM_DECLARACAO, b.DESCR_ITEM_DECLARACAO, b.FATOR_MULTIPLICADOR_SUGERIDO"
+        if tem_bc3 else
+        "CAST(NULL AS VARCHAR) AS COD_ITEM_DECLARACAO, "
+        "CAST(NULL AS VARCHAR) AS DESCR_ITEM_DECLARACAO, "
+        "CAST(NULL AS DOUBLE) AS FATOR_MULTIPLICADOR_SUGERIDO"
+    )
+    if incluir_match:
+        colunas += (
+            ", b.MATCH_TIPO, b.MATCH_SCORE" if tem_bc3 else
+            ", CAST(NULL AS VARCHAR) AS MATCH_TIPO, CAST(NULL AS DOUBLE) AS MATCH_SCORE"
+        )
+    colunas += (
+        ", b.DT_E_S, b.DT_FIN" if tem_datas_bc3 else
+        ", CAST(NULL AS VARCHAR) AS DT_E_S, CAST(NULL AS VARCHAR) AS DT_FIN"
+    )
+    join = "LEFT JOIN bc3 b ON n.ID_UNICO = b.ID_UNICO" if tem_bc3 else ""
+    return colunas, join
+
+
 def consultar_fluxo_real(direcao: str, limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
     """Lê xml_entradas_real (direcao='entradas') ou xml_saidas_real
     (direcao='saidas') já persistidas (sem reprocessar) — mesma movimentação
     física real da auditada de consultar_totais_entradas_saidas_real().
+    Enriquecida com COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/
+    FATOR_MULTIPLICADOR_SUGERIDO/DT_E_S/DT_FIN da bc3 (Estágio 2 — Matching)
+    via LEFT JOIN por ID_UNICO (ver _montar_join_bc3()) — mesmo
+    enriquecimento usado pelo Estágio 4 (_enriquecer_fluxo_real_com_bc3()),
+    aqui só para exibição (não persiste nada). Item sem bc3 gerada ainda ou
+    sem correspondência fica com essas colunas NULL, nunca é descartado.
     Mesmo padrão de consultar_bc3()/consultar_entradas_terceiros(): devolve
     uma amostra (até 'limite' linhas) e o total real. limite=None devolve a
     tabela inteira. direcao fora de {'entradas','saidas'} devolve vazio."""
@@ -1248,9 +1307,18 @@ def consultar_fluxo_real(direcao: str, limite: "int | None" = 200) -> "tuple[pd.
             tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
             if tabela not in tabelas:
                 return pd.DataFrame(), 0
-            total = con.execute(f"SELECT COUNT(*) FROM {tabela}").fetchone()[0]
-            query = f"SELECT * FROM {tabela}" if limite is None else f"SELECT * FROM {tabela} LIMIT {limite}"
+            colunas_bc3, join_bc3 = _montar_join_bc3(con, tabelas)
+            base_sql = f"SELECT n.*, {colunas_bc3} FROM {tabela} n {join_bc3}"
+            total = con.execute(f"SELECT COUNT(*) FROM ({base_sql})").fetchone()[0]
+            query = base_sql if limite is None else f"{base_sql} LIMIT {limite}"
             df = con.execute(query).df()
+        # Regra Operacional R07: colunas expandidas da declaração seguem como
+        # string, preservando NULL genuíno (item sem bc3/join sem
+        # correspondência) em vez de virar o literal "None" na tela — mesmo
+        # tratamento de consultar_nfe_entradas_bc3().
+        for col in ("COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO", "DT_E_S", "DT_FIN"):
+            if col in df.columns:
+                df[col] = df[col].where(df[col].isna(), df[col].astype(str))
         return df, total
     except Exception:
         logger.exception("Erro ao consultar %s em %s", tabela, _BANCO_PATH)
@@ -1330,11 +1398,11 @@ def _aplicar_hierarquia_data(df: pd.DataFrame, ordem: "list[str]") -> "tuple[pd.
 
 def _enriquecer_fluxo_real_com_bc3(direcao: str) -> pd.DataFrame:
     """Lê xml_entradas_real/xml_saidas_real (Estágio 3, já persistida) e
-    enriquece com DT_E_S/DT_FIN da bc3 (Estágio 2 — Matching) via LEFT JOIN
-    por ID_UNICO — mesmo padrão de consultar_nfe_entradas_bc3(). LEFT JOIN
-    (não INNER) pra não descartar item cuja bc3 ainda não foi gerada ou sem
-    correspondência — fica com DT_E_S/DT_FIN NULL (cascade automático pro
-    XML em _candidato_data_ano()). Alicerce do Estágio 4."""
+    enriquece com COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/
+    FATOR_MULTIPLICADOR_SUGERIDO/DT_E_S/DT_FIN da bc3 (Estágio 2 — Matching)
+    via LEFT JOIN por ID_UNICO (ver _montar_join_bc3()). Alicerce do Estágio
+    4 — colunas ausentes (bc3 não gerada ou sem correspondência) ficam NULL
+    (cascade automático pro XML em _candidato_data_ano() para as datas)."""
     tabela = _TABELAS_ENTRADAS_SAIDAS_REAL_POR_DIRECAO.get(direcao)
     if tabela is None or not _BANCO_PATH.exists():
         return pd.DataFrame()
@@ -1343,19 +1411,8 @@ def _enriquecer_fluxo_real_com_bc3(direcao: str) -> pd.DataFrame:
             tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
             if tabela not in tabelas:
                 return pd.DataFrame()
-            # tem_bc3 exige DT_E_S no schema da bc3 — bases persistidas com
-            # uma bc3 gerada antes de matching.py propagar DT_E_S/DT_FIN
-            # (ver executar_matching()) caem no fallback (NULL), sem quebrar.
-            colunas_bc3 = (
-                {r[0] for r in con.execute("DESCRIBE bc3").fetchall()} if "bc3" in tabelas else set()
-            )
-            tem_bc3 = "DT_E_S" in colunas_bc3
-            colunas_bc1 = (
-                "b.DT_E_S, b.DT_FIN" if tem_bc3 else
-                "CAST(NULL AS VARCHAR) AS DT_E_S, CAST(NULL AS VARCHAR) AS DT_FIN"
-            )
-            join_bc3 = "LEFT JOIN bc3 b ON n.ID_UNICO = b.ID_UNICO" if tem_bc3 else ""
-            df = con.execute(f"SELECT n.*, {colunas_bc1} FROM {tabela} n {join_bc3}").df()
+            colunas_bc3, join_bc3 = _montar_join_bc3(con, tabelas)
+            df = con.execute(f"SELECT n.*, {colunas_bc3} FROM {tabela} n {join_bc3}").df()
         return df
     except Exception:
         logger.exception("Erro ao enriquecer %s com bc3 em %s", tabela, _BANCO_PATH)
@@ -1381,14 +1438,21 @@ def _aplicar_data_eleita(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def montar_estoque_entradas() -> pd.DataFrame:
-    """Estágio 4: xml_entradas_real (Estágio 3) enriquecido com DT_E_S/DT_FIN
-    da bc3 (Estágio 2) + DATA_ELEITA/ANO_ELEITO (hierarquia da Figura 1)."""
+    """Estágio 4: xml_entradas_real (Estágio 3) enriquecido com
+    COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/FATOR_MULTIPLICADOR_SUGERIDO/
+    DT_E_S/DT_FIN da bc3 (Estágio 2) + DATA_ELEITA/ANO_ELEITO (hierarquia da
+    Figura 1)."""
     return _aplicar_data_eleita(_enriquecer_fluxo_real_com_bc3("entradas"))
 
 
 def montar_estoque_saidas() -> pd.DataFrame:
-    """Estágio 4: xml_saidas_real (Estágio 3) enriquecido com DT_E_S/DT_FIN
-    da bc3 (Estágio 2) + DATA_ELEITA/ANO_ELEITO (hierarquia da Figura 1)."""
+    """Estágio 4: xml_saidas_real (Estágio 3) enriquecido com
+    COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/FATOR_MULTIPLICADOR_SUGERIDO/
+    DT_E_S/DT_FIN da bc3 (Estágio 2) + DATA_ELEITA/ANO_ELEITO (hierarquia da
+    Figura 1). Na prática, a bc3 só cobre entradas de terceiros (BC2 x BC1),
+    então essas colunas ficam NULL em estoque_saidas — mesmo caso já
+    documentado para DT_E_S/DT_FIN (ver "Limitação real conhecida" em
+    docs/estagios/04_cronologia_ano_eleito.md)."""
     return _aplicar_data_eleita(_enriquecer_fluxo_real_com_bc3("saidas"))
 
 
@@ -1399,12 +1463,14 @@ _TABELAS_ESTOQUE = {
 
 def persistir_estoque_entradas_saidas(callback=None) -> dict:
     """Estágio 4: persiste estoque_entradas/estoque_saidas no DuckDB —
-    xml_entradas_real/xml_saidas_real (Estágio 3) enriquecidos com DT_E_S/
-    DT_FIN da bc3 (Estágio 2) e DATA_ELEITA/ANO_ELEITO (hierarquia da Figura
-    1, ver _aplicar_data_eleita()). Exige xml_entradas_real/xml_saidas_real
-    já persistidas (persistir_nfe()) — bc3 é opcional (sem ela, DT_E_S/DT_FIN
-    ficam NULL e a hierarquia cai direto pras datas do XML). callback(etapa,
-    n) chamado após cada tabela. Retorna {tabela: n_linhas}."""
+    xml_entradas_real/xml_saidas_real (Estágio 3) enriquecidos com
+    COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/FATOR_MULTIPLICADOR_SUGERIDO/
+    DT_E_S/DT_FIN da bc3 (Estágio 2) e DATA_ELEITA/ANO_ELEITO (hierarquia da
+    Figura 1, ver _aplicar_data_eleita()). Exige xml_entradas_real/
+    xml_saidas_real já persistidas (persistir_nfe()) — bc3 é opcional (sem
+    ela, essas colunas ficam NULL e a hierarquia de datas cai direto pras
+    datas do XML). callback(etapa, n) chamado após cada tabela. Retorna
+    {tabela: n_linhas}."""
     _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
     resultado = {}
     try:
@@ -1416,7 +1482,13 @@ def persistir_estoque_entradas_saidas(callback=None) -> dict:
         dados = {tabela: montar_fn() for tabela, montar_fn in _TABELAS_ESTOQUE.items()}
         with duckdb.connect(str(_BANCO_PATH)) as con:
             for tabela, df in dados.items():
-                df = _forcar_colunas_string(df, ["DT_E_S", "DT_FIN", "DATA_ELEITA", "ANO_ELEITO"])
+                # Regra Operacional R07: COD_ITEM_DECLARACAO também segue
+                # como string (mesmo tratamento de DT_E_S/DT_FIN/ANO_ELEITO)
+                # — evita inferência numérica do Pandas corromper códigos
+                # com zeros à esquerda.
+                df = _forcar_colunas_string(
+                    df, ["DT_E_S", "DT_FIN", "DATA_ELEITA", "ANO_ELEITO", "COD_ITEM_DECLARACAO"]
+                )
                 if not df.empty:
                     con.register("_df_tmp_estoque", df)
                     con.execute(f"CREATE OR REPLACE TABLE {tabela} AS SELECT * FROM _df_tmp_estoque")
@@ -1734,26 +1806,7 @@ def consultar_nfe_entradas_bc3(limite: "int | None" = 200) -> "tuple[pd.DataFram
                     _BANCO_PATH,
                 )
                 return pd.DataFrame(), 0
-            tem_bc3 = "bc3" in tabelas
-            colunas_schema_bc3 = (
-                {r[0] for r in con.execute("DESCRIBE bc3").fetchall()} if tem_bc3 else set()
-            )
-            tem_datas_bc3 = "DT_E_S" in colunas_schema_bc3
-            colunas_bc3 = (
-                "b.COD_ITEM_DECLARACAO, b.DESCR_ITEM_DECLARACAO, b.MATCH_TIPO, "
-                "b.MATCH_SCORE, b.FATOR_MULTIPLICADOR_SUGERIDO"
-                if tem_bc3 else
-                "CAST(NULL AS VARCHAR) AS COD_ITEM_DECLARACAO, "
-                "CAST(NULL AS VARCHAR) AS DESCR_ITEM_DECLARACAO, "
-                "CAST(NULL AS VARCHAR) AS MATCH_TIPO, "
-                "CAST(NULL AS DOUBLE) AS MATCH_SCORE, "
-                "CAST(NULL AS DOUBLE) AS FATOR_MULTIPLICADOR_SUGERIDO"
-            )
-            colunas_bc3 += (
-                ", b.DT_E_S, b.DT_FIN" if tem_datas_bc3 else
-                ", CAST(NULL AS VARCHAR) AS DT_E_S, CAST(NULL AS VARCHAR) AS DT_FIN"
-            )
-            join_bc3 = "LEFT JOIN bc3 b ON n.ID_UNICO = b.ID_UNICO" if tem_bc3 else ""
+            colunas_bc3, join_bc3 = _montar_join_bc3(con, tabelas, incluir_match=True)
             base_sql = (
                 f"SELECT n.*, {colunas_bc3} "
                 f"FROM nfe_entradas n {join_bc3} "
