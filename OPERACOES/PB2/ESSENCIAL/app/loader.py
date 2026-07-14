@@ -1459,6 +1459,9 @@ def montar_estoque_saidas() -> pd.DataFrame:
 _TABELAS_ESTOQUE = {
     "estoque_entradas": montar_estoque_entradas, "estoque_saidas": montar_estoque_saidas,
 }
+_TABELAS_ESTOQUE_POR_DIRECAO = {
+    "entradas": "estoque_entradas", "saidas": "estoque_saidas",
+}
 
 
 def persistir_estoque_entradas_saidas(callback=None) -> dict:
@@ -1500,6 +1503,67 @@ def persistir_estoque_entradas_saidas(callback=None) -> dict:
         logger.exception("Erro ao persistir estoque_entradas/estoque_saidas: %s", exc)
         resultado["erro"] = str(exc)
     return resultado
+
+
+def estoque_entradas_saidas_ja_gerado() -> bool:
+    """True se estoque_entradas/estoque_saidas (Estágio 4) já foram
+    persistidas nesta operação — mesmo padrão de bc3_ja_gerada()/
+    estoque_anual_ja_gerado(). Basta uma das duas tabelas existir (ambas
+    são sempre criadas juntas por persistir_estoque_entradas_saidas(),
+    mesmo que vazias)."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            return "estoque_entradas" in tabelas or "estoque_saidas" in tabelas
+    except Exception:
+        logger.exception("Erro ao verificar estoque_entradas/estoque_saidas em %s", _BANCO_PATH)
+        return False
+
+
+def consultar_totais_estoque_entradas_saidas() -> dict:
+    """Retorna {'estoque_entradas': n, 'estoque_saidas': n} lendo direto do
+    DuckDB (sem reprocessar) — 0 tanto se a tabela ainda não existe quanto
+    se existe vazia."""
+    totais = {t: 0 for t in _TABELAS_ESTOQUE}
+    if not _BANCO_PATH.exists():
+        return totais
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            for tabela in totais:
+                if tabela in tabelas:
+                    totais[tabela] = con.execute(f"SELECT COUNT(*) FROM {tabela}").fetchone()[0]
+    except Exception:
+        logger.exception("Erro ao consultar totais de estoque_entradas/estoque_saidas em %s", _BANCO_PATH)
+    return totais
+
+
+def consultar_estoque_entradas_saidas(direcao: str, limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê estoque_entradas (direcao='entradas') ou estoque_saidas
+    (direcao='saidas') já persistidas (Estágio 4 — sem reprocessar): mesmas
+    colunas do XML + COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/
+    FATOR_MULTIPLICADOR_SUGERIDO/DT_E_S/DT_FIN (bc3, Estágio 2) +
+    DATA_ELEITA/ANO_ELEITO (Estágio 4). Mesmo padrão de
+    consultar_fluxo_real(): devolve amostra (até 'limite' linhas) e total
+    real; limite=None devolve a tabela inteira. direcao fora de
+    {'entradas','saidas'} devolve vazio."""
+    tabela = _TABELAS_ESTOQUE_POR_DIRECAO.get(direcao)
+    if tabela is None or not _BANCO_PATH.exists():
+        return pd.DataFrame(), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if tabela not in tabelas:
+                return pd.DataFrame(), 0
+            total = con.execute(f"SELECT COUNT(*) FROM {tabela}").fetchone()[0]
+            query = f"SELECT * FROM {tabela}" if limite is None else f"SELECT * FROM {tabela} LIMIT {limite}"
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar %s em %s", tabela, _BANCO_PATH)
+        return pd.DataFrame(), 0
 
 
 def persistir_sped(callback=None) -> dict:

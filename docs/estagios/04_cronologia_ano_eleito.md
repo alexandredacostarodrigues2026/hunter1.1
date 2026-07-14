@@ -67,7 +67,15 @@ futura (ver "Estágio 4 concluído" abaixo).
    `estoque_entradas`/`estoque_saidas` no DuckDB. Exige
    `xml_entradas_real`/`xml_saidas_real` já persistidas (Estágio 3); `bc3`
    é opcional (sem ela, `DT_E_S`/`DT_FIN` ficam `NULL` e a hierarquia cai
-   direto pro XML).
+   direto pro XML). Painel próprio desde 2026-07-14 —
+   `interface.render_estoque_entradas_saidas()`, dentro de "TABELAS
+   ENTRADAS / SAÍDAS / ESTOQUES" (ver [Estágio 6](06_menu_navegacao.md)):
+   botão Gerar/Regerar + KPIs + toggle Entradas/Saídas com
+   `loader.estoque_entradas_saidas_ja_gerado()`/
+   `consultar_totais_estoque_entradas_saidas()`/
+   `consultar_estoque_entradas_saidas()`. Até então essa função existia
+   desde 2026-07-12 mas nunca era chamada de lugar nenhum da interface —
+   pendência registrada e fechada no mesmo dia da criação do Estágio 6.
 
 ## Divergências de dados da bc3 — `COD_ITEM_DECLARACAO`/`FATOR_MULTIPLICADOR_SUGERIDO`
 

@@ -47,16 +47,14 @@ funções de `interface.py` conforme o valor:
   SAÍDAS / ESTOQUES" desde 2026-07-14 — mesma função/`pagina_ativa=
   "construcao"` de quando se chamava "Painéis em Construção") — botão de
   retorno + (se `dados_carregados`) `render_fluxos_fisicos()` (Estágio 3,
-  Entradas/Saídas), `render_estoque_anual()` (Estágio 5, Estoques) e
+  prévia sob demanda, não persiste), `render_estoque_entradas_saidas()`
+  (Estágio 4 — **primeiro painel deste estágio na UI, 2026-07-14**, ver
+  seção própria abaixo), `render_estoque_anual()` (Estágio 5, Estoques) e
   `render_auditoria_divergencia_entradas()`. Sem `dados_carregados`, mostra
   só um aviso orientando a ir em "Extração" primeiro.
 - **`interface._botao_voltar_menu()`** — botão "⬅️ Voltar ao Menu
   Principal" no topo das 4 páginas; seta `pagina_ativa=None` e chama
   `st.rerun()`.
-
-**O Estágio 4** (Cronologia/`DATA_ELEITA`) não tem painel próprio (ver
-[docs/estagios/04_cronologia_ano_eleito.md](04_cronologia_ano_eleito.md)) —
-por isso não aparece em "TABELAS ENTRADAS / SAÍDAS / ESTOQUES".
 
 Nenhuma tabela do DuckDB é criada, apagada ou reprocessada por este
 estágio — a troca de página não afeta os dados já carregados, porque eles
@@ -138,6 +136,36 @@ Reais, Estoque Anual é a Tabela de Estoque. Só o texto do botão mudou —
 `render_pagina_construcao()`/`pagina_ativa="construcao"` continuam com os
 mesmos nomes internos, e o conteúdo do painel (incluindo a Auditoria de
 Divergência, que não está no nome) não mudou.
+
+## Estágio 4 ganhou seu primeiro painel na UI (2026-07-14, mesmo dia)
+
+Logo depois de renomear o botão, o usuário pediu que ele "já gere
+Entradas e Saídas já enriquecidas com dados de BC3" — até então,
+`loader.persistir_estoque_entradas_saidas()` (Estágio 4) existia desde
+2026-07-12 mas **nunca era chamada de lugar nenhum da interface**
+(pendência registrada repetidamente ao longo do dia). Nova
+`interface.render_estoque_entradas_saidas()`, inserida entre Fluxos
+Físicos e Estoque Anual em `render_pagina_construcao()`:
+
+- Botão "Gerar"/"Regerar Entradas/Saídas Enriquecidas" (mesmo padrão do
+  Estoque Anual) → `loader.persistir_estoque_entradas_saidas()` —
+  persiste `estoque_entradas`/`estoque_saidas` de verdade (diferente da
+  prévia do Estágio 3, que só calcula na hora, sem gravar nada).
+- KPIs "Entradas Enriquecidas"/"Saídas Enriquecidas" +
+  toggle "Visualizar Entradas"/"Visualizar Saídas" (mesmo padrão de
+  Fluxos Físicos) — prévia com `COD_ITEM_DECLARACAO`/
+  `DESCR_ITEM_DECLARACAO`/`FATOR_MULTIPLICADOR_SUGERIDO` (bc3, Estágio 2)
+  e `DATA_ELEITA`/`ANO_ELEITO` (hierarquia de datas), nomes traduzidos
+  via `_preparar_preview()`.
+- Novas funções de apoio em `loader.py`:
+  `estoque_entradas_saidas_ja_gerado()`, `consultar_totais_estoque_
+  entradas_saidas()`, `consultar_estoque_entradas_saidas(direcao, limite)`
+  — mesmo padrão das funções equivalentes do Estágio 3/5, nenhuma
+  existia antes (só a persistência, sem consulta/checagem).
+- Validado ao vivo: regenerar em cima da base real do geraldo produziu
+  19.433 entradas / 92.441 saídas — bate exatamente com
+  `xml_entradas_real`/`xml_saidas_real` (Estágio 3), confirmando que é
+  uma enriquecida 1:1, sem perda nem duplicação de linha.
 
 ## Decisão de agrupamento — Auditoria em "Construção"
 

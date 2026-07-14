@@ -757,6 +757,99 @@ def render_fluxos_fisicos() -> None:
         st.dataframe(_preparar_preview(df_preview, _COLUNAS_PREVIEW_FLUXOS_REAIS), use_container_width=True)
 
 
+_COLUNAS_PREVIEW_ESTOQUE_ENTRADAS_SAIDAS = [
+    "PASTA_ORIGEM", "ARQUIVO_ORIGEM", "fatonfe_infprot_chnfe",
+    "fatonfe_infnfe_ide_tpnf",
+    "fatonfe_infnfe_emit_cnpj", "fatonfe_infnfe_emit_xnome",
+    "fatonfe_infnfe_dest_cnpj", "fatonfe_infnfe_dest_xnome",
+    "fatoitemnfe_infnfe_det_nitem", "fatoitemnfe_infnfe_det_prod_xprod",
+    "fatoitemnfe_infnfe_det_prod_vprod",
+    "COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO", "FATOR_MULTIPLICADOR_SUGERIDO",
+    "DATA_ELEITA", "ANO_ELEITO", "ID_UNICO",
+]
+
+
+def render_estoque_entradas_saidas() -> None:
+    """Estágio 4 — Entradas e Saídas Enriquecidas: primeiro painel deste
+    estágio na UI (2026-07-14) — antes só existia o backend
+    (loader.persistir_estoque_entradas_saidas() nunca era chamada de lugar
+    nenhum da interface). Persiste `estoque_entradas`/`estoque_saidas`:
+    xml_entradas_real/xml_saidas_real (Estágio 3) enriquecidos com
+    COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/FATOR_MULTIPLICADOR_SUGERIDO
+    da bc3 (Estágio 2) e DATA_ELEITA/ANO_ELEITO (hierarquia de datas).
+    Botão Gerar/Regerar (mesmo padrão de render_estoque_anual()) + toggle
+    Entradas/Saídas (mesmo padrão de render_fluxos_fisicos()) — mas aqui o
+    resultado fica persistido, diferente da prévia sob demanda do Estágio
+    3."""
+    st.subheader("Estágio 4 — Entradas e Saídas Enriquecidas (BC3 + Cronologia)")
+    st.caption(
+        "Persiste xml_entradas_real/xml_saidas_real (Estágio 3) enriquecidos com o código "
+        "interno da auditada e o fator de multiplicação sugerido (bc3, Estágio 2), mais a "
+        "data/ano oficial de cada item (DATA_ELEITA/ANO_ELEITO). Diferente da prévia do "
+        "Estágio 3 (calculada a cada consulta), aqui o resultado é gravado em "
+        "estoque_entradas/estoque_saidas."
+    )
+
+    if "estoque_entradas_saidas_gerado" not in st.session_state:
+        st.session_state["estoque_entradas_saidas_gerado"] = loader.estoque_entradas_saidas_ja_gerado()
+
+    if st.session_state["estoque_entradas_saidas_gerado"]:
+        totais = loader.consultar_totais_estoque_entradas_saidas()
+        col1, col2 = st.columns(2)
+        col1.metric("Entradas Enriquecidas", f"{totais['estoque_entradas']:,}".replace(",", "."))
+        col2.metric("Saídas Enriquecidas", f"{totais['estoque_saidas']:,}".replace(",", "."))
+        st.success("✅ Entradas/Saídas enriquecidas prontas.")
+
+        if "estoque_entradas_saidas_ativo" not in st.session_state:
+            st.session_state["estoque_entradas_saidas_ativo"] = None
+
+        col_btn1, col_btn2 = st.columns(2)
+        if col_btn1.button("Visualizar Entradas", key="btn_ver_estoque_entradas"):
+            st.session_state["estoque_entradas_saidas_ativo"] = "entradas"
+        if col_btn2.button("Visualizar Saídas", key="btn_ver_estoque_saidas"):
+            st.session_state["estoque_entradas_saidas_ativo"] = "saidas"
+
+        ativo = st.session_state["estoque_entradas_saidas_ativo"]
+        if ativo is not None:
+            rotulo = "Entradas Enriquecidas" if ativo == "entradas" else "Saídas Enriquecidas"
+            df_preview, total = loader.consultar_estoque_entradas_saidas(ativo, limite=200)
+            st.markdown(
+                f"**Prévia — {rotulo}** — {total:,} registro(s) no total (limitada a 200 linhas)"
+                .replace(",", ".")
+            )
+            if df_preview.empty:
+                st.info(f"Nenhum registro em estoque_{ativo}.")
+            else:
+                st.dataframe(
+                    _preparar_preview(df_preview, _COLUNAS_PREVIEW_ESTOQUE_ENTRADAS_SAIDAS),
+                    use_container_width=True,
+                )
+
+        clicou = st.button(
+            "Regerar Entradas/Saídas Enriquecidas",
+            key="btn_regerar_estoque_entradas_saidas",
+            help="Reprocessa xml_entradas_real/xml_saidas_real + bc3 e atualiza "
+                 "estoque_entradas/estoque_saidas.",
+        )
+    else:
+        clicou = st.button(
+            "Gerar Entradas/Saídas Enriquecidas", key="btn_gerar_estoque_entradas_saidas"
+        )
+
+    if not clicou:
+        return
+
+    with st.spinner("Enriquecendo entradas e saídas com dados da bc3..."):
+        resultado = loader.persistir_estoque_entradas_saidas()
+
+    if "erro" in resultado:
+        st.error(f"Erro: {resultado['erro']}")
+        return
+
+    st.session_state["estoque_entradas_saidas_gerado"] = True
+    st.rerun()
+
+
 _COLUNAS_PREVIEW_ESTOQUE_ANUAL = [
     "ANO_REFERENCIA", "COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO",
     "UNIDADE", "QUANTIDADE_INICIAL", "QUANTIDADE_FINAL",
@@ -995,26 +1088,29 @@ def render_pagina_construcao() -> None:
     """Painel 'TABELAS ENTRADAS / SAÍDAS / ESTOQUES' (Estágio 6; nome de
     exibição desde 2026-07-14 — antes "Painéis em Construção", mesma
     `pagina_ativa="construcao"`/função por baixo): agrupa as visualizações
-    dos Estágios 3/5 — Fluxos Físicos (Estágio 3, tem o toggle Entradas/
-    Saídas Reais) e Tabela de Estoque (Estágio 5, Estoques) — mais a
-    Auditoria de Divergência de Entradas. Matching (BC3, Estágio 2) saiu
-    daqui em 2026-07-14 (mesmo dia da promoção de "Segregados") — ver
-    render_pagina_matching(), ganhou botão de primeiro nível próprio. BC1
-    (Entradas de Terceiros) também saiu daqui no mesmo dia — passou a
-    viver dentro de um `st.expander` em render_bc3() (subcomponente do
-    Matching, não painel independente), ver render_pagina_matching(). O
-    Estágio 4 (Cronologia/DATA_ELEITA) não tem painel próprio (ver
-    docs/estagios/04_cronologia_ano_eleito.md), por isso não aparece aqui.
-    Registros Segregados (CFOPs Não Autorizados/Notas Não Autorizadas)
-    saíram daqui em 2026-07-14 — ver render_pagina_segregados(), são dados
-    que não entram no cômputo do cruzamento. Exige dados_carregados — sem
-    carga feita, não há nada pra mostrar (orienta o usuário a ir em
-    "EXTRAÇÃO" primeiro)."""
+    dos Estágios 3/4/5 — Fluxos Físicos (Estágio 3, prévia sob demanda de
+    xml_entradas_real/xml_saidas_real, sem persistir), Entradas e Saídas
+    Enriquecidas (Estágio 4, primeiro painel deste estágio na UI desde
+    2026-07-14 — persiste estoque_entradas/estoque_saidas com os dados da
+    bc3 + DATA_ELEITA/ANO_ELEITO) e Tabela de Estoque (Estágio 5,
+    Estoques) — mais a Auditoria de Divergência de Entradas. Matching
+    (BC3, Estágio 2) saiu daqui em 2026-07-14 (mesmo dia da promoção de
+    "Segregados") — ver render_pagina_matching(), ganhou botão de
+    primeiro nível próprio. BC1 (Entradas de Terceiros) também saiu daqui
+    no mesmo dia — passou a viver dentro de um `st.expander` em
+    render_bc3() (subcomponente do Matching, não painel independente), ver
+    render_pagina_matching(). Registros Segregados (CFOPs Não Autorizados/
+    Notas Não Autorizadas) saíram daqui em 2026-07-14 — ver
+    render_pagina_segregados(), são dados que não entram no cômputo do
+    cruzamento. Exige dados_carregados — sem carga feita, não há nada pra
+    mostrar (orienta o usuário a ir em "EXTRAÇÃO" primeiro)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     render_fluxos_fisicos()
+    st.divider()
+    render_estoque_entradas_saidas()
     st.divider()
     render_estoque_anual()
     render_auditoria_divergencia_entradas()
