@@ -952,10 +952,14 @@ def render_pagina_segregados() -> None:
 
 def render_pagina_construcao() -> None:
     """Painel 'Painéis em Construção' (Estágio 6): agrupa as visualizações
-    dos Estágios 1 (complementos)/2/3/5 — BC1 (Entradas de Terceiros),
-    Matching (BC3), Fluxos Físicos (Estágio 3) e Tabela de Estoque (Estágio
-    5) — mais a Auditoria de Divergência de Entradas. O Estágio 4
-    (Cronologia/DATA_ELEITA) não tem painel próprio (ver
+    dos Estágios 1 (complementos)/2/3/5 — Matching (BC3), BC1 (Entradas de
+    Terceiros), Fluxos Físicos (Estágio 3) e Tabela de Estoque (Estágio 5)
+    — mais a Auditoria de Divergência de Entradas. BC3 (Estágio 2) é o
+    primeiro item de propósito (2026-07-14): é o motor de 11 níveis
+    (D1-D6/A1-A5) que casa o produto do fornecedor (XML) com o código
+    interno da auditada (SPED) — "completa" as notas de entrada e
+    viabiliza os estágios seguintes (Fluxos Físicos, Cronologia). O
+    Estágio 4 (Cronologia/DATA_ELEITA) não tem painel próprio (ver
     docs/estagios/04_cronologia_ano_eleito.md), por isso não aparece aqui.
     Registros Segregados (CFOPs Não Autorizados/Notas Não Autorizadas)
     saíram daqui em 2026-07-14 — ver render_pagina_segregados(), são dados que não
@@ -966,9 +970,9 @@ def render_pagina_construcao() -> None:
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
-    render_entradas_terceiros()
-    st.divider()
     render_bc3()
+    st.divider()
+    render_entradas_terceiros()
     st.divider()
     render_fluxos_fisicos()
     st.divider()
