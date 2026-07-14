@@ -906,8 +906,12 @@ def render_auditoria_divergencia_entradas() -> None:
 # "Matching (BC3)" (2026-07-14, mesmo dia) também ganhou botão próprio,
 # posicionado logo após "Extração" — é o motor central que viabiliza os
 # estágios seguintes (Fluxos Físicos, Cronologia), então o usuário pediu
-# destaque equivalente ao de "Extração", à frente de "Segregados" e
-# "Painéis em Construção".
+# destaque equivalente ao de "Extração", à frente de "Segregados" e do
+# 4º botão (rotulado "TABELAS ENTRADAS / SAÍDAS / ESTOQUES" desde
+# 2026-07-14 — mesmo `pagina_ativa="construcao"`/`render_pagina_construcao()`
+# de antes, só o texto do botão mudou, pra descrever o conteúdo real do
+# painel — Fluxos Físicos = Entradas/Saídas, Estoque Anual = Estoques —
+# em vez do rótulo genérico "Painéis em Construção").
 
 def render_menu_principal() -> None:
     """Menu principal (Estágio 6): 4 botões despacham para
@@ -924,7 +928,7 @@ def render_menu_principal() -> None:
     if col3.button("🔀 SEGREGADOS", key="btn_menu_segregados", use_container_width=True):
         st.session_state["pagina_ativa"] = "segregados"
         st.rerun()
-    if col4.button("🚧 PAINÉIS EM CONSTRUÇÃO", key="btn_menu_construcao", use_container_width=True):
+    if col4.button("📊 TABELAS ENTRADAS / SAÍDAS / ESTOQUES", key="btn_menu_construcao", use_container_width=True):
         st.session_state["pagina_ativa"] = "construcao"
         st.rerun()
 
@@ -988,21 +992,24 @@ def render_pagina_segregados() -> None:
 
 
 def render_pagina_construcao() -> None:
-    """Painel 'Painéis em Construção' (Estágio 6): agrupa as visualizações
-    dos Estágios 3/5 — Fluxos Físicos (Estágio 3) e Tabela de Estoque
-    (Estágio 5) — mais a Auditoria de Divergência de Entradas. Matching
-    (BC3, Estágio 2) saiu daqui em 2026-07-14 (mesmo dia da promoção de
-    "Segregados") — ver render_pagina_matching(), ganhou botão de
-    primeiro nível próprio. BC1 (Entradas de Terceiros) também saiu daqui
-    no mesmo dia — passou a viver dentro de um `st.expander` em
-    render_bc3() (subcomponente do Matching, não painel independente), ver
-    render_pagina_matching(). O Estágio 4 (Cronologia/DATA_ELEITA) não tem
-    painel próprio (ver docs/estagios/04_cronologia_ano_eleito.md), por
-    isso não aparece aqui. Registros Segregados (CFOPs Não Autorizados/
-    Notas Não Autorizadas) saíram daqui em 2026-07-14 — ver
-    render_pagina_segregados(), são dados que não entram no cômputo do
-    cruzamento. Exige dados_carregados — sem carga feita, não há nada pra
-    mostrar (orienta o usuário a ir em "EXTRAÇÃO" primeiro)."""
+    """Painel 'TABELAS ENTRADAS / SAÍDAS / ESTOQUES' (Estágio 6; nome de
+    exibição desde 2026-07-14 — antes "Painéis em Construção", mesma
+    `pagina_ativa="construcao"`/função por baixo): agrupa as visualizações
+    dos Estágios 3/5 — Fluxos Físicos (Estágio 3, tem o toggle Entradas/
+    Saídas Reais) e Tabela de Estoque (Estágio 5, Estoques) — mais a
+    Auditoria de Divergência de Entradas. Matching (BC3, Estágio 2) saiu
+    daqui em 2026-07-14 (mesmo dia da promoção de "Segregados") — ver
+    render_pagina_matching(), ganhou botão de primeiro nível próprio. BC1
+    (Entradas de Terceiros) também saiu daqui no mesmo dia — passou a
+    viver dentro de um `st.expander` em render_bc3() (subcomponente do
+    Matching, não painel independente), ver render_pagina_matching(). O
+    Estágio 4 (Cronologia/DATA_ELEITA) não tem painel próprio (ver
+    docs/estagios/04_cronologia_ano_eleito.md), por isso não aparece aqui.
+    Registros Segregados (CFOPs Não Autorizados/Notas Não Autorizadas)
+    saíram daqui em 2026-07-14 — ver render_pagina_segregados(), são dados
+    que não entram no cômputo do cruzamento. Exige dados_carregados — sem
+    carga feita, não há nada pra mostrar (orienta o usuário a ir em
+    "EXTRAÇÃO" primeiro)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')

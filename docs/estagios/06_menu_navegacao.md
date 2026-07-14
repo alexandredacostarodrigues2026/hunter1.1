@@ -18,8 +18,10 @@ em `main.py` no início de `main()`. `main.py` despacha para uma das
 funções de `interface.py` conforme o valor:
 
 - **`interface.render_menu_principal()`** — 4 botões (`st.columns(4)`):
-  "📥 EXTRAÇÃO", "🧩 MATCHING (BC3)", "🔀 SEGREGADOS" e "🚧 PAINÉIS EM
-  CONSTRUÇÃO". Cada um seta `pagina_ativa` e chama `st.rerun()`.
+  "📥 EXTRAÇÃO", "🧩 MATCHING (BC3)", "🔀 SEGREGADOS" e "📊 TABELAS
+  ENTRADAS / SAÍDAS / ESTOQUES" (renomeado de "🚧 PAINÉIS EM CONSTRUÇÃO"
+  em 2026-07-14, ver seção própria abaixo). Cada um seta `pagina_ativa` e
+  chama `st.rerun()`.
 - **`interface.render_pagina_extracao()`** — botão de retorno
   (`_botao_voltar_menu()`) + `render_configuracao_periodo()` +
   `render_carga_operacao()` (já inclui os alertas de cobertura do Período
@@ -41,9 +43,11 @@ funções de `interface.py` conforme o valor:
   SEGREGADOS", união ET+EP) e "Notas Não Autorizadas" — nomes de exibição
   escolhidos pelo usuário em 2026-07-14 (ver seção "Nomes de exibição"
   abaixo).
-- **`interface.render_pagina_construcao()`** — botão de retorno + (se
-  `dados_carregados`) `render_fluxos_fisicos()` (Estágio 3),
-  `render_estoque_anual()` (Estágio 5) e
+- **`interface.render_pagina_construcao()`** (botão "TABELAS ENTRADAS /
+  SAÍDAS / ESTOQUES" desde 2026-07-14 — mesma função/`pagina_ativa=
+  "construcao"` de quando se chamava "Painéis em Construção") — botão de
+  retorno + (se `dados_carregados`) `render_fluxos_fisicos()` (Estágio 3,
+  Entradas/Saídas), `render_estoque_anual()` (Estágio 5, Estoques) e
   `render_auditoria_divergencia_entradas()`. Sem `dados_carregados`, mostra
   só um aviso orientando a ir em "Extração" primeiro.
 - **`interface._botao_voltar_menu()`** — botão "⬅️ Voltar ao Menu
@@ -52,7 +56,7 @@ funções de `interface.py` conforme o valor:
 
 **O Estágio 4** (Cronologia/`DATA_ELEITA`) não tem painel próprio (ver
 [docs/estagios/04_cronologia_ano_eleito.md](04_cronologia_ano_eleito.md)) —
-por isso não aparece em "Painéis em Construção".
+por isso não aparece em "TABELAS ENTRADAS / SAÍDAS / ESTOQUES".
 
 Nenhuma tabela do DuckDB é criada, apagada ou reprocessada por este
 estágio — a troca de página não afeta os dados já carregados, porque eles
@@ -121,6 +125,19 @@ virou parte do fluxo de trabalho do Matching. Aproveitado para também
 aplicar `_preparar_preview()` (nomes amigáveis do Dicionário de Campos) na
 prévia em tela dessa tabela, que antes só traduzia colunas na exportação
 CSV, não no `st.dataframe` da tela.
+
+## "Painéis em Construção" renomeado para "TABELAS ENTRADAS / SAÍDAS / ESTOQUES" (2026-07-14)
+
+Depois que BC3 e BC1 saíram para "Matching (BC3)" e os Registros
+Segregados para "Segregados", o que sobrou em "Painéis em Construção"
+(Fluxos Físicos + Estoque Anual + Auditoria) já não era mais um cajado de
+"tudo que ainda tá em construção" — o nome genérico deixou de refletir o
+conteúdo. Usuário pediu o rótulo "TABELAS ENTRADAS / SAÍDAS / ESTOQUES",
+alinhado ao conteúdo real: Fluxos Físicos tem o toggle Entradas/Saídas
+Reais, Estoque Anual é a Tabela de Estoque. Só o texto do botão mudou —
+`render_pagina_construcao()`/`pagina_ativa="construcao"` continuam com os
+mesmos nomes internos, e o conteúdo do painel (incluindo a Auditoria de
+Divergência, que não está no nome) não mudou.
 
 ## Decisão de agrupamento — Auditoria em "Construção"
 
