@@ -1,7 +1,10 @@
-"""Ponto de entrada Streamlit do Hunter 1.1 (geraldo_2020_2024).
+"""Ponto de entrada Streamlit do Hunter 1.1.
 
-Esqueleto inicial — sem lógica de negócio ainda. Serve para validar que
-iniciar_sistema.bat/.exe consegue subir o servidor e abrir o navegador.
+Despacha pro Menu Principal (Estágio 6 — VAMOS ORGANIZAR, ver
+docs/estagios/06_menu_navegacao.md) e os 3 grupos de painéis navegáveis
+(Extração, Segregados, Painéis em Construção). Arquivo idêntico entre
+operações — a operação ativa é resolvida em runtime por
+loader.nome_operacao() (pasta-pai de ESSENCIAL/, ou HUNTER_OPERACAO_DIR).
 """
 import sys
 from pathlib import Path
@@ -30,27 +33,24 @@ def main() -> None:
         # verifica no DuckDB se já existe carga persistida, em vez de assumir
         # False e obrigar uma nova carga toda vez.
         st.session_state["dados_carregados"] = loader.dados_ja_carregados()
+    if "pagina_ativa" not in st.session_state:
+        # None = Menu Principal (Estágio 6); "extracao"/"segregados"/
+        # "construcao" = os 3 grupos de painéis navegáveis, ver
+        # interface.render_menu_principal().
+        st.session_state["pagina_ativa"] = None
 
     st.title("Hunter 1.1")
     st.subheader(f"Operação ativa: {loader.nome_operacao()}")
-    interface.render_configuracao_periodo()
-    st.divider()
-    interface.render_carga_operacao()
-    st.info("Demais módulos (carregamento completo, equalização) ainda não implementados.")
-    if st.session_state.get("dados_carregados"):
-        st.divider()
-        interface.render_entidade_auditada()
-        st.divider()
-        interface.render_entradas_terceiros()
-        st.divider()
-        interface.render_painel_analise()
-        st.divider()
-        interface.render_bc3()
-        st.divider()
-        interface.render_fluxos_fisicos()
-        st.divider()
-        interface.render_estoque_anual()
-        interface.render_auditoria_divergencia_entradas()
+
+    pagina = st.session_state["pagina_ativa"]
+    if pagina == "extracao":
+        interface.render_pagina_extracao()
+    elif pagina == "segregados":
+        interface.render_pagina_segregados()
+    elif pagina == "construcao":
+        interface.render_pagina_construcao()
+    else:
+        interface.render_menu_principal()
 
 
 if __name__ == "__main__":

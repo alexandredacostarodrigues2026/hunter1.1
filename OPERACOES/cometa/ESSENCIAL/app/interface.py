@@ -168,6 +168,49 @@ def _render_alerta_cobertura_periodo() -> None:
     )
 
 
+def _lista_anos_pt(anos: list) -> str:
+    """'2020, 2021 e 2022' — junta anos (já como string) com vírgula e um
+    'e' antes do último, conforme Regra R07 (anos sempre como string, nunca
+    formatados como número, pra não virar '2,020')."""
+    if len(anos) == 1:
+        return anos[0]
+    return ", ".join(anos[:-1]) + " e " + anos[-1]
+
+
+def _render_alerta_ancoragem_estoque() -> None:
+    """Verificação de Âncoras de Estoque (Bloco H) — Estágio 1: por regra
+    fiscal, o estoque final de um exercício (saldo em 31/12) é declarado no
+    SPED de competência do início do exercício seguinte (geralmente
+    jan/fev). Para o Estágio 5 (Tabela de Estoque) fechar sem lacunas, cada
+    ano do Período de Auditoria precisa da declaração do ano seguinte como
+    âncora de saldo. Checa direto nos arquivos brutos de 2-DECLARACAO/SPED
+    (`loader.anos_declaracao_disponiveis()`), sem depender de carga já
+    persistida — silencioso se o período ainda não foi configurado."""
+    periodo = loader.obter_periodo_auditoria()
+    if not periodo:
+        return
+
+    ano_ini = int(periodo["ano_inicial"])
+    ano_fim = int(periodo["ano_final"])
+    anos_estoque = [str(a) for a in range(ano_ini, ano_fim + 1)]
+    anos_declaracao = [str(a + 1) for a in range(ano_ini, ano_fim + 1)]
+
+    st.markdown("**Verificação de Âncoras de Estoque (Bloco H)**")
+    st.info(
+        f"Para auditar o período de {periodo['ano_inicial']} a {periodo['ano_final']}, "
+        f"o sistema processará os estoques finais de {_lista_anos_pt(anos_estoque)}, "
+        f"que são extraídos respectivamente das declarações de {_lista_anos_pt(anos_declaracao)}.  \n"
+        f"Nota: o estoque final refere-se ao saldo em 31 de dezembro de cada exercício."
+    )
+
+    ano_ancora_final = str(ano_fim + 1)
+    if ano_ancora_final not in loader.anos_declaracao_disponiveis():
+        st.error(
+            f"⚠️ Atenção: a declaração de {ano_ancora_final} não foi detectada. "
+            f"O estoque final de {periodo['ano_final']} não poderá ser validado."
+        )
+
+
 def render_carga_operacao() -> None:
     """Prévia + botão de carga: 3 barras de progresso independentes.
       1. XML pendentes  — classificação arquivo a arquivo
@@ -200,6 +243,8 @@ def render_carga_operacao() -> None:
 
     ja_carregado = st.session_state.get("dados_carregados", False)
     sem_pendentes = pend["quantidade"] == 0
+
+    _render_alerta_ancoragem_estoque()
 
     if ja_carregado and sem_pendentes:
         st.success("✅ Dados carregados.")
@@ -353,16 +398,51 @@ def _preparar_preview(df: pd.DataFrame, colunas: list) -> pd.DataFrame:
     return df[cols].rename(columns=loader.carregar_dicionario_campos())
 
 
+def _render_botao_cfops_segregados(colunas_preview: list) -> None:
+    """Botão dedicado 'CFOPS SEGREGADOS' — exclusivo da seção "CFOPs Não
+    Autorizados" do Painel de Monitoramento (render_painel_analise()).
+    Mostra, unidos num só st.dataframe, os itens de nfe_analise_et +
+    nfe_analise_ep (CFOP fora do cruzamento principal: entrega futura,
+    venda à ordem, baixa de estoque, lançamento ECF — física ou simbólica,
+    não compõe o estoque real). Diferente do expander "Visualizar
+    registros" logo abaixo (que separa ET/EP em duas tabelas), aqui é uma
+    tabela só, para varredura rápida pelo auditor. Regra Operacional R07:
+    CHV_NFE/CFOP já vêm como string desde a persistência
+    (loader._classificar_itens_nfe()) — concatenar as duas amostras não
+    altera o dtype. Toggle via session_state — clique liga/desliga."""
+    if "cfops_segregados_aberto" not in st.session_state:
+        st.session_state["cfops_segregados_aberto"] = False
+    if st.button("CFOPS SEGREGADOS", key="btn_cfops_segregados"):
+        st.session_state["cfops_segregados_aberto"] = not st.session_state["cfops_segregados_aberto"]
+
+    if not st.session_state["cfops_segregados_aberto"]:
+        return
+
+    df_et, _ = loader.consultar_chaves_analise("ET", categoria="cfop")
+    df_ep, _ = loader.consultar_chaves_analise("EP", categoria="cfop")
+    uniao = pd.concat([df_et, df_ep], ignore_index=True)
+    if uniao.empty:
+        st.info("Nenhum registro de CFOP segregado para esta operação.")
+    else:
+        st.dataframe(_preparar_preview(uniao, colunas_preview), use_container_width=True)
+
+
 def _render_categoria_segregacao(
     titulo: str, categoria: str, total_et: int, total_ep: int,
-    colunas_preview: list, msg_vazio: str,
+    colunas_preview: list, msg_vazio: str, mostrar_botao_uniao: bool = False,
 ) -> None:
     """Bloco reutilizável: KPIs ET/EP + expander com prévia de uma das duas
-    categorias de segregação (categoria='cfop' ou 'situacao')."""
+    categorias de segregação (categoria='cfop' ou 'situacao').
+    mostrar_botao_uniao=True (só para "CFOPs Não Autorizados") insere o
+    botão 'CFOPS SEGREGADOS' logo abaixo dos KPIs, ver
+    _render_botao_cfops_segregados()."""
     st.markdown(f"**{titulo}**")
     col1, col2 = st.columns(2)
     col1.metric(f"Qtd Itens ET ({titulo})", f"{total_et:,}".replace(",", "."))
     col2.metric(f"Qtd Itens EP ({titulo})", f"{total_ep:,}".replace(",", "."))
+
+    if mostrar_botao_uniao:
+        _render_botao_cfops_segregados(colunas_preview)
 
     with st.expander(f"Visualizar registros — {titulo}"):
         for fluxo, rotulo in (("ET", "Emissão de Terceiros (ET)"), ("EP", "Emissão Própria (EP)")):
@@ -379,17 +459,23 @@ def render_painel_analise() -> None:
     geração sob demanda + expanders com prévia para as duas categorias que a
     carga de NF-e desvia do fluxo principal (nfe_entradas/nfe_saidas), sem
     descartar nada:
-      1. CFOP de watchlist (nfe_analise_et/nfe_analise_ep) — situação válida
+      1. "CFOPs Não Autorizados" (rótulo de exibição; categoria interna
+         'cfop', tabelas nfe_analise_et/nfe_analise_ep) — situação válida
          mas operação simbólica/de ajuste (entrega futura, venda à ordem,
-         baixa de estoque, lançamento ECF).
-      2. Situação irregular (nfe_situacao_et/nfe_situacao_ep) — canceladas,
-         denegadas, inutilizadas etc.
+         baixa de estoque, lançamento ECF). Nome de exibição escolhido pelo
+         usuário em 2026-07-14; tecnicamente os CFOPs em si são válidos —
+         o que fica de fora do cruzamento é a NATUREZA simbólica/não física
+         da operação, não uma irregularidade do CFOP.
+      2. "Notas Não Autorizadas" (rótulo de exibição; categoria interna
+         'situacao', tabelas nfe_situacao_et/nfe_situacao_ep) — mistura
+         canceladas, denegadas e inutilizadas (fatonfe_informix_stnfeletronica
+         fora de {"A","O"}) num único grupo de exibição.
     Exibido só após a carga geral (dados_carregados)."""
     st.subheader("Painel de Monitoramento — Registros Segregados")
     st.caption(
         "Itens desviados do cruzamento principal (Etapa 1), preservados aqui para consulta: "
-        "CFOP de watchlist (faturamento futuro, venda à ordem, baixa de estoque/ECF) e "
-        "documentos com situação irregular (cancelados, denegados, inutilizados)."
+        "CFOPs Não Autorizados (faturamento futuro, venda à ordem, baixa de estoque/ECF) e "
+        "Notas Não Autorizadas (canceladas, denegadas, inutilizadas)."
     )
 
     if "analise_cfop_gerada" not in st.session_state:
@@ -400,15 +486,16 @@ def render_painel_analise() -> None:
         st.success("✅ Dados de análise prontos.")
 
         _render_categoria_segregacao(
-            "CFOP de Watchlist", "cfop",
+            "CFOPs Não Autorizados", "cfop",
             totais["nfe_analise_et"], totais["nfe_analise_ep"],
-            _COLUNAS_PREVIEW_ANALISE, "Nenhum registro para análise física/simbólica",
+            _COLUNAS_PREVIEW_ANALISE, "Nenhum registro de CFOP não autorizado",
+            mostrar_botao_uniao=True,
         )
         st.markdown("---")
         _render_categoria_segregacao(
-            "Situação Irregular", "situacao",
+            "Notas Não Autorizadas", "situacao",
             totais["nfe_situacao_et"], totais["nfe_situacao_ep"],
-            _COLUNAS_PREVIEW_SITUACAO, "Nenhum documento com situação irregular",
+            _COLUNAS_PREVIEW_SITUACAO, "Nenhuma nota não autorizada",
         )
 
         clicou = st.button(
@@ -595,7 +682,13 @@ _COLUNAS_PREVIEW_FLUXOS_REAIS = [
     "fatonfe_infnfe_emit_cnpj", "fatonfe_infnfe_emit_xnome",
     "fatonfe_infnfe_dest_cnpj", "fatonfe_infnfe_dest_xnome",
     "fatoitemnfe_infnfe_det_nitem", "fatoitemnfe_infnfe_det_prod_xprod",
-    "fatoitemnfe_infnfe_det_prod_vprod", "ID_UNICO",
+    "fatoitemnfe_infnfe_det_prod_vprod",
+    # produto da auditada (declaração, BC1 — via bc3, Estágio 2) lado a lado
+    # com o produto do fornecedor (XML) acima — só populado para entradas;
+    # em xml_saidas_real fica sempre NULL (bc3 só cobre entradas de
+    # terceiros, ver docs/estagios/03_fluxos_fisicos.md).
+    "COD_ITEM_DECLARACAO", "FATOR_MULTIPLICADOR_SUGERIDO",
+    "ID_UNICO",
 ]
 
 
@@ -605,8 +698,13 @@ def render_fluxos_fisicos() -> None:
     movimentação física real da auditada, cruzando tpnf com o papel dela na
     nota (emitente ou destinatária), não só o tpnf isolado (ver
     "regra de negócios unificadas/CNPJ EMIT = CNPJ DEST.txt", raiz do
-    projeto). Visualização exclusiva: só uma prévia (entradas OU saídas) fica
-    visível por vez, controlada por st.session_state["fluxo_fisico_ativo"]."""
+    projeto). Prévia enriquecida com COD_ITEM_DECLARACAO/
+    FATOR_MULTIPLICADOR_SUGERIDO da bc3 (Estágio 2 — Matching, ver
+    loader.consultar_fluxo_real()) — produto da auditada (declaração) lado a
+    lado com o produto do fornecedor (XML), só populado em "Entradas"
+    (bc3 não cobre saídas). Visualização exclusiva: só uma prévia (entradas
+    OU saídas) fica visível por vez, controlada por
+    st.session_state["fluxo_fisico_ativo"]."""
     st.subheader("Estágio 3 — Fluxos Físicos (Lado XML)")
     st.caption(
         "Reclassificação da movimentação física real da auditada: cruza o tpnf da nota com "
@@ -729,7 +827,7 @@ def render_auditoria_divergencia_entradas() -> None:
         "Compara o Excel de referência ('TABELA ENTRADAS...xlsx' na pasta da operação) com "
         "estoque_entradas por CHV_NFE + contagem de itens por nota — sem cruzar código de "
         "item. Reconcilia o resíduo checando xml_saidas_real (Estágio 3), nfe_situacao_et/ep "
-        "(situação irregular) e nfe_analise_et/ep (CFOP de watchlist), nessa ordem."
+        "(Notas Não Autorizadas) e nfe_analise_et/ep (CFOPs Não Autorizados), nessa ordem."
     )
 
     resumo = resultado["resumo"]
@@ -778,3 +876,101 @@ def render_auditoria_divergencia_entradas() -> None:
                 st.markdown("**Divergência não identificada, por ano da CHV_NFE:**")
                 st.dataframe(por_ano.rename("Itens").to_frame(), use_container_width=True)
             st.dataframe(df_div[_COLUNAS_PREVIEW_DIVERGENCIA], use_container_width=True)
+
+
+# ── Estágio 6 — VAMOS ORGANIZAR (Menu de Navegação) ─────────────────────────
+# Reorganiza a tela única (todos os painéis empilhados) em 3 grupos
+# navegáveis, controlados por st.session_state["pagina_ativa"]
+# (None -> menu; "extracao"; "segregados"; "construcao"). Não cria nem
+# apaga nenhuma tabela do DuckDB — é só uma reorganização de UI sobre os
+# painéis que já existiam; os dados carregados sobrevivem à troca de
+# página porque vivem no DuckDB, não em session_state.
+# "Segregados" (2026-07-14) foi promovido a botão próprio, separado de
+# "Construção": são dados que a Etapa 1 desviou do cruzamento principal de
+# propósito (CFOPs Não Autorizados, Notas Não Autorizadas — nomes de
+# exibição escolhidos pelo usuário; ver render_painel_analise()) — nunca
+# entram no cômputo do Matching/cruzamento, então misturá-los com os
+# painéis que mostram RESULTADO de cruzamento (BC3, Fluxos Físicos, Estoque
+# Anual) confundia o que é o quê.
+
+def render_menu_principal() -> None:
+    """Menu principal (Estágio 6): 3 botões despacham para
+    render_pagina_extracao()/render_pagina_segregados()/
+    render_pagina_construcao()."""
+    st.subheader("Menu Principal")
+    col1, col2, col3 = st.columns(3)
+    if col1.button("📥 EXTRAÇÃO", key="btn_menu_extracao", use_container_width=True):
+        st.session_state["pagina_ativa"] = "extracao"
+        st.rerun()
+    if col2.button("🔀 SEGREGADOS", key="btn_menu_segregados", use_container_width=True):
+        st.session_state["pagina_ativa"] = "segregados"
+        st.rerun()
+    if col3.button("🚧 PAINÉIS EM CONSTRUÇÃO", key="btn_menu_construcao", use_container_width=True):
+        st.session_state["pagina_ativa"] = "construcao"
+        st.rerun()
+
+
+def _botao_voltar_menu() -> None:
+    """Botão fixo no topo dos painéis Extração/Construção — volta pro Menu
+    Principal. Só mexe em st.session_state["pagina_ativa"], nunca em
+    dados_carregados nem em tabela nenhuma do DuckDB."""
+    if st.button("⬅️ Voltar ao Menu Principal", key="btn_voltar_menu"):
+        st.session_state["pagina_ativa"] = None
+        st.rerun()
+    st.divider()
+
+
+def render_pagina_extracao() -> None:
+    """Painel 'Extração' (Estágio 6): configuração de Período de Auditoria,
+    Carga de XML/SPED (com os alertas de cobertura e de Ancoragem de
+    Estoque já embutidos em render_carga_operacao()) e Entidade Auditada —
+    mesmo conteúdo que antes ficava direto em main.py, só agrupado atrás do
+    botão "EXTRAÇÃO" do menu principal."""
+    _botao_voltar_menu()
+    render_configuracao_periodo()
+    st.divider()
+    render_carga_operacao()
+    if st.session_state.get("dados_carregados"):
+        st.divider()
+        render_entidade_auditada()
+
+
+def render_pagina_segregados() -> None:
+    """Painel 'Segregados' (Estágio 6), próprio desde 2026-07-14: mostra só
+    render_painel_analise() — CFOPs Não Autorizados (com o botão "CFOPS
+    SEGREGADOS") e Notas Não Autorizadas. Isolado de "Construção" porque
+    esses dados, por definição, NÃO entram no cômputo do cruzamento/Matching
+    (Estágio 1 os desvia de propósito de nfe_entradas/nfe_saidas) — não são
+    resultado de cruzamento, então não pertencem ao mesmo grupo de BC3/
+    Fluxos Físicos/Estoque Anual. Exige dados_carregados."""
+    _botao_voltar_menu()
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        return
+    render_painel_analise()
+
+
+def render_pagina_construcao() -> None:
+    """Painel 'Painéis em Construção' (Estágio 6): agrupa as visualizações
+    dos Estágios 1 (complementos)/2/3/5 — BC1 (Entradas de Terceiros),
+    Matching (BC3), Fluxos Físicos (Estágio 3) e Tabela de Estoque (Estágio
+    5) — mais a Auditoria de Divergência de Entradas. O Estágio 4
+    (Cronologia/DATA_ELEITA) não tem painel próprio (ver
+    docs/estagios/04_cronologia_ano_eleito.md), por isso não aparece aqui.
+    Registros Segregados (CFOPs Não Autorizados/Notas Não Autorizadas)
+    saíram daqui em 2026-07-14 — ver render_pagina_segregados(), são dados que não
+    entram no cômputo do cruzamento. Exige dados_carregados — sem carga
+    feita, não há nada pra mostrar (orienta o usuário a ir em "EXTRAÇÃO"
+    primeiro)."""
+    _botao_voltar_menu()
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        return
+    render_entradas_terceiros()
+    st.divider()
+    render_bc3()
+    st.divider()
+    render_fluxos_fisicos()
+    st.divider()
+    render_estoque_anual()
+    render_auditoria_divergencia_entradas()
