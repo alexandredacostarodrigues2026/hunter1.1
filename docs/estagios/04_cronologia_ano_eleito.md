@@ -6,9 +6,16 @@
 
 Definir, para cada item de `xml_entradas_real`/`xml_saidas_real` (Estágio
 3), uma única data de referência (**`DATA_ELEITA`**) e o ano correspondente
-(**`ANO_ELEITO`**, `AAAA`) — a chave de agrupamento para os relatórios
-anuais de movimentação e a "data oficial" que alimentará o cálculo de saldo
-de estoque (última etapa do Estágio 4, ainda pendente).
+(**`ANO_ELEITO`**, `AAAA`) — a chave de agrupamento por ano para os
+relatórios de movimentação (`estoque_entradas`/`estoque_saidas`). **Este
+estágio não forma estoque** (apesar do nome das tabelas de saída — legado
+de antes da decisão de separar as etapas): o resultado continua sendo
+movimentação (entradas e saídas), só que agora com data/ano oficial
+atribuído a cada item. O estoque propriamente dito (inventário declarado,
+com Estoque Inicial/Final por item) só passa a existir no [Estágio
+5](05_tabela_estoque.md); comparar esse inventário com a movimentação
+gerada aqui para aplicar a RN1 e achar divergências fica pra uma etapa
+futura (ver "Estágio 4 concluído" abaixo).
 
 ## Entrada
 
@@ -22,14 +29,23 @@ de estoque (última etapa do Estágio 4, ainda pendente).
 
 ## Como funciona
 
-1. **Enriquecimento** (`loader._enriquecer_fluxo_real_com_bc3()`): `LEFT
-   JOIN` por `ID_UNICO` entre `xml_entradas_real`/`xml_saidas_real` e `bc3`,
-   trazendo `DT_E_S`/`DT_FIN`. `LEFT JOIN` (não `INNER`) para não descartar
-   item sem `bc3` gerada ainda ou sem correspondência — fica com
-   `DT_E_S`/`DT_FIN` `NULL` (cascade automático pro XML, ver hierarquia
-   abaixo). Degrada graciosamente se a `bc3` persistida for de uma versão
-   anterior à propagação de `DT_E_S`/`DT_FIN` (checa o schema antes do
-   join).
+1. **Enriquecimento** (`loader._enriquecer_fluxo_real_com_bc3()`, via o
+   helper compartilhado `loader._montar_join_bc3()`): `LEFT JOIN` por
+   `ID_UNICO` entre `xml_entradas_real`/`xml_saidas_real` e `bc3`, trazendo
+   `COD_ITEM_DECLARACAO`, `DESCR_ITEM_DECLARACAO`,
+   `FATOR_MULTIPLICADOR_SUGERIDO`, `DT_E_S` e `DT_FIN` — desde 2026-07-14,
+   não só as datas. Essas 5 colunas passam a existir em
+   `estoque_entradas`/`estoque_saidas` (mesmo enriquecimento usado pela
+   prévia "Entradas Reais" do [Estágio 3](03_fluxos_fisicos.md), que lê
+   direto do banco sem persistir nada). `LEFT JOIN` (não `INNER`) para não
+   descartar item sem `bc3` gerada ainda ou sem correspondência — fica com
+   essas colunas `NULL` (cascade automático pro XML nas datas, ver
+   hierarquia abaixo). Degrada graciosamente se a `bc3` persistida for de
+   uma versão anterior à propagação de `DT_E_S`/`DT_FIN` (checa o schema
+   antes do join; `COD_ITEM_DECLARACAO`/`DESCR_ITEM_DECLARACAO`/
+   `FATOR_MULTIPLICADOR_SUGERIDO` existem desde a primeira versão da `bc3`).
+   Em `estoque_saidas` essas colunas ficam sempre `NULL` na prática — `bc3`
+   só cobre entradas de terceiros (ver "Limitação real conhecida" abaixo).
 2. **Hierarquia de datas** (`loader._aplicar_data_eleita()`), por cenário
    (`AUDITADA_PAPEL`):
 
@@ -52,6 +68,76 @@ de estoque (última etapa do Estágio 4, ainda pendente).
    `xml_entradas_real`/`xml_saidas_real` já persistidas (Estágio 3); `bc3`
    é opcional (sem ela, `DT_E_S`/`DT_FIN` ficam `NULL` e a hierarquia cai
    direto pro XML).
+
+## Divergências de dados da bc3 — `COD_ITEM_DECLARACAO`/`FATOR_MULTIPLICADOR_SUGERIDO`
+
+**`bc3` é exclusivamente sobre emissão de terceiros (ET)** — resultado do
+Matching BC2 (XML, filtrado a `PASTA_ORIGEM='ET'`) × BC1 (declaração de
+entradas de terceiros do auditado). `xml_entradas_real`, por outro lado, é
+definida pela regra de `tpnf` × papel da auditada
+(`r_definição entradas_saidas_xml.txt`, ver [Estágio
+3](03_fluxos_fisicos.md)) — que inclui uma fatia estrutural de
+`PASTA_ORIGEM='EP'` (auditada emitente com `tpnf=0`). A `bc3` nunca foi
+desenhada pra cobrir essa fatia EP: não é uma falha de declaração, é fora
+do escopo por construção. Por isso os números de cobertura da `bc3` só
+fazem sentido quando segregados por `PASTA_ORIGEM`.
+
+Além da ausência estrutural em EP, três motivos fazem `COD_ITEM_DECLARACAO`
+ficar sem valor útil mesmo dentro de ET:
+
+1. **Sem `bc3`** — item sem linha correspondente na `bc3` (`join` sem
+   correspondência por `ID_UNICO`, ou `bc3` ainda não gerada): fica `NULL`
+   genuíno.
+2. **`'nd'`** (não declarado) — sentinela da `bc3`: o item do XML não achou
+   nenhuma declaração correspondente na BC1/SPED do auditado.
+3. **`'nm'`** (sem match) — sentinela da `bc3`: havia declaração candidata,
+   mas nenhum nível do Matching (D1-D6/A1-A5) conseguiu confirmar o par
+   (ver `REGRAS_MATCHING.md`).
+
+`FATOR_MULTIPLICADOR_SUGERIDO` diverge ainda mais: mesmo entre os itens com
+`COD_ITEM_DECLARACAO` real, o fator só é calculado quando o `VL_ITEM`
+(valor total da linha) bate entre XML e SPED para aquele par — se não bate,
+ou se o match é D3 (N-para-1, onde o `VL_ITEM` individual nunca bate com o
+consolidado do SPED, só a soma do grupo), fica `NaN` de propósito (ver
+comentário em `matching.py`, função `_aplicar()`).
+
+Números reais, segregados por `PASTA_ORIGEM` (consulta direta às bases,
+2026-07-14):
+
+| Operação | Origem | Total | Com `COD_ITEM_DECLARACAO` real | `'nd'` | `'nm'` | Sem `bc3` |
+|---|---|---|---|---|---|---|
+| geraldo_2020_2024 | ET | 19.181 | 14.892 (77,6%) | 386 | 890 | 3.013 |
+| geraldo_2020_2024 | EP | 252 | 4 (1,6%) | 237 | 0 | 11 |
+| PB2 | ET | 4.514 | 1.673 (37,1%) | 2.841 | 0 | 0 |
+| PB2 | EP | 50 | 0 (0%) | 3 | 0 | 47 |
+| cometa | ET | 9.542 | 8.293 (86,9%) | 1.249 | 0 | 0 |
+| cometa | EP | 1.260 | 19 (1,5%) | 27 | 0 | 1.214 |
+
+A fatia EP confirma a expectativa: cobertura residual (0-1,6%) nas 3
+operações — os poucos casos com código "real" em EP (4 no geraldo, 19 no
+cometa) são coincidência de `ID_UNICO`, não match genuíno pretendido pela
+`bc3`, e não foram investigados a fundo.
+
+**Dentro de ET**, a cobertura varia bastante entre operações: cometa 86,9%,
+geraldo 77,6%, PB2 apenas 37,1% — quase dois terços dos itens ET de PB2
+caem em `'nd'`. Ao contrário do que uma leitura só do total combinado
+sugeria, essa taxa baixa de PB2 **não é explicada pela fatia EP** (que é
+pequena, só 50 itens/1,1% do total de PB2) — é um gap real dentro do
+próprio universo ET, ainda não investigado (pode ser cobertura real da
+BC1/SPED dessa operação ou característica do negócio).
+
+Em `estoque_saidas` essas três colunas ficam sempre `NULL`/sentinela
+ausente — a `bc3` não cobre saídas de forma nenhuma (nem ET nem EP).
+
+> Nota: os totais de `xml_entradas_real` acima (ET+EP somados: 19.433 no
+> geraldo, consultados agora em 2026-07-14) já não batem com os
+> 16.420/4.564/10.802 da tabela "Resultado real" mais abaixo (validada em
+> 2026-07-12) — o `geraldo_2020_2024` cresceu. A base foi recarregada entre
+> as duas datas; a tabela de "Resultado real" está desatualizada e não foi
+> revalidada aqui (fora do escopo desta edição). Ver também a validação
+> contra a `TABELA ENTRADAS A SE EXPORTADA AO HUNTER` (gabarito externo, só
+> geraldo) na seção "Validação contra a TABELA ENTRADAS de referência" do
+> [Estágio 3](03_fluxos_fisicos.md).
 
 ## Limitação real conhecida — `dhSaiEnt` ausente da extração
 
@@ -91,9 +177,10 @@ itens `ND`/`NM` na `bc3`.
 
 ## Regra Operacional R07
 
-`DT_E_S`, `DT_FIN`, `DATA_ELEITA` e `ANO_ELEITO` sempre `dtype=str` — nunca
-inferência numérica (`ANO_ELEITO`, apesar de só conter dígitos, nunca vira
-`int`). Forçado explicitamente antes de persistir
+`DT_E_S`, `DT_FIN`, `DATA_ELEITA`, `ANO_ELEITO` e `COD_ITEM_DECLARACAO`
+sempre `dtype=str` — nunca inferência numérica (`ANO_ELEITO`, apesar de só
+conter dígitos, nunca vira `int`; `COD_ITEM_DECLARACAO` idem, desde
+2026-07-14). Forçado explicitamente antes de persistir
 (`loader._forcar_colunas_string()`).
 
 ## Estágio 4 concluído — cálculo de divergência fica pra uma etapa futura
@@ -105,8 +192,11 @@ negocio_pu_rn1_ei+c=v+ef_1.txt`, raiz do projeto) foi deliberadamente
 **redefinido pra fora** do Estágio 4/5: o [Estágio 5](05_tabela_estoque.md)
 só consolida o inventário já declarado (sem fórmula nenhuma); comparar esse
 inventário com `estoque_entradas`/`estoque_saidas` (agrupados por
-`ANO_ELEITO`) pra aplicar a RN1 e achar divergências fica pra uma etapa
-futura, ainda sem número definido.
+`ANO_ELEITO`) pra aplicar a RN1 e achar divergências é o Estágio 15 do
+[índice geral](../../ESTAGIOS_PROJETO.md) — `⏳ Planejado`, sem nenhuma
+função implementada ainda (confirmado por busca no código). Renumerado de
+6 para 15 em 2026-07-14 para abrir espaço, no 6, para o menu de navegação
+([Estágio 6 — VAMOS ORGANIZAR](06_menu_navegacao.md)).
 
 ## Ver também
 

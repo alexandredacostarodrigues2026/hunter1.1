@@ -89,7 +89,15 @@ Persistido nas 3 operações reais: geraldo 31.956 linhas, PB2 223, cometa
 ## Ver também
 
 - [Estágio 4 — Cronologia e Ano Eleito](04_cronologia_ano_eleito.md) —
-  `DATA_ELEITA`/`ANO_ELEITO`, a mesma chave de ano usada aqui.
+  `DATA_ELEITA`/`ANO_ELEITO`, a mesma chave de ano usada aqui; produz
+  `estoque_entradas`/`estoque_saidas`, que ainda é movimentação, não
+  estoque — o "estoque" de fato só passa a existir aqui, no Estágio 5.
+- [ESTAGIOS_PROJETO.md](../../ESTAGIOS_PROJETO.md) — Estágio 15 (⏳
+  Planejado): cálculo de divergência RN1, que compararia esta tabela com
+  `estoque_entradas`/`estoque_saidas` do Estágio 4. Renumerado de 6 para 15
+  em 2026-07-14 (Estágio 6 agora é o menu de navegação).
 - `regra de negócios unificadas/regra negocio_pu_rn1_ei+c=v+ef_1.txt` (raiz
-  do projeto) — fórmula RN1, ainda não aplicada (fica pra uma etapa futura
-  que cruzaria esta tabela com `estoque_entradas`/`estoque_saidas`).
+  do projeto) — fórmula RN1 em si (Estoque Inicial + Compras = Vendas +
+  Estoque Final), ainda não implementada em nenhuma função do código
+  (confirmado por busca — só existe o comentário registrando a decisão de
+  adiar, `loader.py:1973`).
