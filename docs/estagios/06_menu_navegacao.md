@@ -31,7 +31,10 @@ funções de `interface.py` conforme o valor:
   (se `dados_carregados`) só `render_bc3()` (Estágio 2). Posicionado logo
   após "Extração" a pedido do usuário — BC3 é o motor que "completa" as
   notas de entrada e viabiliza os estágios seguintes (Fluxos Físicos,
-  Cronologia).
+  Cronologia). `render_bc3()` traz, num `st.expander` no topo ("Chaves de
+  entrada de emissão de terceiros da declaração (base comparativa 1)"),
+  a BC1 (`render_entradas_terceiros()`) — subcomponente do Matching desde
+  2026-07-14, ver seção própria abaixo.
 - **`interface.render_pagina_segregados()`** (botão próprio desde
   2026-07-14) — botão de retorno + (se `dados_carregados`)
   `render_painel_analise()`: "CFOPs Não Autorizados" (com o botão "CFOPS
@@ -39,11 +42,10 @@ funções de `interface.py` conforme o valor:
   escolhidos pelo usuário em 2026-07-14 (ver seção "Nomes de exibição"
   abaixo).
 - **`interface.render_pagina_construcao()`** — botão de retorno + (se
-  `dados_carregados`) `render_entradas_terceiros()` (BC1),
-  `render_fluxos_fisicos()` (Estágio 3), `render_estoque_anual()`
-  (Estágio 5) e `render_auditoria_divergencia_entradas()`. Sem
-  `dados_carregados`, mostra só um aviso orientando a ir em "Extração"
-  primeiro.
+  `dados_carregados`) `render_fluxos_fisicos()` (Estágio 3),
+  `render_estoque_anual()` (Estágio 5) e
+  `render_auditoria_divergencia_entradas()`. Sem `dados_carregados`, mostra
+  só um aviso orientando a ir em "Extração" primeiro.
 - **`interface._botao_voltar_menu()`** — botão "⬅️ Voltar ao Menu
   Principal" no topo das 4 páginas; seta `pagina_ativa=None` e chama
   `st.rerun()`.
@@ -103,19 +105,35 @@ Físicos, Cronologia) dependem para fazer sentido, então mereceu destaque
 equivalente ao de "Extração" em vez de ficar agrupado com Fluxos
 Físicos/Estoque Anual/Auditoria.
 
-## Decisão de agrupamento — BC1/Auditoria em "Construção"
+## BC1 virou subcomponente do Matching, não painel independente (2026-07-14)
+
+Ainda no mesmo dia da promoção de "Matching (BC3)" a botão próprio, o
+usuário pediu mais um ajuste: `render_entradas_terceiros()` (BC1) saiu de
+`render_pagina_construcao()` e passou a viver **dentro de `render_bc3()`**,
+num `st.expander("Chaves de entrada de emissão de terceiros da declaração
+(base comparativa 1)")` no topo do painel de Matching, antes dos KPIs
+D1-D6/A1-A5. Implementado como uma chamada normal a
+`render_entradas_terceiros()` dentro do bloco `with st.expander(...):` —
+sem duplicar a lógica da função, só mudando onde ela é desenhada na tela.
+Motivo: BC1 é a base de comparação oficial que o Matching usa pra
+"completar" as notas de entrada — deixou de ser um painel independente e
+virou parte do fluxo de trabalho do Matching. Aproveitado para também
+aplicar `_preparar_preview()` (nomes amigáveis do Dicionário de Campos) na
+prévia em tela dessa tabela, que antes só traduzia colunas na exportação
+CSV, não no `st.dataframe` da tela.
+
+## Decisão de agrupamento — Auditoria em "Construção"
 
 A especificação original só detalhou o conteúdo de "Extração" (Período +
 Carga + Entidade Auditada) e citou "Painéis em Construção" como "Estágios 2
-ao 5 (Matching BC3, Fluxos Físicos, Estoque Anual, etc.)" — na época BC3
-ainda fazia parte desse grupo (ver seção acima para a promoção posterior).
-Dois painéis não foram explicitamente posicionados:
-`render_entradas_terceiros()` (geração da BC1/`sped_entradas_terceiros`) e
-`render_auditoria_divergencia_entradas()` (Excel × Hunter). Ambos ficaram
-em "Painéis em Construção" — são painéis de análise/conferência sobre o
-resultado do cruzamento, não dados desviados dele (diferente de
-"Segregados") — mas essa é uma interpretação, não uma instrução explícita;
-ajustar se o usuário quiser outro agrupamento.
+ao 5 (Matching BC3, Fluxos Físicos, Estoque Anual, etc.)" — na época BC3 e
+BC1 ainda faziam parte desse grupo (ver seções acima para as duas
+promoções posteriores). `render_auditoria_divergencia_entradas()`
+(Excel × Hunter) não foi explicitamente posicionado — ficou em "Painéis em
+Construção" (painel de análise/conferência sobre o resultado do
+cruzamento, não dado desviado dele, diferente de "Segregados") — mas essa
+é uma interpretação, não uma instrução explícita; ajustar se o usuário
+quiser outro agrupamento.
 
 ## Ver também
 

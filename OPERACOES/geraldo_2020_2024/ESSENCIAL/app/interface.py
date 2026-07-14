@@ -324,9 +324,8 @@ def render_entradas_terceiros() -> None:
     if st.session_state["entradas_terceiros_geradas"]:
         df_preview, total = loader.consultar_entradas_terceiros(limite=200)
         st.success(f"✅ {total:,} registro(s) em `sped_entradas_terceiros`.".replace(",", "."))
-        colunas = [c for c in _COLUNAS_PREVIEW_ENTRADAS_TERCEIROS if c in df_preview.columns]
         st.markdown(f"Prévia limitada a 200 linhas de {total:,}".replace(",", "."))
-        st.dataframe(df_preview[colunas], use_container_width=True)
+        st.dataframe(_preparar_preview(df_preview, _COLUNAS_PREVIEW_ENTRADAS_TERCEIROS), use_container_width=True)
 
         # Exportação sob demanda, à parte da prévia — só busca a tabela
         # inteira quando pedido, para não pesar em bases com milhões de
@@ -542,7 +541,16 @@ def render_bc3() -> None:
     via loader.consultar_nfe_entradas_bc3(), join por ID_UNICO), mostrando
     produto do fornecedor (XML) e produto da auditada (declaração) lado a
     lado; a exportação completa (CSV) continua servindo direto a tabela
-    `bc3`."""
+    `bc3`.
+
+    Desde 2026-07-14, a BC1 (`render_entradas_terceiros()`) vive dentro de
+    um `st.expander` no topo deste painel, em vez de ter seção própria em
+    render_pagina_construcao() — BC1 é a base de comparação oficial que o
+    Matching usa pra "completar" as notas de entrada, então passou a ser
+    subcomponente do processo de Matching, não algo independente."""
+    with st.expander("Chaves de entrada de emissão de terceiros da declaração (base comparativa 1)"):
+        render_entradas_terceiros()
+
     st.subheader("Matching (Etapa 1) — BC2 × BC1 = BC3")
     st.caption(
         "Cruza os itens de Emissão de Terceiros (BC2, XML) com a declaração (BC1, SPED) em duas "
@@ -947,10 +955,13 @@ def render_pagina_matching() -> None:
     """Painel 'Matching (BC3)' (Estágio 6), próprio desde 2026-07-14: mostra
     só render_bc3() (Estágio 2) — motor de 11 níveis (D1-D6/A1-A5) que casa
     o produto do fornecedor (XML) com o código interno da auditada (SPED).
-    Promovido a botão de primeiro nível (logo após "Extração") porque é o
-    que "completa" as notas de entrada e viabiliza os estágios seguintes
-    (Fluxos Físicos, Cronologia) — tratamento equivalente ao que
-    "Segregados" já tinha ganhado no mesmo dia. Exige dados_carregados."""
+    render_bc3() traz consigo, num st.expander no topo, a BC1 (Entradas de
+    Terceiros) — subcomponente do Matching desde 2026-07-14, não painel
+    independente. Promovido a botão de primeiro nível (logo após
+    "Extração") porque é o que "completa" as notas de entrada e viabiliza
+    os estágios seguintes (Fluxos Físicos, Cronologia) — tratamento
+    equivalente ao que "Segregados" já tinha ganhado no mesmo dia. Exige
+    dados_carregados."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
@@ -975,24 +986,24 @@ def render_pagina_segregados() -> None:
 
 def render_pagina_construcao() -> None:
     """Painel 'Painéis em Construção' (Estágio 6): agrupa as visualizações
-    dos Estágios 1 (complementos)/3/5 — BC1 (Entradas de Terceiros),
-    Fluxos Físicos (Estágio 3) e Tabela de Estoque (Estágio 5) — mais a
-    Auditoria de Divergência de Entradas. Matching (BC3, Estágio 2) saiu
-    daqui em 2026-07-14 (mesmo dia da promoção de "Segregados") — ver
-    render_pagina_matching(), ganhou botão de primeiro nível próprio. O
-    Estágio 4 (Cronologia/DATA_ELEITA) não tem painel próprio (ver
-    docs/estagios/04_cronologia_ano_eleito.md), por isso não aparece aqui.
-    Registros Segregados (CFOPs Não Autorizados/Notas Não Autorizadas)
-    saíram daqui em 2026-07-14 — ver render_pagina_segregados(), são dados que não
-    entram no cômputo do cruzamento. Exige dados_carregados — sem carga
-    feita, não há nada pra mostrar (orienta o usuário a ir em "EXTRAÇÃO"
-    primeiro)."""
+    dos Estágios 3/5 — Fluxos Físicos (Estágio 3) e Tabela de Estoque
+    (Estágio 5) — mais a Auditoria de Divergência de Entradas. Matching
+    (BC3, Estágio 2) saiu daqui em 2026-07-14 (mesmo dia da promoção de
+    "Segregados") — ver render_pagina_matching(), ganhou botão de
+    primeiro nível próprio. BC1 (Entradas de Terceiros) também saiu daqui
+    no mesmo dia — passou a viver dentro de um `st.expander` em
+    render_bc3() (subcomponente do Matching, não painel independente), ver
+    render_pagina_matching(). O Estágio 4 (Cronologia/DATA_ELEITA) não tem
+    painel próprio (ver docs/estagios/04_cronologia_ano_eleito.md), por
+    isso não aparece aqui. Registros Segregados (CFOPs Não Autorizados/
+    Notas Não Autorizadas) saíram daqui em 2026-07-14 — ver
+    render_pagina_segregados(), são dados que não entram no cômputo do
+    cruzamento. Exige dados_carregados — sem carga feita, não há nada pra
+    mostrar (orienta o usuário a ir em "EXTRAÇÃO" primeiro)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
-    render_entradas_terceiros()
-    st.divider()
     render_fluxos_fisicos()
     st.divider()
     render_estoque_anual()
