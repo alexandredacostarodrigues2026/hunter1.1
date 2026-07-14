@@ -548,7 +548,10 @@ def render_bc3() -> None:
     render_pagina_construcao() — BC1 é a base de comparação oficial que o
     Matching usa pra "completar" as notas de entrada, então passou a ser
     subcomponente do processo de Matching, não algo independente."""
-    with st.expander("Chaves de entrada de emissão de terceiros da declaração (base comparativa 1)"):
+    with st.expander(
+        "Chaves de entrada de emissão de terceiros da declaração (base comparativa 1)",
+        expanded=True,
+    ):
         render_entradas_terceiros()
 
     st.subheader("Matching (Etapa 1) — BC2 × BC1 = BC3")
