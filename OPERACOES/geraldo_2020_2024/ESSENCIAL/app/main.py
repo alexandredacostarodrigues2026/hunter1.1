@@ -1,10 +1,11 @@
 """Ponto de entrada Streamlit do Hunter 1.1.
 
 Despacha pro Menu Principal (Estágio 6 — VAMOS ORGANIZAR, ver
-docs/estagios/06_menu_navegacao.md) e os 4 grupos de painéis navegáveis
-(Extração, Matching (BC3), Segregados, Painéis em Construção). Arquivo
-idêntico entre operações — a operação ativa é resolvida em runtime por
-loader.nome_operacao() (pasta-pai de ESSENCIAL/, ou HUNTER_OPERACAO_DIR).
+docs/estagios/06_menu_navegacao.md) e os 5 grupos de painéis navegáveis
+(Extração, Matching (BC3), Segregados, Tabelas Entradas/Saídas/Estoques,
+Auditoria1). Arquivo idêntico entre operações — a operação ativa é
+resolvida em runtime por loader.nome_operacao() (pasta-pai de ESSENCIAL/,
+ou HUNTER_OPERACAO_DIR).
 """
 import sys
 from pathlib import Path
@@ -35,8 +36,8 @@ def main() -> None:
         st.session_state["dados_carregados"] = loader.dados_ja_carregados()
     if "pagina_ativa" not in st.session_state:
         # None = Menu Principal (Estágio 6); "extracao"/"matching"/
-        # "segregados"/"construcao" = os 4 grupos de painéis navegáveis,
-        # ver interface.render_menu_principal().
+        # "segregados"/"construcao"/"auditoria1" = os 5 grupos de painéis
+        # navegáveis, ver interface.render_menu_principal().
         st.session_state["pagina_ativa"] = None
 
     st.title("Hunter 1.1")
@@ -51,6 +52,8 @@ def main() -> None:
         interface.render_pagina_segregados()
     elif pagina == "construcao":
         interface.render_pagina_construcao()
+    elif pagina == "auditoria1":
+        interface.render_pagina_auditoria1()
     else:
         interface.render_menu_principal()
 

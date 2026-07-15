@@ -924,12 +924,20 @@ def render_auditoria_divergencia_entradas() -> None:
     cruzar código de item — ver loader.auditar_divergencia_entradas().
     Diagnóstico pontual pra explicar a origem de uma diferença de volume
     total entre um Excel de outra aplicação do usuário e `estoque_entradas`
-    (Estágio 4). Não aparece nada útil se a operação não tiver o Excel de
-    referência (`TABELA ENTRADAS*.xlsx` na pasta da operação) — normal pra
-    quem não é a geraldo."""
+    (Estágio 4). Mostra um aviso (não um erro) se a operação não tiver o
+    Excel de referência (`TABELA ENTRADAS*.xlsx` na pasta da operação) —
+    normal pra quem não é a geraldo. Único chamador: render_pagina_
+    auditoria1() (Estágio 6, botão "AUDITORIA1" — antes de 2026-07-15
+    ficava embutida, sem botão próprio, no fim de
+    render_pagina_construcao(), daí o retorno silencioso fazer sentido
+    ali; numa página dedicada, silêncio total pareceria página quebrada)."""
     resultado = loader.auditar_divergencia_entradas()
     if resultado["erros"]:
-        return  # sem Excel de referência nesta operação — painel não se aplica, fica invisível
+        st.info(
+            "Sem Excel de referência ('TABELA ENTRADAS*.xlsx') na pasta desta operação — "
+            "este estudo só se aplica a quem tiver esse arquivo (hoje, só a geraldo_2020_2024)."
+        )
+        return
 
     st.divider()
     st.subheader("Auditoria — Divergência de Entradas (Hunter × Excel)")
@@ -1011,13 +1019,22 @@ def render_auditoria_divergencia_entradas() -> None:
 # de antes, só o texto do botão mudou, pra descrever o conteúdo real do
 # painel — Fluxos Físicos = Entradas/Saídas, Estoque Anual = Estoques —
 # em vez do rótulo genérico "Painéis em Construção").
+# "AUDITORIA1: COMPARAÇÃO ENTRADAS-SAÍDAS-ESTOQUES" (2026-07-15) ganhou
+# botão de 5º nível, posicionado logo após "TABELAS ENTRADAS / SAÍDAS /
+# ESTOQUES" — ponto de acesso formal e nomeado pro que antes era
+# render_auditoria_divergencia_entradas() rodando sem botão próprio, no
+# fim de render_pagina_construcao(). A lógica em si (loader.auditar_
+# divergencia_entradas(): estoque_entradas × Excel de referência, por
+# CHV_NFE + contagem de itens, sem cruzar código de produto) já existia
+# desde 2026-07-13 e não mudou — só a navegação.
 
 def render_menu_principal() -> None:
-    """Menu principal (Estágio 6): 4 botões despacham para
+    """Menu principal (Estágio 6): 5 botões despacham para
     render_pagina_extracao()/render_pagina_matching()/
-    render_pagina_segregados()/render_pagina_construcao()."""
+    render_pagina_segregados()/render_pagina_construcao()/
+    render_pagina_auditoria1()."""
     st.subheader("Menu Principal")
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     if col1.button("📥 EXTRAÇÃO", key="btn_menu_extracao", use_container_width=True):
         st.session_state["pagina_ativa"] = "extracao"
         st.rerun()
@@ -1029,6 +1046,12 @@ def render_menu_principal() -> None:
         st.rerun()
     if col4.button("📊 TABELAS ENTRADAS / SAÍDAS / ESTOQUES", key="btn_menu_construcao", use_container_width=True):
         st.session_state["pagina_ativa"] = "construcao"
+        st.rerun()
+    if col5.button(
+        "📑 AUDITORIA1: COMPARAÇÃO ENTRADAS-SAÍDAS-ESTOQUES",
+        key="btn_menu_auditoria1", use_container_width=True,
+    ):
+        st.session_state["pagina_ativa"] = "auditoria1"
         st.rerun()
 
 
@@ -1099,17 +1122,19 @@ def render_pagina_construcao() -> None:
     Enriquecidas (Estágio 4, primeiro painel deste estágio na UI desde
     2026-07-14 — persiste estoque_entradas/estoque_saidas com os dados da
     bc3 + DATA_ELEITA/ANO_ELEITO) e Tabela de Estoque (Estágio 5,
-    Estoques) — mais a Auditoria de Divergência de Entradas. Matching
-    (BC3, Estágio 2) saiu daqui em 2026-07-14 (mesmo dia da promoção de
-    "Segregados") — ver render_pagina_matching(), ganhou botão de
-    primeiro nível próprio. BC1 (Entradas de Terceiros) também saiu daqui
-    no mesmo dia — passou a viver dentro de um `st.expander` em
-    render_bc3() (subcomponente do Matching, não painel independente), ver
-    render_pagina_matching(). Registros Segregados (CFOPs Não Autorizados/
-    Notas Não Autorizadas) saíram daqui em 2026-07-14 — ver
-    render_pagina_segregados(), são dados que não entram no cômputo do
-    cruzamento. Exige dados_carregados — sem carga feita, não há nada pra
-    mostrar (orienta o usuário a ir em "EXTRAÇÃO" primeiro)."""
+    Estoques). Matching (BC3, Estágio 2) saiu daqui em 2026-07-14 (mesmo
+    dia da promoção de "Segregados") — ver render_pagina_matching(),
+    ganhou botão de primeiro nível próprio. BC1 (Entradas de Terceiros)
+    também saiu daqui no mesmo dia — passou a viver dentro de um
+    `st.expander` em render_bc3() (subcomponente do Matching, não painel
+    independente), ver render_pagina_matching(). Registros Segregados
+    (CFOPs Não Autorizados/Notas Não Autorizadas) saíram daqui em
+    2026-07-14 — ver render_pagina_segregados(), são dados que não entram
+    no cômputo do cruzamento. Auditoria de Divergência de Entradas saiu
+    daqui em 2026-07-15 — ver render_pagina_auditoria1(), ganhou botão de
+    5º nível próprio ("AUDITORIA1"). Exige dados_carregados — sem carga
+    feita, não há nada pra mostrar (orienta o usuário a ir em "EXTRAÇÃO"
+    primeiro)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
@@ -1119,4 +1144,22 @@ def render_pagina_construcao() -> None:
     render_estoque_entradas_saidas()
     st.divider()
     render_estoque_anual()
+
+
+def render_pagina_auditoria1() -> None:
+    """Painel 'AUDITORIA1: COMPARAÇÃO ENTRADAS-SAÍDAS-ESTOQUES' (Estágio 6,
+    próprio desde 2026-07-15): ponto de acesso formal e nomeado pra
+    render_auditoria_divergencia_entradas() — antes rodava sem botão
+    próprio, no fim de render_pagina_construcao(). Não muda nenhuma lógica
+    de negócio: continua o mesmo estudo Hunter (estoque_entradas, Estágio
+    4) × Excel de referência ('TABELA ENTRADAS*.xlsx' na pasta da
+    operação), cruzando só por CHV_NFE + contagem de itens (nunca por
+    código de produto) — ver loader.auditar_divergencia_entradas(). Fica
+    invisível (só a mensagem de "carregue os dados") se a operação não
+    tiver o Excel de referência (normal pra quem não é a geraldo). Exige
+    dados_carregados."""
+    _botao_voltar_menu()
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        return
     render_auditoria_divergencia_entradas()

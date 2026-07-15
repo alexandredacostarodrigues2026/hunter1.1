@@ -13,15 +13,16 @@ sobre painéis que já existiam.
 ## Como funciona
 
 Controlado por `st.session_state["pagina_ativa"]` (`None` = Menu Principal;
-`"extracao"`; `"matching"`; `"segregados"`; `"construcao"`), inicializado
-em `main.py` no início de `main()`. `main.py` despacha para uma das
-funções de `interface.py` conforme o valor:
+`"extracao"`; `"matching"`; `"segregados"`; `"construcao"`;
+`"auditoria1"`), inicializado em `main.py` no início de `main()`. `main.py`
+despacha para uma das funções de `interface.py` conforme o valor:
 
-- **`interface.render_menu_principal()`** — 4 botões (`st.columns(4)`):
-  "📥 EXTRAÇÃO", "🧩 MATCHING (BC3)", "🔀 SEGREGADOS" e "📊 TABELAS
+- **`interface.render_menu_principal()`** — 5 botões (`st.columns(5)`):
+  "📥 EXTRAÇÃO", "🧩 MATCHING (BC3)", "🔀 SEGREGADOS", "📊 TABELAS
   ENTRADAS / SAÍDAS / ESTOQUES" (renomeado de "🚧 PAINÉIS EM CONSTRUÇÃO"
-  em 2026-07-14, ver seção própria abaixo). Cada um seta `pagina_ativa` e
-  chama `st.rerun()`.
+  em 2026-07-14, ver seção própria abaixo) e "📑 AUDITORIA1: COMPARAÇÃO
+  ENTRADAS-SAÍDAS-ESTOQUES" (2026-07-15, ver seção própria abaixo). Cada
+  um seta `pagina_ativa` e chama `st.rerun()`.
 - **`interface.render_pagina_extracao()`** — botão de retorno
   (`_botao_voltar_menu()`) + `render_configuracao_periodo()` +
   `render_carga_operacao()` (já inclui os alertas de cobertura do Período
@@ -49,11 +50,17 @@ funções de `interface.py` conforme o valor:
   retorno + (se `dados_carregados`) `render_fluxos_fisicos()` (Estágio 3,
   prévia sob demanda, não persiste), `render_estoque_entradas_saidas()`
   (Estágio 4 — **primeiro painel deste estágio na UI, 2026-07-14**, ver
-  seção própria abaixo), `render_estoque_anual()` (Estágio 5, Estoques) e
-  `render_auditoria_divergencia_entradas()`. Sem `dados_carregados`, mostra
-  só um aviso orientando a ir em "Extração" primeiro.
+  seção própria abaixo) e `render_estoque_anual()` (Estágio 5, Estoques).
+  Sem `dados_carregados`, mostra só um aviso orientando a ir em "Extração"
+  primeiro. `render_auditoria_divergencia_entradas()` saiu daqui em
+  2026-07-15 — ver `render_pagina_auditoria1()` logo abaixo.
+- **`interface.render_pagina_auditoria1()`** (botão "AUDITORIA1:
+  COMPARAÇÃO ENTRADAS-SAÍDAS-ESTOQUES", próprio desde 2026-07-15) — botão
+  de retorno + (se `dados_carregados`) `render_auditoria_divergencia_
+  entradas()` (Hunter `estoque_entradas` × Excel de referência). Ver seção
+  própria abaixo.
 - **`interface._botao_voltar_menu()`** — botão "⬅️ Voltar ao Menu
-  Principal" no topo das 4 páginas; seta `pagina_ativa=None` e chama
+  Principal" no topo das 5 páginas; seta `pagina_ativa=None` e chama
   `st.rerun()`.
 
 Nenhuma tabela do DuckDB é criada, apagada ou reprocessada por este
@@ -167,7 +174,7 @@ Físicos e Estoque Anual em `render_pagina_construcao()`:
   `xml_entradas_real`/`xml_saidas_real` (Estágio 3), confirmando que é
   uma enriquecida 1:1, sem perda nem duplicação de linha.
 
-## Decisão de agrupamento — Auditoria em "Construção"
+## Decisão de agrupamento — Auditoria em "Construção" (histórico, superado em 2026-07-15)
 
 A especificação original só detalhou o conteúdo de "Extração" (Período +
 Carga + Entidade Auditada) e citou "Painéis em Construção" como "Estágios 2
@@ -176,9 +183,39 @@ BC1 ainda faziam parte desse grupo (ver seções acima para as duas
 promoções posteriores). `render_auditoria_divergencia_entradas()`
 (Excel × Hunter) não foi explicitamente posicionado — ficou em "Painéis em
 Construção" (painel de análise/conferência sobre o resultado do
-cruzamento, não dado desviado dele, diferente de "Segregados") — mas essa
-é uma interpretação, não uma instrução explícita; ajustar se o usuário
-quiser outro agrupamento.
+cruzamento, não dado desviado dele, diferente de "Segregados") — era uma
+interpretação, não uma instrução explícita. Resolvido em 2026-07-15: ver
+"AUDITORIA1 ganhou botão próprio" abaixo.
+
+## AUDITORIA1 ganhou botão próprio (2026-07-15)
+
+Solicitação técnica formal pediu "um ponto de acesso formal e renomeado"
+pra este estudo — até então ele rodava sem botão próprio, escondido no fim
+de "TABELAS ENTRADAS / SAÍDAS / ESTOQUES" (ver seção anterior). A lógica
+de negócio em si já satisfazia integralmente o que a solicitação pedia —
+`loader.auditar_divergencia_entradas()` já usava `estoque_entradas`
+(Estágio 4) como base do Hunter (não tabela bruta de XML), já cruzava só
+por `CHV_NFE` + contagem de itens (nunca por código de produto), já lia o
+Excel de referência por glob (`TABELA ENTRADAS*.xlsx`) na pasta raiz da
+própria operação ativa (`_OPERACAO_DIR`, que pra geraldo já resolve
+exatamente pro caminho pedido na solicitação) e já mostrava os 5
+indicadores + botão "Investigar Chaves Divergentes" pedidos. A mudança
+real foi só de navegação:
+
+- Novo `interface.render_pagina_auditoria1()`: botão de retorno + (se
+  `dados_carregados`) `render_auditoria_divergencia_entradas()` — reusa a
+  função existente, sem duplicar lógica.
+- `render_auditoria_divergencia_entradas()` saiu do fim de
+  `render_pagina_construcao()`.
+- Novo 5º botão no Menu Principal, posicionado logo após "TABELAS
+  ENTRADAS / SAÍDAS / ESTOQUES": "📑 AUDITORIA1: COMPARAÇÃO
+  ENTRADAS-SAÍDAS-ESTOQUES".
+- **Ajuste de UX aproveitado na mesma mudança**: antes, sem Excel de
+  referência a função retornava silenciosamente (`return` sem nada
+  desenhado) — razoável quando embutida entre outros painéis numa página
+  cheia, mas resultaria numa página "AUDITORIA1" em branco (só o botão de
+  retorno) pra quem não é a geraldo. Trocado por um `st.info()` explicando
+  que o estudo só se aplica a operações com esse Excel.
 
 ## Ver também
 
