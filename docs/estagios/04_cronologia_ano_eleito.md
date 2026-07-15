@@ -63,11 +63,26 @@ futura (ver "Estágio 4 concluído" abaixo).
    `bc3` e `NULL` genuíno (item sem `bc3`/join sem correspondência) reprovam
    a validação de formato automaticamente — não é preciso checar
    `MATCH_TIPO` explicitamente para cair no fallback do XML.
+2b. **Data original** (`loader._aplicar_data_eleita()`, mesma função da
+   hierarquia — 2026-07-15): além de `DATA_ELEITA`/`ANO_ELEITO`, cria
+   `DATA_ORIGINAL`/`ANO_ORIGINAL` a partir de `dhEmi` (data de emissão do
+   XML, `fatonfe_infnfe_ide_dhemi`) — sempre o mesmo valor pros dois
+   cenários (ET e EP), sem passar pela hierarquia de prioridades acima. É
+   um campo de auditoria paralelo: permite ao auditor comparar a data de
+   emissão do fornecedor com a `DATA_ELEITA` (oficial, vinda do SPED
+   quando disponível) e medir a defasagem entre emissão e
+   escrituração/recebimento real — útil pra análise de corte (cut-off) no
+   fechamento de exercícios. Regra R07: string sempre, `""` quando `dhEmi`
+   ausente/inválido (nunca `NULL`). Exibido lado a lado com
+   `DATA_ELEITA`/`ANO_ELEITO` no painel (rótulos "Data Emissão (Original)"/
+   "Ano Original" vs. "Data Eleita (Hunter)"/"Ano Eleito", ver
+   `DICIONARIO DE CAMPOS.txt`).
 3. **Persistência** (`loader.persistir_estoque_entradas_saidas()`): grava
    `estoque_entradas`/`estoque_saidas` no DuckDB. Exige
    `xml_entradas_real`/`xml_saidas_real` já persistidas (Estágio 3); `bc3`
    é opcional (sem ela, `DT_E_S`/`DT_FIN` ficam `NULL` e a hierarquia cai
-   direto pro XML). Painel próprio desde 2026-07-14 —
+   direto pro XML — `DATA_ORIGINAL`/`ANO_ORIGINAL` não dependem da `bc3`,
+   só do XML, então não são afetados). Painel próprio desde 2026-07-14 —
    `interface.render_estoque_entradas_saidas()`, dentro de "TABELAS
    ENTRADAS / SAÍDAS / ESTOQUES" (ver [Estágio 6](06_menu_navegacao.md)):
    botão Gerar/Regerar + KPIs + toggle Entradas/Saídas com

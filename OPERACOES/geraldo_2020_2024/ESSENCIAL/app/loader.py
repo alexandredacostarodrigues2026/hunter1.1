@@ -1338,6 +1338,12 @@ def consultar_fluxo_real(direcao: str, limite: "int | None" = 200) -> "tuple[pd.
 # genuíno (LEFT JOIN sem correspondência) são tratados como ausentes —
 # cascade automático pras prioridades seguintes, sem checar MATCH_TIPO
 # explicitamente: o valor sentinela/NULL já reprova a validação de formato.
+# DATA_ORIGINAL/ANO_ORIGINAL: dado "cru" do XML (dhEmi), sempre o mesmo pros
+# dois cenários — não passa pela hierarquia acima, existe só pra auditoria
+# de conformidade (medir a defasagem entre emissão do fornecedor e
+# DATA_ELEITA/escrituração real). Confirmado com o usuário em 2026-07-15
+# que essa hierarquia (DATA_ELEITA priorizando SPED sobre XML pro ET) é a
+# regra final — ver docs/estagios/04_cronologia_ano_eleito.md.
 _COL_DHSAIENT_XML = "fatonfe_infnfe_ide_dhsaient"  # campo opcional do XML
 # (dhSaiEnt); não populado neste pipeline de extração até a data desta
 # implementação (2026-07-12) — ausente da tabela, cascade automático pra
@@ -1424,7 +1430,12 @@ def _aplicar_data_eleita(df: pd.DataFrame) -> pd.DataFrame:
     DT_FIN, dhSaiEnt/dhEmi já presentes — ver montar_estoque_entradas()/
     montar_estoque_saidas()): Cenário A (AUDITADA_PAPEL='DESTINATARIA', ET)
     usa _ORDEM_CENARIO_A_ET; Cenário B (AUDITADA_PAPEL='EMITENTE', EP) usa
-    _ORDEM_CENARIO_B_EP. Regra R07: DATA_ELEITA/ANO_ELEITO sempre string."""
+    _ORDEM_CENARIO_B_EP. Também cria DATA_ORIGINAL/ANO_ORIGINAL — dado "cru"
+    do XML (dhEmi), sempre igual pros dois cenários, nunca tocado pela
+    hierarquia acima (campo de auditoria paralelo, pra medir a defasagem
+    entre emissão do fornecedor e DATA_ELEITA). Regra R07: DATA_ELEITA/
+    ANO_ELEITO/DATA_ORIGINAL/ANO_ORIGINAL sempre string ("" quando dhEmi
+    ausente/inválido, nunca NULL)."""
     df = df.copy()
     papel = df["AUDITADA_PAPEL"] if "AUDITADA_PAPEL" in df.columns else pd.Series("", index=df.index)
     mask_cenario_a = papel == "DESTINATARIA"
@@ -1434,6 +1445,10 @@ def _aplicar_data_eleita(df: pd.DataFrame) -> pd.DataFrame:
 
     df["DATA_ELEITA"] = data_a.where(mask_cenario_a, data_b)
     df["ANO_ELEITO"]  = ano_a.where(mask_cenario_a, ano_b)
+
+    data_original, ano_original = _candidato_data_ano(df, _COL_DHEMI_XML)
+    df["DATA_ORIGINAL"] = data_original.fillna("").astype(str)
+    df["ANO_ORIGINAL"]  = ano_original.fillna("").astype(str)
     return df
 
 
@@ -1441,7 +1456,8 @@ def montar_estoque_entradas() -> pd.DataFrame:
     """Estágio 4: xml_entradas_real (Estágio 3) enriquecido com
     COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/FATOR_MULTIPLICADOR_SUGERIDO/
     DT_E_S/DT_FIN da bc3 (Estágio 2) + DATA_ELEITA/ANO_ELEITO (hierarquia da
-    Figura 1)."""
+    Figura 1) + DATA_ORIGINAL/ANO_ORIGINAL (dhEmi cru, paralelo à
+    hierarquia)."""
     return _aplicar_data_eleita(_enriquecer_fluxo_real_com_bc3("entradas"))
 
 
@@ -1449,10 +1465,14 @@ def montar_estoque_saidas() -> pd.DataFrame:
     """Estágio 4: xml_saidas_real (Estágio 3) enriquecido com
     COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/FATOR_MULTIPLICADOR_SUGERIDO/
     DT_E_S/DT_FIN da bc3 (Estágio 2) + DATA_ELEITA/ANO_ELEITO (hierarquia da
-    Figura 1). Na prática, a bc3 só cobre entradas de terceiros (BC2 x BC1),
-    então essas colunas ficam NULL em estoque_saidas — mesmo caso já
-    documentado para DT_E_S/DT_FIN (ver "Limitação real conhecida" em
-    docs/estagios/04_cronologia_ano_eleito.md)."""
+    Figura 1) + DATA_ORIGINAL/ANO_ORIGINAL (dhEmi cru, paralelo à
+    hierarquia). Na prática, a bc3 só cobre entradas de terceiros (BC2 x
+    BC1), então COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/
+    FATOR_MULTIPLICADOR_SUGERIDO/DT_E_S/DT_FIN ficam NULL em
+    estoque_saidas — mesmo caso já documentado para DT_E_S/DT_FIN (ver
+    "Limitação real conhecida" em docs/estagios/04_cronologia_ano_eleito.md).
+    DATA_ORIGINAL/ANO_ORIGINAL não dependem da bc3 (só do XML), então ficam
+    preenchidas normalmente também em estoque_saidas."""
     return _aplicar_data_eleita(_enriquecer_fluxo_real_com_bc3("saidas"))
 
 
@@ -1468,11 +1488,14 @@ def persistir_estoque_entradas_saidas(callback=None) -> dict:
     """Estágio 4: persiste estoque_entradas/estoque_saidas no DuckDB —
     xml_entradas_real/xml_saidas_real (Estágio 3) enriquecidos com
     COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/FATOR_MULTIPLICADOR_SUGERIDO/
-    DT_E_S/DT_FIN da bc3 (Estágio 2) e DATA_ELEITA/ANO_ELEITO (hierarquia da
-    Figura 1, ver _aplicar_data_eleita()). Exige xml_entradas_real/
-    xml_saidas_real já persistidas (persistir_nfe()) — bc3 é opcional (sem
-    ela, essas colunas ficam NULL e a hierarquia de datas cai direto pras
-    datas do XML). callback(etapa, n) chamado após cada tabela. Retorna
+    DT_E_S/DT_FIN da bc3 (Estágio 2), DATA_ELEITA/ANO_ELEITO (hierarquia da
+    Figura 1, ver _aplicar_data_eleita()) e DATA_ORIGINAL/ANO_ORIGINAL (dhEmi
+    cru do XML, paralelo à hierarquia — não sofre nenhuma lógica de
+    prioridade, sempre o mesmo valor pros dois cenários). Exige
+    xml_entradas_real/xml_saidas_real já persistidas (persistir_nfe()) — bc3
+    é opcional (sem ela, as colunas dela ficam NULL e a hierarquia de datas
+    cai direto pras datas do XML; DATA_ORIGINAL/ANO_ORIGINAL não dependem da
+    bc3). callback(etapa, n) chamado após cada tabela. Retorna
     {tabela: n_linhas}."""
     _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
     resultado = {}
@@ -1485,10 +1508,11 @@ def persistir_estoque_entradas_saidas(callback=None) -> dict:
         dados = {tabela: montar_fn() for tabela, montar_fn in _TABELAS_ESTOQUE.items()}
         with duckdb.connect(str(_BANCO_PATH)) as con:
             for tabela, df in dados.items():
-                # Regra Operacional R07: DATA_ELEITA/ANO_ELEITO nunca são
-                # NULL de verdade (sempre "" na pior hipótese, ver
-                # _aplicar_hierarquia_data()) — astype(str) cru é seguro
-                # pras duas. Já DT_E_S/DT_FIN/COD_ITEM_DECLARACAO/
+                # Regra Operacional R07: DATA_ELEITA/ANO_ELEITO/DATA_ORIGINAL/
+                # ANO_ORIGINAL nunca são NULL de verdade (sempre "" na pior
+                # hipótese, ver _aplicar_hierarquia_data()/_aplicar_data_eleita())
+                # — astype(str) cru é seguro pras quatro. Já DT_E_S/DT_FIN/
+                # COD_ITEM_DECLARACAO/
                 # DESCR_ITEM_DECLARACAO podem vir NULL genuíno do LEFT
                 # JOIN com a bc3 (item sem correspondência) — astype(str)
                 # cru transformaria esse NULL no literal "None" (achado
@@ -1497,7 +1521,9 @@ def persistir_estoque_entradas_saidas(callback=None) -> dict:
                 # COD_ITEM_DECLARACAO, distorcendo qualquer `WHERE ... IS
                 # NOT NULL` rio abaixo — mesmo tratamento já usado em
                 # consultar_fluxo_real()/consultar_nfe_entradas_bc3()).
-                df = _forcar_colunas_string(df, ["DATA_ELEITA", "ANO_ELEITO"])
+                df = _forcar_colunas_string(
+                    df, ["DATA_ELEITA", "ANO_ELEITO", "DATA_ORIGINAL", "ANO_ORIGINAL"]
+                )
                 for col in ("DT_E_S", "DT_FIN", "COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO"):
                     if col in df.columns:
                         df[col] = df[col].where(df[col].isna(), df[col].astype(str))
@@ -1554,7 +1580,7 @@ def consultar_estoque_entradas_saidas(direcao: str, limite: "int | None" = 200) 
     (direcao='saidas') já persistidas (Estágio 4 — sem reprocessar): mesmas
     colunas do XML + COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/
     FATOR_MULTIPLICADOR_SUGERIDO/DT_E_S/DT_FIN (bc3, Estágio 2) +
-    DATA_ELEITA/ANO_ELEITO (Estágio 4). Mesmo padrão de
+    DATA_ELEITA/ANO_ELEITO + DATA_ORIGINAL/ANO_ORIGINAL (Estágio 4). Mesmo padrão de
     consultar_fluxo_real(): devolve amostra (até 'limite' linhas) e total
     real; limite=None devolve a tabela inteira. direcao fora de
     {'entradas','saidas'} devolve vazio."""

@@ -86,3 +86,9 @@ fatoitemnfe_infnfe_det_imposto_icms_vicms;Valor do ICMS
 # Novos campos - 2026-07-14 (colunas sinteticas da bc3, Estagio 2 - Matching, incorporadas na previa de Entradas Reais)
 COD_ITEM_DECLARACAO;Cod. Auditada
 FATOR_MULTIPLICADOR_SUGERIDO;Fator Sugerido
+
+# Novos campos - 2026-07-15 (Estagio 4 - hierarquia de datas e data original do XML)
+DATA_ELEITA;Data Eleita (Hunter)
+ANO_ELEITO;Ano Eleito
+DATA_ORIGINAL;Data Emissao (Original)
+ANO_ORIGINAL;Ano Original
