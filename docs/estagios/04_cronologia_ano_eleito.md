@@ -77,6 +77,63 @@ futura (ver "Estágio 4 concluído" abaixo).
    desde 2026-07-12 mas nunca era chamada de lugar nenhum da interface —
    pendência registrada e fechada no mesmo dia da criação do Estágio 6.
 
+## Regra original de datas ET/EP e gap com a hierarquia implementada
+
+Origem: `regra de negócios unificadas/DIRETRIZES DA APLICAÇÃO.txt` (raiz do
+projeto), rotulada pelo próprio texto como "modelo antigo" — a
+especificação de negócio que motivou esta hierarquia, bem mais enxuta que
+a implementação:
+
+> ET: considera-se XML da nota (exceção: data nas declarações). Motivos
+> para desconsiderar ET declarados: diferença em VTN, VTP, quantidades dos
+> produtos; declaração extemporânea.
+>
+> EP: considera-se XML da nota (observar regramento das datas).
+
+Interpretação:
+
+- **ET (regra original)**: a data-base é a do XML da nota. A data
+  declarada (SPED) só deveria substituir a do XML quando há um motivo
+  específico de desconfiança na declaração — divergência de VTN (valor
+  total da nota)/VTP (valor total dos produtos)/quantidades entre XML e
+  SPED, ou declaração feita fora do prazo (extemporânea). Ou seja, XML é a
+  regra, SPED é a exceção condicional.
+- **EP (regra original)**: idem — XML da nota é a base; "observar
+  regramento das datas" é vago no texto original, sem listar exceções
+  específicas (ao contrário do ET).
+
+**Gap com a hierarquia `DATA_ELEITA` de 4 níveis (tabela acima)**: para o
+Cenário A (ET), a implementação atual inverte a prioridade do modelo
+antigo — usa `DT_E_S`/`DT_FIN` (SPED) como 1ª/2ª prioridade e só cai pro
+XML (`dhSaiEnt`/`dhEmi`) na 3ª/4ª, **incondicionalmente**: não existe no
+código nenhuma checagem de divergência VTN/VTP/quantidade nem de
+declaração extemporânea antes de aceitar a data do SPED. Ou seja, hoje SPED
+é a regra e XML é o fallback — o oposto de "considera-se XML da nota,
+exceção: data nas declarações".
+
+Para o Cenário B (EP), a implementação bate com o modelo antigo, mas por
+coincidência estrutural, não por ter sido desenhada para isso: como não
+existe BC1 de emissão própria (saídas) nesta base (ver "Limitação real
+conhecida" abaixo), `DT_E_S`/`DT_FIN` ficam sempre `NULL` para EP e a
+`DATA_ELEITA` cai sempre na 4ª prioridade (`dhEmi`, XML) — confirmado nos
+números reais: 100% das linhas de `estoque_saidas` usam a data do XML,
+coincidindo com "considera-se XML da nota".
+
+**Pendências não implementadas** (regra original, sem código
+correspondente ainda):
+
+- Verificação de divergência VTN/VTP/quantidade entre XML e SPED como
+  gatilho para descartar a data declarada em favor do XML (ET).
+- Checagem de "declaração extemporânea" (fora do prazo) como motivo de
+  exceção (ET).
+- "Regramento das datas" do EP não foi detalhado no texto original — sem
+  especificação suficiente para saber se falta algo além do que já está
+  implementado.
+
+Registrado aqui como pendência do Estágio 4 — nesta edição (2026-07-15) o
+escopo foi só documentar a regra original e o gap encontrado, sem alterar
+`loader._aplicar_data_eleita()`.
+
 ## Divergências de dados da bc3 — `COD_ITEM_DECLARACAO`/`FATOR_MULTIPLICADOR_SUGERIDO`
 
 **`bc3` é exclusivamente sobre emissão de terceiros (ET)** — resultado do
