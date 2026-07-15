@@ -1485,13 +1485,22 @@ def persistir_estoque_entradas_saidas(callback=None) -> dict:
         dados = {tabela: montar_fn() for tabela, montar_fn in _TABELAS_ESTOQUE.items()}
         with duckdb.connect(str(_BANCO_PATH)) as con:
             for tabela, df in dados.items():
-                # Regra Operacional R07: COD_ITEM_DECLARACAO também segue
-                # como string (mesmo tratamento de DT_E_S/DT_FIN/ANO_ELEITO)
-                # — evita inferência numérica do Pandas corromper códigos
-                # com zeros à esquerda.
-                df = _forcar_colunas_string(
-                    df, ["DT_E_S", "DT_FIN", "DATA_ELEITA", "ANO_ELEITO", "COD_ITEM_DECLARACAO"]
-                )
+                # Regra Operacional R07: DATA_ELEITA/ANO_ELEITO nunca são
+                # NULL de verdade (sempre "" na pior hipótese, ver
+                # _aplicar_hierarquia_data()) — astype(str) cru é seguro
+                # pras duas. Já DT_E_S/DT_FIN/COD_ITEM_DECLARACAO/
+                # DESCR_ITEM_DECLARACAO podem vir NULL genuíno do LEFT
+                # JOIN com a bc3 (item sem correspondência) — astype(str)
+                # cru transformaria esse NULL no literal "None" (achado
+                # real, 2026-07-14: PB2/cometa ficaram com ~99% dos itens
+                # de saída com o texto "None" em vez de NULL de verdade em
+                # COD_ITEM_DECLARACAO, distorcendo qualquer `WHERE ... IS
+                # NOT NULL` rio abaixo — mesmo tratamento já usado em
+                # consultar_fluxo_real()/consultar_nfe_entradas_bc3()).
+                df = _forcar_colunas_string(df, ["DATA_ELEITA", "ANO_ELEITO"])
+                for col in ("DT_E_S", "DT_FIN", "COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO"):
+                    if col in df.columns:
+                        df[col] = df[col].where(df[col].isna(), df[col].astype(str))
                 if not df.empty:
                     con.register("_df_tmp_estoque", df)
                     con.execute(f"CREATE OR REPLACE TABLE {tabela} AS SELECT * FROM _df_tmp_estoque")

@@ -185,11 +185,27 @@ itens `ND`/`NM` na `bc3`.
 
 ## Regra Operacional R07
 
-`DT_E_S`, `DT_FIN`, `DATA_ELEITA`, `ANO_ELEITO` e `COD_ITEM_DECLARACAO`
-sempre `dtype=str` — nunca inferência numérica (`ANO_ELEITO`, apesar de só
-conter dígitos, nunca vira `int`; `COD_ITEM_DECLARACAO` idem, desde
-2026-07-14). Forçado explicitamente antes de persistir
-(`loader._forcar_colunas_string()`).
+`DT_E_S`, `DT_FIN`, `DATA_ELEITA`, `ANO_ELEITO`, `COD_ITEM_DECLARACAO` e
+`DESCR_ITEM_DECLARACAO` sempre `dtype=str` — nunca inferência numérica
+(`ANO_ELEITO`, apesar de só conter dígitos, nunca vira `int`). Duas
+famílias de tratamento em `persistir_estoque_entradas_saidas()`:
+
+- `DATA_ELEITA`/`ANO_ELEITO` nunca são `NULL` de verdade (sempre `""` na
+  pior hipótese, ver `_aplicar_hierarquia_data()`) — forçadas com
+  `loader._forcar_colunas_string()` (`astype(str)` cru).
+- `DT_E_S`/`DT_FIN`/`COD_ITEM_DECLARACAO`/`DESCR_ITEM_DECLARACAO` podem
+  vir `NULL` genuíno do `LEFT JOIN` com a `bc3` (item sem correspondência)
+  — usam `.where(col.isna(), col.astype(str))`, preservando `NULL` como
+  `NULL` em vez de virar o literal `"None"`. **Bug real encontrado e
+  corrigido em 2026-07-14**: a versão anterior usava
+  `_forcar_colunas_string()` (cru) também para `COD_ITEM_DECLARACAO`, o
+  que transformava o `NULL` do `LEFT JOIN` no texto literal `"None"` —
+  em PB2 e cometa isso inflou artificialmente a contagem de itens "com
+  código real" em `estoque_saidas` (qualquer filtro `WHERE ... IS NOT
+  NULL` contava o texto `"None"` como valor presente). Depois do fix e
+  de regenerar as 3 operações reais, a cobertura de `COD_ITEM_DECLARACAO`
+  em `estoque_saidas` caiu para o valor estrutural esperado (residual,
+  perto de zero — ver tabela em "Divergências de dados da bc3" acima).
 
 ## Estágio 4 concluído — cálculo de divergência fica pra uma etapa futura
 
