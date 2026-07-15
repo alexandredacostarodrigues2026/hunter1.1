@@ -63,6 +63,19 @@ futura (ver "Estágio 4 concluído" abaixo).
    `bc3` e `NULL` genuíno (item sem `bc3`/join sem correspondência) reprovam
    a validação de formato automaticamente — não é preciso checar
    `MATCH_TIPO` explicitamente para cair no fallback do XML.
+2a. **Origem simplificada** (`loader._aplicar_hierarquia_data()`/
+   `_aplicar_data_eleita()` — 2026-07-15): junto com `DATA_ELEITA`/
+   `ANO_ELEITO`, a hierarquia também produz `DATA_ELEITA_ORIGEM` — um
+   rótulo simplificado da fonte que venceu, só dois valores possíveis:
+   `'declaração'` (quando veio de `DT_E_S` ou `DT_FIN`, SPED) ou `'xml'`
+   (quando veio de `dhSaiEnt` ou `dhEmi`, documento fiscal). Não existia
+   nenhuma coluna de origem antes desta implementação — não é uma
+   simplificação de rótulos antigos mais detalhados, é a primeira versão.
+   Serve pra filtro rápido do auditor ("Origem = declaração" vs. "Origem =
+   xml") e é a base pro futuro KPI de "Aderência à Escrituração" (% de
+   itens cuja `DATA_ELEITA` veio do SPED vs. do XML). Regra R07: string
+   sempre, `""` só no caso teórico de nenhuma das 4 fontes ter data válida
+   (mesmo caso em que `DATA_ELEITA`/`ANO_ELEITO` também ficam `""`).
 2b. **Data original** (`loader._aplicar_data_eleita()`, mesma função da
    hierarquia — 2026-07-15): além de `DATA_ELEITA`/`ANO_ELEITO`, cria
    `DATA_ORIGINAL`/`ANO_ORIGINAL` a partir de `dhEmi` (data de emissão do
@@ -242,16 +255,27 @@ Em `estoque_entradas` (geraldo): 14.896 itens usaram `DT_E_S` diretamente
 (1ª prioridade), os demais caíram pro fallback do XML (`dhEmi`) — sobretudo
 itens `ND`/`NM` na `bc3`.
 
+**`DATA_ELEITA_ORIGEM` (validado no geraldo, 2026-07-15, após regenerar
+com a base atual de 19.433/92.441 — números maiores que a tabela acima,
+ver nota logo abaixo dela)**: `estoque_entradas` — 14.896 `'declaração'` /
+4.537 `'xml'`; `estoque_saidas` — 157 `'declaração'` / 92.284 `'xml'`
+(os 157 batem com o residual de `COD_ITEM_DECLARACAO` real em
+`estoque_saidas` documentado acima, mesma coincidência de `ID_UNICO` via
+`bc3`). Confirma visualmente a "Limitação real conhecida" abaixo: em
+`estoque_saidas`, praticamente 100% cai em `'xml'`.
+
 ## Regra Operacional R07
 
-`DT_E_S`, `DT_FIN`, `DATA_ELEITA`, `ANO_ELEITO`, `COD_ITEM_DECLARACAO` e
+`DT_E_S`, `DT_FIN`, `DATA_ELEITA`, `ANO_ELEITO`, `DATA_ELEITA_ORIGEM`,
+`DATA_ORIGINAL`, `ANO_ORIGINAL`, `COD_ITEM_DECLARACAO` e
 `DESCR_ITEM_DECLARACAO` sempre `dtype=str` — nunca inferência numérica
-(`ANO_ELEITO`, apesar de só conter dígitos, nunca vira `int`). Duas
-famílias de tratamento em `persistir_estoque_entradas_saidas()`:
+(`ANO_ELEITO`/`ANO_ORIGINAL`, apesar de só conterem dígitos, nunca viram
+`int`). Duas famílias de tratamento em `persistir_estoque_entradas_saidas()`:
 
-- `DATA_ELEITA`/`ANO_ELEITO` nunca são `NULL` de verdade (sempre `""` na
-  pior hipótese, ver `_aplicar_hierarquia_data()`) — forçadas com
-  `loader._forcar_colunas_string()` (`astype(str)` cru).
+- `DATA_ELEITA`/`ANO_ELEITO`/`DATA_ELEITA_ORIGEM`/`DATA_ORIGINAL`/
+  `ANO_ORIGINAL` nunca são `NULL` de verdade (sempre `""` na pior
+  hipótese, ver `_aplicar_hierarquia_data()`/`_aplicar_data_eleita()`) —
+  forçadas com `loader._forcar_colunas_string()` (`astype(str)` cru).
 - `DT_E_S`/`DT_FIN`/`COD_ITEM_DECLARACAO`/`DESCR_ITEM_DECLARACAO` podem
   vir `NULL` genuíno do `LEFT JOIN` com a `bc3` (item sem correspondência)
   — usam `.where(col.isna(), col.astype(str))`, preservando `NULL` como

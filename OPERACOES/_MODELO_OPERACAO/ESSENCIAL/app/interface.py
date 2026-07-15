@@ -765,7 +765,8 @@ _COLUNAS_PREVIEW_ESTOQUE_ENTRADAS_SAIDAS = [
     "fatoitemnfe_infnfe_det_nitem", "fatoitemnfe_infnfe_det_prod_xprod",
     "fatoitemnfe_infnfe_det_prod_vprod",
     "COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO", "FATOR_MULTIPLICADOR_SUGERIDO",
-    "DATA_ORIGINAL", "ANO_ORIGINAL", "DATA_ELEITA", "ANO_ELEITO", "ID_UNICO",
+    "DATA_ORIGINAL", "ANO_ORIGINAL", "DATA_ELEITA", "ANO_ELEITO", "DATA_ELEITA_ORIGEM",
+    "ID_UNICO",
 ]
 
 
@@ -776,9 +777,10 @@ def render_estoque_entradas_saidas() -> None:
     nenhum da interface). Persiste `estoque_entradas`/`estoque_saidas`:
     xml_entradas_real/xml_saidas_real (Estágio 3) enriquecidos com
     COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/FATOR_MULTIPLICADOR_SUGERIDO
-    da bc3 (Estágio 2), DATA_ELEITA/ANO_ELEITO (hierarquia de datas) e
-    DATA_ORIGINAL/ANO_ORIGINAL (dhEmi cru do XML, campo de auditoria
-    paralelo à hierarquia — 2026-07-15, ver
+    da bc3 (Estágio 2), DATA_ELEITA/ANO_ELEITO/DATA_ELEITA_ORIGEM
+    (hierarquia de datas + rótulo simplificado 'declaração'/'xml' da fonte
+    vencedora — 2026-07-15) e DATA_ORIGINAL/ANO_ORIGINAL (dhEmi cru do
+    XML, campo de auditoria paralelo à hierarquia — 2026-07-15, ver
     docs/estagios/04_cronologia_ano_eleito.md). Botão Gerar/Regerar (mesmo
     padrão de render_estoque_anual()) + toggle Entradas/Saídas (mesmo
     padrão de render_fluxos_fisicos()) — mas aqui o resultado fica
@@ -787,10 +789,11 @@ def render_estoque_entradas_saidas() -> None:
     st.caption(
         "Persiste xml_entradas_real/xml_saidas_real (Estágio 3) enriquecidos com o código "
         "interno da auditada e o fator de multiplicação sugerido (bc3, Estágio 2), mais a "
-        "data/ano oficial de cada item (DATA_ELEITA/ANO_ELEITO) e a data/ano de emissão "
-        "original do XML (DATA_ORIGINAL/ANO_ORIGINAL), para medir a defasagem entre emissão "
-        "e escrituração. Diferente da prévia do Estágio 3 (calculada a cada consulta), aqui "
-        "o resultado é gravado em estoque_entradas/estoque_saidas."
+        "data/ano oficial de cada item e a origem simplificada dela (DATA_ELEITA/ANO_ELEITO/"
+        "DATA_ELEITA_ORIGEM: 'declaração' ou 'xml') e a data/ano de emissão original do XML "
+        "(DATA_ORIGINAL/ANO_ORIGINAL), para medir a defasagem entre emissão e escrituração. "
+        "Diferente da prévia do Estágio 3 (calculada a cada consulta), aqui o resultado é "
+        "gravado em estoque_entradas/estoque_saidas."
     )
 
     if "estoque_entradas_saidas_gerado" not in st.session_state:

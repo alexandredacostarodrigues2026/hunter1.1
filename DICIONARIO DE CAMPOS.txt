@@ -92,3 +92,4 @@ DATA_ELEITA;Data Eleita (Hunter)
 ANO_ELEITO;Ano Eleito
 DATA_ORIGINAL;Data Emissao (Original)
 ANO_ORIGINAL;Ano Original
+DATA_ELEITA_ORIGEM;Origem da Data
