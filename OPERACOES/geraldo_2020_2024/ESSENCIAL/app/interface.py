@@ -930,7 +930,11 @@ def render_auditoria_divergencia_entradas() -> None:
     auditoria1() (Estágio 6, botão "AUDITORIA1" — antes de 2026-07-15
     ficava embutida, sem botão próprio, no fim de
     render_pagina_construcao(), daí o retorno silencioso fazer sentido
-    ali; numa página dedicada, silêncio total pareceria página quebrada)."""
+    ali; numa página dedicada, silêncio total pareceria página quebrada).
+    Seção "Detalhamento de Chaves Ausentes" (2026-07-15): dois botões que
+    revelam `resultado['residuo_hunter']`/`['residuo_csv']` — análise
+    bidirecional por PRESENÇA/AUSÊNCIA total da chave (complementar ao
+    "Investigar Chaves Divergentes" acima, que é por CONTAGEM)."""
     resultado = loader.auditar_divergencia_entradas()
     if resultado["erros"]:
         st.info(
@@ -994,6 +998,53 @@ def render_auditoria_divergencia_entradas() -> None:
                 st.markdown("**Divergência não identificada, por ano da CHV_NFE:**")
                 st.dataframe(por_ano.rename("Itens").to_frame(), use_container_width=True)
             st.dataframe(df_div[_COLUNAS_PREVIEW_DIVERGENCIA], use_container_width=True)
+
+    st.divider()
+    st.markdown("**Detalhamento de Chaves Ausentes**")
+    st.caption(
+        "Visão bidirecional por chave (diferente de 'Investigar Chaves Divergentes' acima, "
+        "que reconcilia por CONTAGEM dentro de cada chave presente no Excel): aqui é presença/ "
+        "ausência TOTAL da chave num lado ou no outro."
+    )
+
+    residuo_hunter = resultado["residuo_hunter"]
+    residuo_csv = resultado["residuo_csv"]
+    n_chaves_hunter = residuo_hunter["CHV_NFE"].nunique() if not residuo_hunter.empty else 0
+    n_chaves_csv = residuo_csv["CHV_NFE"].nunique() if not residuo_csv.empty else 0
+
+    if "mostrar_residuo_hunter" not in st.session_state:
+        st.session_state["mostrar_residuo_hunter"] = False
+    if "mostrar_residuo_csv" not in st.session_state:
+        st.session_state["mostrar_residuo_csv"] = False
+
+    col_res1, col_res2 = st.columns(2)
+    if col_res1.button(
+        f"🔍 Chaves do Hunter ausentes no CSV ({n_chaves_hunter:,} chave(s) única(s))".replace(",", "."),
+        key="btn_residuo_hunter",
+    ):
+        st.session_state["mostrar_residuo_hunter"] = True
+    if col_res2.button(
+        f"📂 Chaves do CSV ausentes no Hunter ({n_chaves_csv:,} chave(s) única(s))".replace(",", "."),
+        key="btn_residuo_csv",
+    ):
+        st.session_state["mostrar_residuo_csv"] = True
+
+    if st.session_state["mostrar_residuo_hunter"]:
+        st.markdown("**Resíduo Hunter** — no XML, mas ausente de todas as linhas do Excel:")
+        if residuo_hunter.empty:
+            st.info("Nenhuma chave do Hunter ausente no Excel.")
+        else:
+            st.dataframe(residuo_hunter, use_container_width=True)
+
+    if st.session_state["mostrar_residuo_csv"]:
+        st.markdown(
+            "**Resíduo CSV** — no Excel, mas ausente de Entradas/Saídas/Situação/Análise do Hunter "
+            "(candidatas a XML nunca extraído de `1-DOCFISCAIS/nf/`):"
+        )
+        if residuo_csv.empty:
+            st.info("Nenhuma chave do Excel totalmente ausente do Hunter.")
+        else:
+            st.dataframe(residuo_csv, use_container_width=True)
 
 
 # ── Estágio 6 — VAMOS ORGANIZAR (Menu de Navegação) ─────────────────────────

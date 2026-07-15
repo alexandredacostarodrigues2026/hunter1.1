@@ -217,6 +217,45 @@ real foi só de navegação:
   retorno) pra quem não é a geraldo. Trocado por um `st.info()` explicando
   que o estudo só se aplica a operações com esse Excel.
 
+## Análise bidirecional de chaves — "Resíduo Hunter"/"Resíduo CSV" (2026-07-15, mesmo dia)
+
+Solicitação técnica seguinte pediu pra isolar, dentro da página AUDITORIA1,
+as chaves que existem só de um lado ou só do outro — diferente de
+"Investigar Chaves Divergentes" (que reconcilia por CONTAGEM de itens
+dentro de cada chave já presente no Excel), esta é uma checagem de
+presença/ausência TOTAL da `CHV_NFE`:
+
+- **`loader.auditar_divergencia_entradas()`** ganhou duas chaves novas no
+  dict de retorno: `residuo_hunter` (linhas de `estoque_entradas` cuja
+  `CHV_NFE` não aparece em nenhuma linha do Excel — `set(hunter_entradas.
+  index) - set(excel_por_chave.index)`) e `residuo_csv` (linhas do Excel
+  cuja `CHV_NFE` não aparece em NENHUMA das 4 fontes do Hunter —
+  `estoque_entradas`, `xml_saidas_real`, `nfe_situacao_et/ep`,
+  `nfe_analise_et/ep`). Novo helper `_detalhar_chaves_hunter_ausentes_no_
+  excel()` monta o detalhe (`CHV_NFE`, `DATA_ELEITA`, `VL_ITEM`,
+  `EMITENTE`) via `INNER JOIN` no DuckDB contra as chaves residuais
+  (registradas como view temporária) — mesmo padrão de outras junções do
+  módulo, evita passar milhares de chaves numa cláusula `IN` do SQL.
+- **Validação cruzada**: `len(residuo_hunter)` bate exatamente com o
+  `resumo['itens_hunter_ausentes_no_excel']` que já existia (15 itens/8
+  chaves únicas na base real do geraldo) — confirma que o novo cálculo é
+  consistente com o que já era reportado só como total agregado.
+- **`residuo_csv` usa colunas específicas do layout do Excel da geraldo**
+  (`DataFinal`→`DATA`, `Sum(Valor_total_prod)`→`VALOR`) — checadas com
+  `if c in df_excel.columns` antes de selecionar, pra não quebrar se outra
+  operação vier a ter um Excel de referência com layout diferente no
+  futuro.
+- **Interface**: nova seção "Detalhamento de Chaves Ausentes" dentro de
+  `render_auditoria_divergencia_entradas()`, com dois botões — "🔍 Chaves
+  do Hunter ausentes no CSV (N chave(s) única(s))" e "📂 Chaves do CSV
+  ausentes no Hunter (N chave(s) única(s))" — cada um revela o
+  `st.dataframe()` correspondente (mesmo padrão de toggle via
+  `session_state` do "Investigar Chaves Divergentes").
+- Validado ao vivo (Playwright): na base real do geraldo, "Resíduo Hunter"
+  mostra 8 chaves únicas (15 itens) com as 4 colunas pedidas; "Resíduo
+  CSV" mostra 0 chaves (consistente — a divergência não identificada
+  total também é 0 nesta base agora).
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —

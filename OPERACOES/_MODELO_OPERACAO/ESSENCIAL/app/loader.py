@@ -2346,6 +2346,40 @@ def _chaves_autoemissao_duplicada() -> set:
     return set(contagem_pastas[contagem_pastas > 1].index)
 
 
+def _detalhar_chaves_hunter_ausentes_no_excel(chaves: set) -> pd.DataFrame:
+    """Detalha (CHV_NFE, DATA_ELEITA, VL_ITEM, EMITENTE) das linhas de
+    `estoque_entradas` cuja CHV_NFE está em 'chaves' — usado só pro
+    'Resíduo Hunter' de auditar_divergencia_entradas() (chaves que o Hunter
+    tem e o Excel de referência não cita em nenhuma linha). Uma linha por
+    item (não por nota) — uma mesma CHV_NFE pode aparecer várias vezes se a
+    nota tiver mais de um item; a contagem de chaves ÚNICAS é
+    responsabilidade de quem consome o retorno (ex.: nunique() na UI).
+    Regra R07: CHV_NFE sempre string. Vazio se não houver chaves ou o banco/
+    tabela não existir (não é erro)."""
+    colunas = ["CHV_NFE", "DATA_ELEITA", "VL_ITEM", "EMITENTE"]
+    if not chaves or not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas)
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estoque_entradas" not in tabelas:
+                return pd.DataFrame(columns=colunas)
+            con.register("_chaves_so_hunter", pd.DataFrame({"CHV_NFE": list(chaves)}))
+            df = con.execute(
+                "SELECT e.fatonfe_infprot_chnfe AS CHV_NFE, e.DATA_ELEITA, "
+                "e.fatoitemnfe_infnfe_det_prod_vprod AS VL_ITEM, "
+                "e.fatonfe_infnfe_emit_xnome AS EMITENTE "
+                "FROM estoque_entradas e "
+                "INNER JOIN _chaves_so_hunter c ON e.fatonfe_infprot_chnfe = c.CHV_NFE"
+            ).df()
+            con.unregister("_chaves_so_hunter")
+        df["CHV_NFE"] = df["CHV_NFE"].astype(str)
+        return df
+    except Exception:
+        logger.exception("Erro ao detalhar chaves só no Hunter em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas)
+
+
 def auditar_divergencia_entradas() -> dict:
     """Estudo de diferenças Hunter × Excel de referência, SEM cruzar código
     de item — só `CHV_NFE` + contagem de itens por nota. Pra cada chave do
@@ -2361,13 +2395,33 @@ def auditar_divergencia_entradas() -> dict:
     identificada' — na prática, majoritariamente chaves cujo XML
     simplesmente não existe em `1-DOCFISCAIS/nf/` (nem ET nem EP), não uma
     diferença de classificação (ver `chaves_divergentes` pra investigar
-    caso a caso). Devolve `{'resumo': dict, 'chaves_divergentes':
-    DataFrame, 'erros': list}` — `erros` não-vazio quando não há Excel de
-    referência nesta operação (não é uma falha, só indica que o estudo não
-    se aplica)."""
+    caso a caso).
+
+    Análise bidirecional de chaves (2026-07-15, complementar a
+    `chaves_divergentes` — que reconcilia por CONTAGEM dentro de cada
+    chave presente no Excel; isto aqui é presença/ausência TOTAL da chave
+    num lado ou no outro):
+    - `residuo_hunter`: linhas de `estoque_entradas` cuja CHV_NFE não
+      aparece em nenhuma linha do Excel — "compras que a empresa recebeu
+      mas que não constam no relatório enviado pro Hunter conferir".
+    - `residuo_csv`: linhas do Excel cuja CHV_NFE não aparece em NENHUMA
+      das 4 fontes do Hunter (`estoque_entradas`, `xml_saidas_real`,
+      `nfe_situacao_et/ep`, `nfe_analise_et/ep`) — candidatas a "XML nunca
+      chegou em `1-DOCFISCAIS/nf/`", o subconjunto mais acionável de
+      `ITENS_NAO_IDENTIFICADOS` (que também inclui chaves parcialmente
+      presentes, só com contagem diferente).
+
+    Devolve `{'resumo': dict, 'chaves_divergentes': DataFrame,
+    'residuo_hunter': DataFrame, 'residuo_csv': DataFrame, 'erros': list}`
+    — `erros` não-vazio quando não há Excel de referência nesta operação
+    (não é uma falha, só indica que o estudo não se aplica)."""
     df_excel, meta_excel = carregar_excel_entradas_referencia()
     if df_excel.empty:
-        return {"resumo": {}, "chaves_divergentes": pd.DataFrame(), "erros": meta_excel.get("erros", [])}
+        return {
+            "resumo": {}, "chaves_divergentes": pd.DataFrame(),
+            "residuo_hunter": pd.DataFrame(), "residuo_csv": pd.DataFrame(),
+            "erros": meta_excel.get("erros", []),
+        }
 
     excel_por_chave = df_excel.groupby("CHV_NFE").size().rename("EXCEL_QTD_ITENS")
     hunter_entradas = _contagem_por_chave_nfe("estoque_entradas").rename("HUNTER_ENTRADAS_QTD")
@@ -2429,7 +2483,30 @@ def auditar_divergencia_entradas() -> dict:
     divergentes = divergentes.reset_index().sort_values("ITENS_NAO_IDENTIFICADOS", ascending=False)
     divergentes["CHV_NFE"] = divergentes["CHV_NFE"].astype(str)
 
-    return {"resumo": resumo, "chaves_divergentes": divergentes, "erros": []}
+    # Análise bidirecional de chaves (2026-07-15) — ver docstring.
+    chaves_excel = set(excel_por_chave.index)
+    chaves_hunter_qualquer = (
+        set(hunter_entradas.index) | set(hunter_saidas.index)
+        | set(hunter_situacao.index) | set(hunter_analise.index)
+    )
+    chaves_so_hunter = set(hunter_entradas.index) - chaves_excel
+    chaves_so_csv = chaves_excel - chaves_hunter_qualquer
+
+    residuo_hunter = _detalhar_chaves_hunter_ausentes_no_excel(chaves_so_hunter)
+    # 'DataFinal'/'Sum(Valor_total_prod)' são específicas do layout atual do
+    # Excel da geraldo — checadas em vez de assumidas, pra não quebrar se
+    # outra operação vier a usar este estudo com um Excel de layout diferente.
+    colunas_excel_extra = [c for c in ("DataFinal", "Sum(Valor_total_prod)") if c in df_excel.columns]
+    residuo_csv = df_excel[df_excel["CHV_NFE"].isin(chaves_so_csv)][["CHV_NFE", *colunas_excel_extra]].rename(
+        columns={"DataFinal": "DATA", "Sum(Valor_total_prod)": "VALOR"}
+    ).copy()
+    residuo_csv["CHV_NFE"] = residuo_csv["CHV_NFE"].astype(str)
+
+    return {
+        "resumo": resumo, "chaves_divergentes": divergentes,
+        "residuo_hunter": residuo_hunter, "residuo_csv": residuo_csv,
+        "erros": [],
+    }
 
 
 if __name__ == "__main__":
