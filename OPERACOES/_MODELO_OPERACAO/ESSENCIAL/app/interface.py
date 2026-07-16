@@ -376,9 +376,10 @@ def render_entradas_terceiros() -> None:
 
 
 _COLUNAS_PREVIEW_ANALISE = [
-    "PASTA_ORIGEM", "ARQUIVO_ORIGEM",
+    "PASTA_ORIGEM", "ARQUIVO_ORIGEM", "MOTIVO_SEGREGACAO",
     "fatonfe_infprot_chnfe", "fatoitemnfe_infnfe_det_nitem",
-    "fatoitemnfe_infnfe_det_prod_cfop", "fatoitemnfe_infnfe_det_prod_xprod",
+    "fatonfe_infnfe_ide_mod", "fatoitemnfe_infnfe_det_prod_cfop",
+    "fatoitemnfe_infnfe_det_prod_xprod",
     "fatoitemnfe_infnfe_det_prod_qcom", "fatoitemnfe_infnfe_det_prod_vuncom",
     "fatoitemnfe_infnfe_det_prod_vprod", "ID_UNICO",
 ]
@@ -461,10 +462,12 @@ def render_painel_analise() -> None:
       1. "CFOPs Não Autorizados" (rótulo de exibição; categoria interna
          'cfop', tabelas nfe_analise_et/nfe_analise_ep) — situação válida
          mas operação simbólica/de ajuste (entrega futura, venda à ordem,
-         baixa de estoque, lançamento ECF). Nome de exibição escolhido pelo
-         usuário em 2026-07-14; tecnicamente os CFOPs em si são válidos —
-         o que fica de fora do cruzamento é a NATUREZA simbólica/não física
-         da operação, não uma irregularidade do CFOP.
+         baixa de estoque, lançamento ECF) OU, exclusivo de ET, modelo 65
+         (NFC-e vedada em entrada — ver MOTIVO_SEGREGACAO na prévia). Nome
+         de exibição escolhido pelo usuário em 2026-07-14; tecnicamente os
+         CFOPs em si são válidos — o que fica de fora do cruzamento é a
+         NATUREZA simbólica/não física da operação (ou o modelo vedado),
+         não uma irregularidade do CFOP.
       2. "Notas Não Autorizadas" (rótulo de exibição; categoria interna
          'situacao', tabelas nfe_situacao_et/nfe_situacao_ep) — mistura
          canceladas, denegadas e inutilizadas (fatonfe_informix_stnfeletronica
@@ -473,7 +476,8 @@ def render_painel_analise() -> None:
     st.subheader("Painel de Monitoramento — Registros Segregados")
     st.caption(
         "Itens desviados do cruzamento principal (Etapa 1), preservados aqui para consulta: "
-        "CFOPs Não Autorizados (faturamento futuro, venda à ordem, baixa de estoque/ECF) e "
+        "CFOPs Não Autorizados (faturamento futuro, venda à ordem, baixa de estoque/ECF; "
+        "em ET também Modelo 65 Vedado em Entrada) e "
         "Notas Não Autorizadas (canceladas, denegadas, inutilizadas)."
     )
 

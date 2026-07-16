@@ -72,6 +72,13 @@ _CFOP_WATCHLIST_EP = {"5929", "6929"}   # Emissão Própria — lançamentos ECF
 # Nota: CFOP 5929 em registros de ET NÃO é segregado (segue para nfe_entradas/
 # nfe_saidas normalmente) — não está na watchlist global nem na de ET.
 
+# Modelo 65 (NFC-e) é vedado para registro de entrada pelo declarante (Guia
+# Prático da EFD) — item de ET com esse modelo é segregado independente de
+# situação/CFOP, mesmo critério de bloqueio dos demais grupos de análise
+# acima. Não se aplica a EP (NFC-e em saída/venda ao consumidor é normal).
+_COL_MODELO_NFE  = "fatonfe_infnfe_ide_mod"
+_MODELO_NFCE     = "65"   # Regra Operacional R07: modelo como string
+
 # Situação da NF-e (fatonfe_informix_stnfeletronica): só documentos válidos
 # (A=Autorizada, O=demais situações regulares) seguem para o fluxo principal
 # ou para a conferência de CFOP — canceladas (C), denegadas, inutilizadas
@@ -278,7 +285,8 @@ def _classificar_itens_nfe() -> dict:
          -> nfe_situacao_et / nfe_situacao_ep (pelo CNPJ nunca ir ao cruzamento
          físico nem à conferência de CFOP simbólico);
       2. dentre os de situação válida, CFOP na watchlist (faturamento futuro,
-         venda à ordem, baixa de estoque/ECF) -> nfe_analise_et / nfe_analise_ep;
+         venda à ordem, baixa de estoque/ECF) OU, exclusivo de ET, modelo 65
+         (NFC-e, vedado para entrada) -> nfe_analise_et / nfe_analise_ep;
       3. o restante (situação válida + CFOP fora da watchlist) -> entradas/
          saídas (fluxo principal de cruzamento), conforme o tpnf;
       4. desse mesmo restante, movimentação física real da auditada (não só
@@ -337,13 +345,29 @@ def _classificar_itens_nfe() -> dict:
     cfop     = combined[_COL_CFOP_NFE].astype(str).str.strip()
     pasta    = combined["PASTA_ORIGEM"]
 
+    modelo = combined[_COL_MODELO_NFE].astype(str).str.strip() if _COL_MODELO_NFE in combined.columns else pd.Series("", index=combined.index)
+
     mask_situacao_valida = situacao.isin(_SITUACOES_NFE_VALIDAS)
     mask_situacao_et = ~mask_situacao_valida & (pasta == "ET")
     mask_situacao_ep = ~mask_situacao_valida & (pasta == "EP")
 
-    mask_analise_et = mask_situacao_valida & (pasta == "ET") & cfop.isin(_CFOP_WATCHLIST_GLOBAL | _CFOP_WATCHLIST_ET)
-    mask_analise_ep = mask_situacao_valida & (pasta == "EP") & cfop.isin(_CFOP_WATCHLIST_GLOBAL | _CFOP_WATCHLIST_EP)
+    mask_cfop_et      = mask_situacao_valida & (pasta == "ET") & cfop.isin(_CFOP_WATCHLIST_GLOBAL | _CFOP_WATCHLIST_ET)
+    mask_cfop_ep      = mask_situacao_valida & (pasta == "EP") & cfop.isin(_CFOP_WATCHLIST_GLOBAL | _CFOP_WATCHLIST_EP)
+    mask_modelo65_et  = mask_situacao_valida & (pasta == "ET") & (modelo == _MODELO_NFCE)
+
+    mask_analise_et = mask_cfop_et | mask_modelo65_et
+    mask_analise_ep = mask_cfop_ep
     mask_principal  = mask_situacao_valida & ~(mask_analise_et | mask_analise_ep)
+
+    # Rótulo do motivo de segregação (só preenchido nas linhas de
+    # nfe_analise_et/ep) — alimenta a exibição no painel "SEGREGADOS"
+    # (interface._COLUNAS_PREVIEW_ANALISE), distinguindo os dois critérios
+    # de bloqueio sem precisar de uma nona tabela.
+    combined["MOTIVO_SEGREGACAO"] = np.select(
+        [mask_modelo65_et, mask_cfop_et | mask_cfop_ep],
+        ["Modelo 65 Vedado em Entrada", "CFOP Não Autorizado"],
+        default="",
+    )
 
     tpnf = combined["fatonfe_infnfe_ide_tpnf"].astype(str).str.strip()
 
@@ -447,8 +471,9 @@ def load_saidas() -> "tuple[pd.DataFrame, dict]":
 
 def load_analise_et() -> "tuple[pd.DataFrame, dict]":
     """Itens de Emissão de Terceiros segregados por CFOP de watchlist
-    (faturamento futuro/venda à ordem/baixa de estoque) — não entram no
-    cruzamento principal, mas ficam preservados para análise."""
+    (faturamento futuro/venda à ordem/baixa de estoque) ou por modelo 65
+    (NFC-e, vedado para entrada) — não entram no cruzamento principal, mas
+    ficam preservados para análise (ver MOTIVO_SEGREGACAO)."""
     r = _classificar_itens_nfe()
     return r["analise_et"], _meta_nfe(r["analise_et"], "ANALISE_ET", r["erros"], r["arquivos"])
 

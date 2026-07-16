@@ -93,3 +93,6 @@ ANO_ELEITO;Ano Eleito
 DATA_ORIGINAL;Data Emissao (Original)
 ANO_ORIGINAL;Ano Original
 DATA_ELEITA_ORIGEM;Origem da Data
+
+# Novos campos - 2026-07-16 (Estagio 1 - motivo de segregacao no painel SEGREGADOS)
+MOTIVO_SEGREGACAO;Motivo da Segregacao

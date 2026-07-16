@@ -66,6 +66,12 @@ ITEM (não por chave inteira) em 8 grupos, sem descartar nenhum registro:
    `_CFOP_WATCHLIST_EP={5929,6929}` (lançamento ECF) → `nfe_analise_et`/
    `nfe_analise_ep`. Nota: CFOP 5929 em registros de ET **não** é
    segregado — não está em nenhuma das duas watchlists aplicáveis a ET.
+   Também segregado para `nfe_analise_et` (exclusivo de ET, independente de
+   CFOP): **modelo 65/NFC-e** (`fatonfe_infnfe_ide_mod == "65"`,
+   `_MODELO_NFCE`, `loader.py:71-76`) — vedado para registro de entrada
+   pelo declarante (Guia Prático da EFD). Cada linha segregada ganha
+   `MOTIVO_SEGREGACAO` ("CFOP Não Autorizado" ou "Modelo 65 Vedado em
+   Entrada") para diferenciar o critério na prévia do painel.
 3. O restante (situação válida + CFOP fora da watchlist, `mask_principal`)
    → `nfe_entradas`/`nfe_saidas`, conforme `tpnf` isolado (0/1).
 4. Desse mesmo restante, a movimentação física **real** da auditada
@@ -201,7 +207,7 @@ completa sob demanda (`;`, `utf-8-sig`).
 ## Painel de Monitoramento — Registros Segregados
 
 **`interface.render_painel_analise()`** — mostra o que o Estágio 1 desviou
-do fluxo principal sem descartar: CFOP de watchlist
+do fluxo principal sem descartar: CFOP de watchlist ou modelo 65/NFC-e em ET
 (`nfe_analise_et`/`_ep`) e situação irregular (`nfe_situacao_et`/`_ep`).
 Botão "Gerar Dados para Análise de CFOPs" → `loader.gerar_dados_analise()`
 (persiste as 4 tabelas isoladamente). KPIs ET/EP + expander de prévia para
