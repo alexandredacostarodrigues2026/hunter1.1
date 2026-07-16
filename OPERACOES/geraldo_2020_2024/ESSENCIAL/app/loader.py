@@ -2284,13 +2284,17 @@ def consultar_estoque_anual_consolidado(limite: "int | None" = 200) -> "tuple[pd
 # 16.420 em estoque_entradas, operação geraldo — resíduo de 2.757).
 
 def _localizar_excel_entradas_referencia() -> "Path | None":
-    """Localiza o Excel de referência de entradas na raiz da operação (ex.:
-    'TABELA ENTRADAS A SE EXPORTADA AO HUNTER(<uuid>).xlsx') — nome com
-    sufixo aleatório, por isso busca por prefixo. Ignora arquivos
+    """Localiza o Excel de referência de entradas na raiz da operação — o
+    nome varia por operação, não só o sufixo (uuid aleatório): geraldo/PB
+    usam 'TABELA ENTRADAS A SE EXPORTADA AO HUNTER(<uuid>).xlsx', cometa
+    usa 'COMETA ENTRADAS.xlsx' (sem prefixo 'TABELA', sem uuid). Por isso a
+    busca é por qualquer '.xlsx' na raiz cujo nome contenha 'ENTRADAS'
+    (case-insensitive), não por um prefixo fixo. Ignora arquivos
     temporários do Excel (~$...). None se a operação não tiver esse arquivo
-    (normal — é um estudo pontual da geraldo, não um dado de todo estágio)."""
+    (normal — é um estudo pontual, não um dado obrigatório de todo estágio)."""
     candidatos = sorted(
-        p for p in _OPERACAO_DIR.glob("TABELA ENTRADAS*.xlsx") if not p.name.startswith("~$")
+        p for p in _OPERACAO_DIR.glob("*.xlsx")
+        if not p.name.startswith("~$") and "ENTRADAS" in p.stem.upper()
     )
     return candidatos[0] if candidatos else None
 
@@ -2304,7 +2308,7 @@ def carregar_excel_entradas_referencia() -> "tuple[pd.DataFrame, dict]":
     caminho = _localizar_excel_entradas_referencia()
     meta: dict = {"arquivo": str(caminho) if caminho else None, "erros": []}
     if caminho is None:
-        meta["erros"].append("Nenhum arquivo 'TABELA ENTRADAS*.xlsx' encontrado na pasta da operação.")
+        meta["erros"].append("Nenhum arquivo '*ENTRADAS*.xlsx' encontrado na pasta da operação.")
         return pd.DataFrame(), meta
     try:
         df = pd.read_excel(caminho, dtype=str)

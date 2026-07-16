@@ -929,8 +929,10 @@ def render_auditoria_divergencia_entradas() -> None:
     Diagnóstico pontual pra explicar a origem de uma diferença de volume
     total entre um Excel de outra aplicação do usuário e `estoque_entradas`
     (Estágio 4). Mostra um aviso (não um erro) se a operação não tiver o
-    Excel de referência (`TABELA ENTRADAS*.xlsx` na pasta da operação) —
-    normal pra quem não é a geraldo. Único chamador: render_pagina_
+    Excel de referência (qualquer `*ENTRADAS*.xlsx` na raiz da operação —
+    nome varia por operação, ver loader._localizar_excel_entradas_
+    referencia()) — normal pra quem ainda não recebeu esse arquivo. Único
+    chamador: render_pagina_
     auditoria1() (Estágio 6, botão "AUDITORIA1" — antes de 2026-07-15
     ficava embutida, sem botão próprio, no fim de
     render_pagina_construcao(), daí o retorno silencioso fazer sentido
@@ -942,15 +944,15 @@ def render_auditoria_divergencia_entradas() -> None:
     resultado = loader.auditar_divergencia_entradas()
     if resultado["erros"]:
         st.info(
-            "Sem Excel de referência ('TABELA ENTRADAS*.xlsx') na pasta desta operação — "
-            "este estudo só se aplica a quem tiver esse arquivo (hoje, só a geraldo_2020_2024)."
+            "Sem Excel de referência ('*ENTRADAS*.xlsx') na pasta desta operação — "
+            "este estudo só se aplica a quem tiver esse arquivo."
         )
         return
 
     st.divider()
     st.subheader("Auditoria — Divergência de Entradas (Hunter × Excel)")
     st.caption(
-        "Compara o Excel de referência ('TABELA ENTRADAS...xlsx' na pasta da operação) com "
+        "Compara o Excel de referência ('*ENTRADAS*.xlsx' na pasta da operação) com "
         "estoque_entradas por CHV_NFE + contagem de itens por nota — sem cruzar código de "
         "item. Reconcilia o resíduo checando xml_saidas_real (Estágio 3), nfe_situacao_et/ep "
         "(Notas Não Autorizadas) e nfe_analise_et/ep (CFOPs Não Autorizados), nessa ordem."
@@ -1207,7 +1209,7 @@ def render_pagina_auditoria1() -> None:
     render_auditoria_divergencia_entradas() — antes rodava sem botão
     próprio, no fim de render_pagina_construcao(). Não muda nenhuma lógica
     de negócio: continua o mesmo estudo Hunter (estoque_entradas, Estágio
-    4) × Excel de referência ('TABELA ENTRADAS*.xlsx' na pasta da
+    4) × Excel de referência ('*ENTRADAS*.xlsx' na pasta da
     operação), cruzando só por CHV_NFE + contagem de itens (nunca por
     código de produto) — ver loader.auditar_divergencia_entradas(). Fica
     invisível (só a mensagem de "carregue os dados") se a operação não
