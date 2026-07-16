@@ -29,6 +29,7 @@ as ligações devem ser feitas dentro da declaração
 	21 — Tipo 3.3 (aprendizado histórico: CNPJ + descrição exata do XML, sem exigir mesmo ano — fallback do Tipo 3.1)
 	22 — Tipo 3.4 (aprendizado histórico: só descrição exata do XML, sem exigir CNPJ nem ano — fallback do Tipo 3.3)
 	23 — modelo 65 (NFC-e) vedado em ET: item com fatonfe_infnfe_ide_mod=='65' na pasta ET é segregado para nfe_analise_et (MOTIVO_SEGREGACAO='Modelo 65 Vedado em Entrada'), independente de situação/CFOP; não compõe nfe_entradas, xml_entradas_real nem estoque_entradas (2026-07-16)
+	24 — CFOP 5927/6927 (baixa de estoque) passa a ser segregado também na pasta EP, não só ET: achado real na operação cometa (500 chaves de autoemissão, emit_cnpj==dest_cnpj, natop "LANÇAMENTO EFETUADO A TÍTULO DE BAIXA DE ESTOQUE...") inflando estoque_entradas como se fossem compras reais; watchlist de EP passou a ser {5927,6927,5929,6929} (2026-07-16)
 
 
 

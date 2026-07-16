@@ -63,9 +63,15 @@ ITEM (não por chave inteira) em 8 grupos, sem descartar nenhum registro:
    R07, `loader.py:66-73`): `_CFOP_WATCHLIST_GLOBAL` (1922/2922/5922/6922
    faturamento futuro; 1923/2923/5923/6923 venda à ordem, aplica a ET+EP),
    `_CFOP_WATCHLIST_ET={5927,6927}` (baixa de estoque),
-   `_CFOP_WATCHLIST_EP={5929,6929}` (lançamento ECF) → `nfe_analise_et`/
-   `nfe_analise_ep`. Nota: CFOP 5929 em registros de ET **não** é
-   segregado — não está em nenhuma das duas watchlists aplicáveis a ET.
+   `_CFOP_WATCHLIST_EP={5927,6927,5929,6929}` (baixa de estoque +
+   lançamento ECF) → `nfe_analise_et`/`nfe_analise_ep`. 5927/6927 entrou
+   na watchlist de EP em 2026-07-16 — achado real na operação cometa: 500
+   chaves de **autoemissão** (`emit_cnpj==dest_cnpj`) na pasta EP, CFOP
+   5927, natureza da operação "LANÇAMENTO EFETUADO A TÍTULO DE BAIXA DE
+   ESTOQUE...", inflando `estoque_entradas` como se fossem compras reais
+   (a autoemissão faz a auditada bater como `DESTINATARIA`, contando como
+   entrada física real). Nota: CFOP 5929/6929 em registros de ET **não**
+   é segregado — não está em nenhuma das duas watchlists aplicáveis a ET.
    Também segregado para `nfe_analise_et` (exclusivo de ET, independente de
    CFOP): **modelo 65/NFC-e** (`fatonfe_infnfe_ide_mod == "65"`,
    `_MODELO_NFCE`, `loader.py:71-76`) — vedado para registro de entrada
