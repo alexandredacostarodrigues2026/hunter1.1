@@ -68,17 +68,14 @@ _CFOP_WATCHLIST_GLOBAL = {  # aplicada a ET e EP
     "1923", "2923", "5923", "6923",   # Venda à Ordem
 }
 _CFOP_WATCHLIST_ET = {"5927", "6927"}   # Emissão de Terceiros — baixa de estoque
-_CFOP_WATCHLIST_EP = {
-    "5927", "6927",   # baixa de estoque — achado real 2026-07-16, operação
-    # cometa: 500 chaves de autoemissão (emit_cnpj==dest_cnpj) na pasta EP,
-    # natop "LANÇAMENTO EFETUADO A TÍTULO DE BAIXA DE ESTOQUE...", inflando
-    # estoque_entradas como se fossem compras reais — mesmo CFOP/natureza
-    # simbólica já tratada do lado ET, só que sem cobertura pro lado EP.
-    "5929", "6929",   # lançamentos ECF
-}
-# Nota: CFOP 5929/6929 em registros de ET NÃO é segregado (segue para
-# nfe_entradas/nfe_saidas normalmente) — não está na watchlist global nem na
-# de ET (só 5927/6927 é comum às duas pastas).
+_CFOP_WATCHLIST_EP = {"5929", "6929"}   # Emissão Própria — lançamentos ECF
+# Nota: CFOP 5929 em registros de ET NÃO é segregado (segue para nfe_entradas/
+# nfe_saidas normalmente) — não está na watchlist global nem na de ET. CFOP
+# 5927/6927 em registros de EP também NÃO é segregado (flui normalmente) —
+# 2026-07-16: uma tentativa de estender a watchlist de EP pra 5927/6927
+# (achado da operação cometa: autoemissão com esse CFOP inflando
+# estoque_entradas) foi revertida — confirmado pelo usuário que 5927/6927
+# roda normalmente em EP, a exclusão é exclusiva de ET.
 
 # Modelo 65 (NFC-e) é vedado para registro de entrada pelo declarante (Guia
 # Prático da EFD) — item de ET com esse modelo é segregado independente de
@@ -488,9 +485,8 @@ def load_analise_et() -> "tuple[pd.DataFrame, dict]":
 
 def load_analise_ep() -> "tuple[pd.DataFrame, dict]":
     """Itens de Emissão Própria segregados por CFOP de watchlist
-    (faturamento futuro/venda à ordem/baixa de estoque/lançamento ECF) —
-    não entram no cruzamento principal, mas ficam preservados para
-    análise."""
+    (faturamento futuro/venda à ordem/lançamento ECF) — não entram no
+    cruzamento principal, mas ficam preservados para análise."""
     r = _classificar_itens_nfe()
     return r["analise_ep"], _meta_nfe(r["analise_ep"], "ANALISE_EP", r["erros"], r["arquivos"])
 
