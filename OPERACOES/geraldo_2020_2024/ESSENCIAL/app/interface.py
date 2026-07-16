@@ -944,7 +944,7 @@ def render_auditoria_divergencia_entradas() -> None:
     resultado = loader.auditar_divergencia_entradas()
     if resultado["erros"]:
         st.info(
-            "Sem Excel de referência ('*ENTRADAS*.xlsx') na pasta desta operação — "
+            "Sem Excel de referência (`*ENTRADAS*.xlsx`) na pasta desta operação — "
             "este estudo só se aplica a quem tiver esse arquivo."
         )
         return
@@ -952,7 +952,7 @@ def render_auditoria_divergencia_entradas() -> None:
     st.divider()
     st.subheader("Auditoria — Divergência de Entradas (Hunter × Excel)")
     st.caption(
-        "Compara o Excel de referência ('*ENTRADAS*.xlsx' na pasta da operação) com "
+        "Compara o Excel de referência (`*ENTRADAS*.xlsx` na pasta da operação) com "
         "estoque_entradas por CHV_NFE + contagem de itens por nota — sem cruzar código de "
         "item. Reconcilia o resíduo checando xml_saidas_real (Estágio 3), nfe_situacao_et/ep "
         "(Notas Não Autorizadas) e nfe_analise_et/ep (CFOPs Não Autorizados), nessa ordem."
