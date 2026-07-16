@@ -931,8 +931,13 @@ def render_auditoria_divergencia_entradas() -> None:
     (Estágio 4). Mostra um aviso (não um erro) se a operação não tiver o
     Excel de referência (qualquer `*ENTRADAS*.xlsx` na raiz da operação —
     nome varia por operação, ver loader._localizar_excel_entradas_
-    referencia()) — normal pra quem ainda não recebeu esse arquivo. Único
-    chamador: render_pagina_
+    referencia()) — normal pra quem ainda não recebeu esse arquivo. Se o
+    arquivo EXISTE mas não pôde ser carregado (dependência ausente —
+    achado real 2026-07-16: `openpyxl` faltando no runtime portátil de
+    PB/cometa fazia `pd.read_excel()` lançar ImportError —, coluna
+    'CHAVE' ausente, arquivo corrompido etc.), mostra st.error() com o
+    motivo real em vez do mesmo aviso genérico — não misturar as duas
+    situações de novo. Único chamador: render_pagina_
     auditoria1() (Estágio 6, botão "AUDITORIA1" — antes de 2026-07-15
     ficava embutida, sem botão próprio, no fim de
     render_pagina_construcao(), daí o retorno silencioso fazer sentido
@@ -943,10 +948,16 @@ def render_auditoria_divergencia_entradas() -> None:
     "Investigar Chaves Divergentes" acima, que é por CONTAGEM)."""
     resultado = loader.auditar_divergencia_entradas()
     if resultado["erros"]:
-        st.info(
-            "Sem Excel de referência (`*ENTRADAS*.xlsx`) na pasta desta operação — "
-            "este estudo só se aplica a quem tiver esse arquivo."
-        )
+        if resultado["erros"] == [loader.MSG_SEM_EXCEL_ENTRADAS_REFERENCIA]:
+            st.info(
+                "Sem Excel de referência (`*ENTRADAS*.xlsx`) na pasta desta operação — "
+                "este estudo só se aplica a quem tiver esse arquivo."
+            )
+        else:
+            st.error(
+                "Excel de referência encontrado, mas não foi possível carregá-lo: "
+                + " | ".join(resultado["erros"])
+            )
         return
 
     st.divider()

@@ -2283,6 +2283,15 @@ def consultar_estoque_anual_consolidado(limite: "int | None" = 200) -> "tuple[pd
 # uma diferença de volume total (achado real: 19.177 itens no Excel x
 # 16.420 em estoque_entradas, operação geraldo — resíduo de 2.757).
 
+MSG_SEM_EXCEL_ENTRADAS_REFERENCIA = "Nenhum arquivo '*ENTRADAS*.xlsx' encontrado na pasta da operação."
+# Sentinela exportada pra interface.render_auditoria_divergencia_entradas()
+# distinguir "arquivo não existe" (normal, st.info) de qualquer outro erro
+# em resultado['erros'] (dependência ausente, coluna faltando, arquivo
+# corrompido — st.error com o motivo real). Achado real 2026-07-16: sem
+# essa distinção, um ImportError de 'openpyxl' ausente no runtime
+# portátil de PB/cometa aparecia como "sem Excel" — mascarando a causa.
+
+
 def _localizar_excel_entradas_referencia() -> "Path | None":
     """Localiza o Excel de referência de entradas na raiz da operação — o
     nome varia por operação, não só o sufixo (uuid aleatório): geraldo/PB
@@ -2308,7 +2317,7 @@ def carregar_excel_entradas_referencia() -> "tuple[pd.DataFrame, dict]":
     caminho = _localizar_excel_entradas_referencia()
     meta: dict = {"arquivo": str(caminho) if caminho else None, "erros": []}
     if caminho is None:
-        meta["erros"].append("Nenhum arquivo '*ENTRADAS*.xlsx' encontrado na pasta da operação.")
+        meta["erros"].append(MSG_SEM_EXCEL_ENTRADAS_REFERENCIA)
         return pd.DataFrame(), meta
     try:
         df = pd.read_excel(caminho, dtype=str)
