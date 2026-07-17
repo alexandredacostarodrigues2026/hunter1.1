@@ -1,0 +1,15 @@
+somente xml
+
+1-grupo entradas
+auditado destinatário: fatonfe_infnfe_ide_tpnf=1
+auditado emitente: fatonfe_infnfe_ide_tpnf=0
+
+2-grupo saídas
+auditado destinatário: fatonfe_infnfe_ide_tpnf=0
+auditado emitente: fatonfe_infnfe_ide_tpnf=1
+
+
+
+
+
+

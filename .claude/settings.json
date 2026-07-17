@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(../runtime/python.exe -c ' *)",
+      "Bash(python -c ' *)"
+    ]
+  }
+}

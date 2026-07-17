@@ -65,9 +65,18 @@ regra de negócios unificadas/**/*.xlsx
 
 # Excel de referência de outra aplicação do usuário, colado direto na pasta
 # da operação (ex.: "TABELA ENTRADAS A SE EXPORTADA AO HUNTER(<uuid>).xlsx",
-# "ESTOQUE(<uuid>).xlsx") — dado fiscal real do cliente (descrição de
-# produto, valores, CNPJ), usado só como insumo local pra estudos de
-# divergência (loader.auditar_divergencia_entradas()), não deve ser
-# versionado.
-OPERACOES/*/TABELA *.xlsx
-OPERACOES/*/ESTOQUE(*.xlsx
+# "ESTOQUE(<uuid>).xlsx", "COMETA EMPRESA.xlsx" — nome varia por
+# operação/distribuidora, ver loader._localizar_excel_entradas_referencia())
+# — dado fiscal real do cliente (descrição de produto, valores, CNPJ),
+# usado só como insumo local pra estudos de divergência
+# (loader.auditar_divergencia_entradas()), não deve ser versionado.
+# Padrão genérico (qualquer .xlsx solto na raiz da operação) em vez de
+# tentar prever cada convenção de nome por distribuidora — achado real
+# 2026-07-16: "COMETA EMPRESA.xlsx" não batia com nenhum dos 2 padrões
+# antigos (TABELA .../ESTOQUE(...) e quase foi commitado por engano.
+OPERACOES/*/*.xlsx
+
+# Exports de teste sob demanda (ver loader — bc3_matching.csv/
+# sped_entradas_terceiros.csv por operação) — contêm descrição de
+# produto/valores reais do cliente, mesma política acima.
+/testes_match_b3/

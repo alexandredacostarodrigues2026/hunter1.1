@@ -1,0 +1,30 @@
+SOLICITAÇÃO TÉCNICA: LAYOUT DE SELEÇÃO DE ANOS E PERSISTÊNCIA (ESTÁGIO 1)
+Diagnóstico
+O sistema necessita de uma trava inicial no Estágio 1 para definir o escopo temporal da auditoria. Essa definição é o gatilho para calcular quais pastas de anos devem obrigatoriamente conter arquivos XML e SPED para garantir a integridade dos cruzamentos de "virada de ano".
+Implementação
+Interface (interface.py): Criar a função render_configuracao_periodo(). Ela deve ser inserida no main.py imediatamente após a exibição do título da operação ativa.
+Componentes UI:
+Um multiselect ou dois seletores (Ano Inicial e Ano Final) abrangendo o ano atual e os 5 anteriores (total de 6 anos).
+Um botão "Confirmar Período" que, ao ser clicado, salva a escolha.
+Persistência (loader.py):
+Criar uma tabela config_auditoria no DuckDB com os campos ano_inicial e ano_final.
+Implementar funções para ler e gravar esses dados. Caso os dados existam, a interface deve mostrá-los como "Período Gravado" com opção de edição.
+Resumo Informativo: Exibir dinamicamente o resumo dos arquivos necessários:
+XML: [AnoInicial - 1] até [AnoFinal].
+Declarações: [AnoInicial] até [AnoFinal + 1].
+Prompt para Agente (IA)
+"Hunter 1.1: Implementar o layout de Seleção de Período e sua persistência no início da aplicação.
+Requisitos Técnicos:
+Interface: No arquivo interface.py, crie a seção de configuração logo após o título da operação. Utilize st.selectbox para o Ano Inicial e Ano Final, limitando a lista aos últimos 6 anos (2021-2026).
+Persistência: No loader.py, crie as funções salvar_periodo_auditoria(ano_ini, ano_fim) e obter_periodo_auditoria(). Os dados devem ser gravados em uma tabela chamada config_auditoria no DuckDB da operação.
+Lógica de Exibição:
+Se o período já estiver gravado, exiba: '📅 Período de Auditoria: [AnoInicial] a [AnoFinal]' com um botão pequeno para 'Alterar'.
+Caso contrário, exiba os seletores para definição inicial.
+Resumo de Arquivos: Abaixo da seleção, mostre um st.info com o resumo dos anos necessários nas pastas conforme as regras:
+Base XML: de AnoInicial - 1 até AnoFinal.
+Base Declarações: de AnoInicial até AnoFinal + 1.
+Regra R07: Salve os anos como string no banco de dados.
+Exibir apenas arquivos alterados."
+Impacto no Fluxo do Auditor
+Com esta implementação, o topo da tela passa a atuar como um painel de controle de escopo. A persistência no banco de dados assegura que, uma vez definida a estratégia da auditoria (ex: "vamos auditar 2023 e 2024"), o sistema mantenha essa premissa ativa para todas as funções de extração e matching subsequentes
+.

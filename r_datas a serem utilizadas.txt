@@ -1,0 +1,7 @@
+
+   | Prioridade | Cenário A — `DESTINATARIA` (ET) | Cenário B — `EMITENTE` (EP) |
+   |---|---|---|
+   | 1ª | `DT_E_S` (C100, BC1, via bc3) | `dhSaiEnt` (XML) |
+   | 2ª | `DT_FIN` (Registro 0000, BC1, via bc3) | `DT_E_S` (C100, BC1, via bc3) |
+   | 3ª | `dhSaiEnt` (XML) | `DT_FIN` (Registro 0000, BC1, via bc3) |
+   | 4ª | `dhEmi` (XML) | `dhEmi` (XML) |
