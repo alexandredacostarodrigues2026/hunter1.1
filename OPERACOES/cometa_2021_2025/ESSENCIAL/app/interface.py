@@ -1064,6 +1064,135 @@ def render_auditoria_divergencia_entradas() -> None:
             st.dataframe(residuo_csv, use_container_width=True)
 
 
+_COLUNAS_PREVIEW_DIVERGENCIA_SAIDAS = [
+    "CHV_NFE", "EXCEL_QTD_ITENS", "HUNTER_SAIDAS_QTD", "ITENS_SAIDAS_REAIS",
+    "ITENS_ENTRADAS_REAIS", "ITENS_SITUACAO", "ITENS_ANALISE_CFOP",
+    "ITENS_NAO_IDENTIFICADOS", "CASO_AUTOEMISSAO_DUPLICADA",
+]
+
+
+def render_auditoria_divergencia_saidas() -> None:
+    """Espelho de render_auditoria_divergencia_entradas() (2026-07-17) pro
+    lado saídas — ver loader.auditar_divergencia_saidas(). Mesma estrutura
+    (KPIs, "Investigar Chaves Divergentes", "Detalhamento de Chaves
+    Ausentes"), com HUNTER_SAIDAS_QTD como métrica principal em vez de
+    HUNTER_ENTRADAS_QTD e chaves de session_state/widget próprias
+    (sufixo `_saidas`) — sem isso, os botões desta seção e os de
+    render_auditoria_divergencia_entradas() colidiriam (mesmo
+    `key=` do Streamlit) e compartilhariam estado indevidamente."""
+    resultado = loader.auditar_divergencia_saidas()
+    if resultado["erros"]:
+        if resultado["erros"] == [loader.MSG_SEM_EXCEL_SAIDAS_REFERENCIA]:
+            st.info(
+                "Sem Excel de referência (`*SAIDAS*.xlsx`) na pasta desta operação — "
+                "este estudo só se aplica a quem tiver esse arquivo."
+            )
+        else:
+            st.error(
+                "Excel de referência encontrado, mas não foi possível carregá-lo: "
+                + " | ".join(resultado["erros"])
+            )
+        return
+
+    st.divider()
+    st.subheader("Auditoria — Divergência de Saídas (Hunter × Excel)")
+    st.caption(
+        "Compara o Excel de referência (`*SAIDAS*.xlsx` na pasta da operação) com "
+        "estoque_saidas por CHV_NFE + contagem de itens por nota — sem cruzar código de "
+        "item. Reconcilia o resíduo checando xml_entradas_real (Estágio 3), nfe_situacao_et/ep "
+        "(Notas Não Autorizadas) e nfe_analise_et/ep (CFOPs Não Autorizados), nessa ordem."
+    )
+
+    resumo = resultado["resumo"]
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Itens em Saídas Reais", f"{resumo['itens_saidas_reais']:,}".replace(",", "."))
+    col2.metric("Itens em Entradas Reais", f"{resumo['itens_entradas_reais']:,}".replace(",", "."))
+    col3.metric("Itens Cancelados/Situação", f"{resumo['itens_situacao']:,}".replace(",", "."))
+    col4.metric("Itens em Análise CFOP", f"{resumo['itens_analise_cfop']:,}".replace(",", "."))
+    col5.metric("Divergência não identificada", f"{resumo['itens_nao_identificados']:,}".replace(",", "."))
+
+    st.caption(
+        f"Total Excel: {resumo['total_excel']:,} · Total estoque_saidas: "
+        f"{resumo['total_hunter_saidas']:,} ({resumo['itens_hunter_ausentes_no_excel']:,} "
+        "item(ns) do Hunter sem chave correspondente no Excel — direção oposta). Da "
+        f"divergência não identificada, {resumo['chaves_autoemissao_na_divergencia']} chave(s) "
+        "fazem parte do caso conhecido de autoemissão duplicada entre ET/EP (2026-07-05)."
+        .replace(",", ".")
+    )
+
+    if "mostrar_chaves_divergentes_saidas" not in st.session_state:
+        st.session_state["mostrar_chaves_divergentes_saidas"] = False
+    if st.button("Investigar Chaves Divergentes", key="btn_investigar_chaves_divergentes_saidas"):
+        st.session_state["mostrar_chaves_divergentes_saidas"] = True
+
+    if st.session_state["mostrar_chaves_divergentes_saidas"]:
+        df_div = resultado["chaves_divergentes"]
+        st.markdown(
+            f"**{len(df_div):,} chave(s) com contagem diferente entre Excel e Hunter**"
+            .replace(",", ".")
+        )
+        if df_div.empty:
+            st.info("Nenhuma chave divergente encontrada.")
+        else:
+            nao_identificado = df_div[df_div["ITENS_NAO_IDENTIFICADOS"] > 0].copy()
+            if not nao_identificado.empty:
+                nao_identificado["ANO_NFE"] = "20" + nao_identificado["CHV_NFE"].str[2:4]
+                por_ano = (
+                    nao_identificado.groupby("ANO_NFE")["ITENS_NAO_IDENTIFICADOS"]
+                    .sum().sort_index()
+                )
+                st.markdown("**Divergência não identificada, por ano da CHV_NFE:**")
+                st.dataframe(por_ano.rename("Itens").to_frame(), use_container_width=True)
+            st.dataframe(df_div[_COLUNAS_PREVIEW_DIVERGENCIA_SAIDAS], use_container_width=True)
+
+    st.divider()
+    st.markdown("**Detalhamento de Chaves Ausentes**")
+    st.caption(
+        "Visão bidirecional por chave (diferente de 'Investigar Chaves Divergentes' acima, "
+        "que reconcilia por CONTAGEM dentro de cada chave presente no Excel): aqui é presença/ "
+        "ausência TOTAL da chave num lado ou no outro."
+    )
+
+    residuo_hunter = resultado["residuo_hunter"]
+    residuo_csv = resultado["residuo_csv"]
+    n_chaves_hunter = residuo_hunter["CHV_NFE"].nunique() if not residuo_hunter.empty else 0
+    n_chaves_csv = residuo_csv["CHV_NFE"].nunique() if not residuo_csv.empty else 0
+
+    if "mostrar_residuo_hunter_saidas" not in st.session_state:
+        st.session_state["mostrar_residuo_hunter_saidas"] = False
+    if "mostrar_residuo_csv_saidas" not in st.session_state:
+        st.session_state["mostrar_residuo_csv_saidas"] = False
+
+    col_res1, col_res2 = st.columns(2)
+    if col_res1.button(
+        f"🔍 Chaves do Hunter ausentes no CSV ({n_chaves_hunter:,} chave(s) única(s))".replace(",", "."),
+        key="btn_residuo_hunter_saidas",
+    ):
+        st.session_state["mostrar_residuo_hunter_saidas"] = True
+    if col_res2.button(
+        f"📂 Chaves do CSV ausentes no Hunter ({n_chaves_csv:,} chave(s) única(s))".replace(",", "."),
+        key="btn_residuo_csv_saidas",
+    ):
+        st.session_state["mostrar_residuo_csv_saidas"] = True
+
+    if st.session_state["mostrar_residuo_hunter_saidas"]:
+        st.markdown("**Resíduo Hunter** — no XML, mas ausente de todas as linhas do Excel:")
+        if residuo_hunter.empty:
+            st.info("Nenhuma chave do Hunter ausente no Excel.")
+        else:
+            st.dataframe(residuo_hunter, use_container_width=True)
+
+    if st.session_state["mostrar_residuo_csv_saidas"]:
+        st.markdown(
+            "**Resíduo CSV** — no Excel, mas ausente de Entradas/Saídas/Situação/Análise do Hunter "
+            "(candidatas a XML nunca extraído de `1-DOCFISCAIS/nf/`):"
+        )
+        if residuo_csv.empty:
+            st.info("Nenhuma chave do Excel totalmente ausente do Hunter.")
+        else:
+            st.dataframe(residuo_csv, use_container_width=True)
+
+
 # ── Estágio 6 — VAMOS ORGANIZAR (Menu de Navegação) ─────────────────────────
 # Reorganiza a tela única (todos os painéis empilhados) em 4 grupos
 # navegáveis, controlados por st.session_state["pagina_ativa"]
@@ -1225,9 +1354,16 @@ def render_pagina_auditoria1() -> None:
     código de produto) — ver loader.auditar_divergencia_entradas(). Fica
     invisível (só a mensagem de "carregue os dados") se a operação não
     tiver o Excel de referência (normal pra quem não é a geraldo). Exige
-    dados_carregados."""
+    dados_carregados.
+
+    2026-07-17: ganhou o espelho render_auditoria_divergencia_saidas()
+    logo abaixo — "estenda a auditoria para as saídas", pedido do usuário
+    depois de fechar a auditoria de entradas nas 3 operações reais. Cada
+    painel aparece (ou não) de forma independente, conforme a operação
+    tiver o respectivo Excel de referência (`*ENTRADAS*`/`*SAIDAS*.xlsx`)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     render_auditoria_divergencia_entradas()
+    render_auditoria_divergencia_saidas()

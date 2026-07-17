@@ -2311,6 +2311,18 @@ MSG_SEM_EXCEL_ENTRADAS_REFERENCIA = "Nenhum arquivo '*ENTRADAS*.xlsx' encontrado
 # essa distinção, um ImportError de 'openpyxl' ausente no runtime
 # portátil de PB/cometa aparecia como "sem Excel" — mascarando a causa.
 
+_COLUNAS_EXCEL_VALOR_CANDIDATAS = ("Sum(Valor_total_prod)", "$VT")
+# Nome da coluna de valor no Excel de referência varia por export: a
+# TABELA ENTRADAS da geraldo/PB tem as duas colunas, mas a TABELA SAÍDAS
+# só tem '$VT' — checa nessa ordem de prioridade em vez de um nome fixo.
+
+
+def _coluna_valor_excel_referencia(df_excel: pd.DataFrame) -> "str | None":
+    for c in _COLUNAS_EXCEL_VALOR_CANDIDATAS:
+        if c in df_excel.columns:
+            return c
+    return None
+
 
 def _localizar_excel_entradas_referencia() -> "Path | None":
     """Localiza o Excel de referência de entradas na raiz da operação — o
@@ -2344,6 +2356,54 @@ def carregar_excel_entradas_referencia() -> "tuple[pd.DataFrame, dict]":
     except Exception as exc:
         meta["erros"].append(str(exc))
         logger.exception("Erro ao ler Excel de referência de entradas em %s: %s", caminho, exc)
+        return pd.DataFrame(), meta
+    if "CHAVE" not in df.columns:
+        meta["erros"].append(f"Coluna 'CHAVE' não encontrada em {caminho.name}.")
+        return pd.DataFrame(), meta
+    df = df.rename(columns={"CHAVE": "CHV_NFE"})
+    df["CHV_NFE"] = df["CHV_NFE"].astype(str).str.strip()
+    meta["total_linhas"] = len(df)
+    meta["total_chaves"] = df["CHV_NFE"].nunique()
+    return df, meta
+
+
+MSG_SEM_EXCEL_SAIDAS_REFERENCIA = "Nenhum arquivo '*SAIDAS*.xlsx' encontrado na pasta da operação."
+# Mesmo papel de MSG_SEM_EXCEL_ENTRADAS_REFERENCIA, pro lado saídas
+# (auditar_divergencia_saidas(), 2026-07-17).
+
+
+def _localizar_excel_saidas_referencia() -> "Path | None":
+    """Localiza o Excel de referência de saídas na raiz da operação — mesmo
+    critério de _localizar_excel_entradas_referencia() (nome varia por
+    operação/distribuidora: 'TABELA SAÍDAS A SE EXPORTADA AO
+    HUNTER(<uuid>).xlsx' na geraldo/PB, 'COMETA SAÍDAS.xlsx' na cometa).
+    Busca por '.xlsx' na raiz cujo nome normalizado (sem acento,
+    maiúsculo — _normalizar_str()) contenha 'SAIDA', não por prefixo fixo
+    — 'SAÍDAS' com acento não bateria com um `.upper()` puro. Ignora
+    arquivos temporários do Excel (~$...). None se a operação não tiver
+    esse arquivo (normal — estudo pontual, não dado obrigatório)."""
+    candidatos = sorted(
+        p for p in _OPERACAO_DIR.glob("*.xlsx")
+        if not p.name.startswith("~$") and "SAIDA" in _normalizar_str(p.stem)
+    )
+    return candidatos[0] if candidatos else None
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def carregar_excel_saidas_referencia() -> "tuple[pd.DataFrame, dict]":
+    """Carrega o Excel de referência de saídas — mesmo padrão de
+    carregar_excel_entradas_referencia() (só a coluna `CHAVE`, renomeada
+    `CHV_NFE`, importa pro estudo de divergência)."""
+    caminho = _localizar_excel_saidas_referencia()
+    meta: dict = {"arquivo": str(caminho) if caminho else None, "erros": []}
+    if caminho is None:
+        meta["erros"].append(MSG_SEM_EXCEL_SAIDAS_REFERENCIA)
+        return pd.DataFrame(), meta
+    try:
+        df = pd.read_excel(caminho, dtype=str)
+    except Exception as exc:
+        meta["erros"].append(str(exc))
+        logger.exception("Erro ao ler Excel de referência de saídas em %s: %s", caminho, exc)
         return pd.DataFrame(), meta
     if "CHAVE" not in df.columns:
         meta["erros"].append(f"Coluna 'CHAVE' não encontrada em {caminho.name}.")
@@ -2404,30 +2464,32 @@ def _chaves_autoemissao_duplicada() -> set:
     return set(contagem_pastas[contagem_pastas > 1].index)
 
 
-def _detalhar_chaves_hunter_ausentes_no_excel(chaves: set) -> pd.DataFrame:
+def _detalhar_chaves_hunter_ausentes_no_excel(chaves: set, tabela: str = "estoque_entradas") -> pd.DataFrame:
     """Detalha (CHV_NFE, DATA_ELEITA, VL_ITEM, EMITENTE) das linhas de
-    `estoque_entradas` cuja CHV_NFE está em 'chaves' — usado só pro
-    'Resíduo Hunter' de auditar_divergencia_entradas() (chaves que o Hunter
-    tem e o Excel de referência não cita em nenhuma linha). Uma linha por
-    item (não por nota) — uma mesma CHV_NFE pode aparecer várias vezes se a
-    nota tiver mais de um item; a contagem de chaves ÚNICAS é
-    responsabilidade de quem consome o retorno (ex.: nunique() na UI).
-    Regra R07: CHV_NFE sempre string. Vazio se não houver chaves ou o banco/
-    tabela não existir (não é erro)."""
+    `tabela` (`estoque_entradas` ou, desde 2026-07-17, `estoque_saidas`)
+    cuja CHV_NFE está em 'chaves' — usado pro 'Resíduo Hunter' de
+    auditar_divergencia_entradas()/auditar_divergencia_saidas() (chaves
+    que o Hunter tem e o Excel de referência não cita em nenhuma linha).
+    Uma linha por item (não por nota) — uma mesma CHV_NFE pode aparecer
+    várias vezes se a nota tiver mais de um item; a contagem de chaves
+    ÚNICAS é responsabilidade de quem consome o retorno (ex.: nunique() na
+    UI). Regra R07: CHV_NFE sempre string. Vazio se não houver chaves ou o
+    banco/tabela não existir (não é erro). `tabela` só recebe literais
+    fixos das duas chamadoras (nunca input do usuário)."""
     colunas = ["CHV_NFE", "DATA_ELEITA", "VL_ITEM", "EMITENTE"]
     if not chaves or not _BANCO_PATH.exists():
         return pd.DataFrame(columns=colunas)
     try:
         with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
             tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
-            if "estoque_entradas" not in tabelas:
+            if tabela not in tabelas:
                 return pd.DataFrame(columns=colunas)
             con.register("_chaves_so_hunter", pd.DataFrame({"CHV_NFE": list(chaves)}))
             df = con.execute(
-                "SELECT e.fatonfe_infprot_chnfe AS CHV_NFE, e.DATA_ELEITA, "
-                "e.fatoitemnfe_infnfe_det_prod_vprod AS VL_ITEM, "
-                "e.fatonfe_infnfe_emit_xnome AS EMITENTE "
-                "FROM estoque_entradas e "
+                f"SELECT e.fatonfe_infprot_chnfe AS CHV_NFE, e.DATA_ELEITA, "
+                f"e.fatoitemnfe_infnfe_det_prod_vprod AS VL_ITEM, "
+                f"e.fatonfe_infnfe_emit_xnome AS EMITENTE "
+                f"FROM {tabela} e "
                 "INNER JOIN _chaves_so_hunter c ON e.fatonfe_infprot_chnfe = c.CHV_NFE"
             ).df()
             con.unregister("_chaves_so_hunter")
@@ -2551,12 +2613,118 @@ def auditar_divergencia_entradas() -> dict:
     chaves_so_csv = chaves_excel - chaves_hunter_qualquer
 
     residuo_hunter = _detalhar_chaves_hunter_ausentes_no_excel(chaves_so_hunter)
-    # 'DataFinal'/'Sum(Valor_total_prod)' são específicas do layout atual do
-    # Excel da geraldo — checadas em vez de assumidas, pra não quebrar se
-    # outra operação vier a usar este estudo com um Excel de layout diferente.
-    colunas_excel_extra = [c for c in ("DataFinal", "Sum(Valor_total_prod)") if c in df_excel.columns]
+    # 'DataFinal' e a coluna de valor (ver _coluna_valor_excel_referencia())
+    # são específicas do layout do Excel de cada operação — checadas em vez
+    # de assumidas, pra não quebrar se outra operação vier a usar este
+    # estudo com um Excel de layout diferente.
+    col_valor = _coluna_valor_excel_referencia(df_excel)
+    colunas_excel_extra = [c for c in ("DataFinal", col_valor) if c and c in df_excel.columns]
     residuo_csv = df_excel[df_excel["CHV_NFE"].isin(chaves_so_csv)][["CHV_NFE", *colunas_excel_extra]].rename(
-        columns={"DataFinal": "DATA", "Sum(Valor_total_prod)": "VALOR"}
+        columns={"DataFinal": "DATA", **({col_valor: "VALOR"} if col_valor else {})}
+    ).copy()
+    residuo_csv["CHV_NFE"] = residuo_csv["CHV_NFE"].astype(str)
+
+    return {
+        "resumo": resumo, "chaves_divergentes": divergentes,
+        "residuo_hunter": residuo_hunter, "residuo_csv": residuo_csv,
+        "erros": [],
+    }
+
+
+def auditar_divergencia_saidas() -> dict:
+    """Espelho de auditar_divergencia_entradas() (2026-07-17) pro lado
+    saídas: compara o Excel de referência de saídas ('*SAIDAS*.xlsx' na
+    raiz da operação, ver carregar_excel_saidas_referencia()) com
+    `estoque_saidas` (Estágio 4), SEM cruzar código de item — só `CHV_NFE`
+    + contagem de itens por nota. Mesmo waterfall de reconciliação, com os
+    papéis principal/reconciliação invertidos: `estoque_saidas` é a fonte
+    principal (equivalente a `estoque_entradas` do lado entradas) e
+    `xml_entradas_real` é o primeiro fallback de reconciliação
+    (equivalente a `xml_saidas_real` do lado entradas) — mesmo `PASTA_
+    ORIGEM` não bater 1:1 com a direção real (uma nota de EP pode virar
+    entrada_real, uma de ET pode virar saida_real, ver Estágio 3).
+    `nfe_situacao_et/ep` e `nfe_analise_et/ep` são os mesmos dois níveis
+    seguintes, sem duplicar (não têm direção — servem os dois estudos).
+
+    Devolve o mesmo formato de auditar_divergencia_entradas():
+    `{'resumo': dict, 'chaves_divergentes': DataFrame, 'residuo_hunter':
+    DataFrame, 'residuo_csv': DataFrame, 'erros': list}` — as colunas de
+    `chaves_divergentes`/`resumo` usam os MESMOS nomes (`ITENS_ENTRADAS_
+    REAIS`/`ITENS_SAIDAS_REAIS` etc.) que a versão entradas; só o que é
+    "principal" vs. "reconciliação" se inverte."""
+    df_excel, meta_excel = carregar_excel_saidas_referencia()
+    if df_excel.empty:
+        return {
+            "resumo": {}, "chaves_divergentes": pd.DataFrame(),
+            "residuo_hunter": pd.DataFrame(), "residuo_csv": pd.DataFrame(),
+            "erros": meta_excel.get("erros", []),
+        }
+
+    excel_por_chave = df_excel.groupby("CHV_NFE").size().rename("EXCEL_QTD_ITENS")
+    hunter_saidas   = _contagem_por_chave_nfe("estoque_saidas").rename("HUNTER_SAIDAS_QTD")
+    hunter_entradas = _contagem_por_chave_nfe("xml_entradas_real").rename("HUNTER_ENTRADAS_QTD")
+    hunter_situacao = (
+        _contagem_por_chave_nfe("nfe_situacao_et").add(_contagem_por_chave_nfe("nfe_situacao_ep"), fill_value=0)
+    ).rename("HUNTER_SITUACAO_QTD")
+    hunter_analise = (
+        _contagem_por_chave_nfe("nfe_analise_et").add(_contagem_por_chave_nfe("nfe_analise_ep"), fill_value=0)
+    ).rename("HUNTER_ANALISE_QTD")
+
+    base = pd.DataFrame(excel_por_chave)
+    for serie in (hunter_saidas, hunter_entradas, hunter_situacao, hunter_analise):
+        base = base.join(serie, how="left")
+    base = base.fillna(0).astype(int)
+
+    # Waterfall: saídas reais primeiro (o "lar" natural do item aqui),
+    # depois o resíduo é testado contra entradas/situação/análise nessa
+    # ordem — mesmo raciocínio de auditar_divergencia_entradas(), invertido.
+    base["ITENS_SAIDAS_REAIS"] = base[["EXCEL_QTD_ITENS", "HUNTER_SAIDAS_QTD"]].min(axis=1)
+    residual_1 = base["EXCEL_QTD_ITENS"] - base["ITENS_SAIDAS_REAIS"]
+    base["ITENS_ENTRADAS_REAIS"] = pd.concat([residual_1, base["HUNTER_ENTRADAS_QTD"]], axis=1).min(axis=1)
+    residual_2 = residual_1 - base["ITENS_ENTRADAS_REAIS"]
+    base["ITENS_SITUACAO"] = pd.concat([residual_2, base["HUNTER_SITUACAO_QTD"]], axis=1).min(axis=1)
+    residual_3 = residual_2 - base["ITENS_SITUACAO"]
+    base["ITENS_ANALISE_CFOP"] = pd.concat([residual_3, base["HUNTER_ANALISE_QTD"]], axis=1).min(axis=1)
+    base["ITENS_NAO_IDENTIFICADOS"] = residual_3 - base["ITENS_ANALISE_CFOP"]
+
+    total_real_hunter_saidas = int(hunter_saidas.sum())
+    hunter_so_saidas = total_real_hunter_saidas - int(base["HUNTER_SAIDAS_QTD"].sum())
+
+    resumo = {
+        "total_excel": int(base["EXCEL_QTD_ITENS"].sum()),
+        "total_hunter_saidas": total_real_hunter_saidas,
+        "itens_hunter_ausentes_no_excel": hunter_so_saidas,
+        "itens_saidas_reais": int(base["ITENS_SAIDAS_REAIS"].sum()),
+        "itens_entradas_reais": int(base["ITENS_ENTRADAS_REAIS"].sum()),
+        "itens_situacao": int(base["ITENS_SITUACAO"].sum()),
+        "itens_analise_cfop": int(base["ITENS_ANALISE_CFOP"].sum()),
+        "itens_nao_identificados": int(base["ITENS_NAO_IDENTIFICADOS"].sum()),
+    }
+
+    chaves_autoemissao = _chaves_autoemissao_duplicada()
+    base["CASO_AUTOEMISSAO_DUPLICADA"] = base.index.isin(chaves_autoemissao)
+    resumo["chaves_autoemissao_na_divergencia"] = int(
+        (base.index.isin(chaves_autoemissao) & (base["ITENS_NAO_IDENTIFICADOS"] > 0)).sum()
+    )
+
+    divergentes = base[base["EXCEL_QTD_ITENS"] != base["HUNTER_SAIDAS_QTD"]].copy()
+    divergentes.index.name = "CHV_NFE"
+    divergentes = divergentes.reset_index().sort_values("ITENS_NAO_IDENTIFICADOS", ascending=False)
+    divergentes["CHV_NFE"] = divergentes["CHV_NFE"].astype(str)
+
+    chaves_excel = set(excel_por_chave.index)
+    chaves_hunter_qualquer = (
+        set(hunter_saidas.index) | set(hunter_entradas.index)
+        | set(hunter_situacao.index) | set(hunter_analise.index)
+    )
+    chaves_so_hunter = set(hunter_saidas.index) - chaves_excel
+    chaves_so_csv = chaves_excel - chaves_hunter_qualquer
+
+    residuo_hunter = _detalhar_chaves_hunter_ausentes_no_excel(chaves_so_hunter, tabela="estoque_saidas")
+    col_valor = _coluna_valor_excel_referencia(df_excel)
+    colunas_excel_extra = [c for c in ("DataFinal", col_valor) if c and c in df_excel.columns]
+    residuo_csv = df_excel[df_excel["CHV_NFE"].isin(chaves_so_csv)][["CHV_NFE", *colunas_excel_extra]].rename(
+        columns={"DataFinal": "DATA", **({col_valor: "VALOR"} if col_valor else {})}
     ).copy()
     residuo_csv["CHV_NFE"] = residuo_csv["CHV_NFE"].astype(str)
 

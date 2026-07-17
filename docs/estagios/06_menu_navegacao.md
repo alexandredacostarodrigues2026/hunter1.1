@@ -256,6 +256,56 @@ presença/ausência TOTAL da `CHV_NFE`:
   CSV" mostra 0 chaves (consistente — a divergência não identificada
   total também é 0 nesta base agora).
 
+## Auditoria estendida para saídas (2026-07-17)
+
+Pedido do usuário ("estenda a auditoria para as saídas") depois de fechar
+a auditoria de entradas nas 3 operações reais (PB_2023_2025 e cometa
+zerando 100%, ver `r_extracao.txt` regra 25). Espelho quase completo de
+`auditar_divergencia_entradas()`/`render_auditoria_divergencia_entradas()`,
+com os papéis principal/reconciliação invertidos:
+
+- **`loader.auditar_divergencia_saidas()`**: compara o Excel de
+  referência de saídas (`*SAIDAS*.xlsx` na raiz da operação, via novo
+  `loader._localizar_excel_saidas_referencia()`/`carregar_excel_saidas_
+  referencia()`, mesmo critério de busca genérica por substring —
+  case/acento-insensível via `_normalizar_str()`, já que "SAÍDA" tem
+  acento e um `.upper()` puro não bastaria) com `estoque_saidas`
+  (principal) e `xml_entradas_real` (primeiro fallback de reconciliação)
+  — inverso exato da auditoria de entradas, que usa `estoque_entradas`
+  como principal e `xml_saidas_real` como fallback. `nfe_situacao_et/ep`
+  e `nfe_analise_et/ep` são os mesmos dois níveis seguintes, sem duplicar
+  lógica (não têm direção — servem os dois estudos). Devolve o mesmo
+  formato/nomes de coluna (`ITENS_ENTRADAS_REAIS`/`ITENS_SAIDAS_REAIS`
+  etc.) que a versão entradas.
+- **`loader.MSG_SEM_EXCEL_SAIDAS_REFERENCIA`**: sentinela irmã de
+  `MSG_SEM_EXCEL_ENTRADAS_REFERENCIA`, mesmo papel (distinguir "arquivo
+  não existe" de erro real de leitura).
+- **`loader._detalhar_chaves_hunter_ausentes_no_excel()`** ganhou
+  parâmetro `tabela` (default `"estoque_entradas"`) em vez de duplicar a
+  função só pra trocar o nome da tabela — chamada com
+  `tabela="estoque_saidas"` na auditoria de saídas.
+- **`loader._coluna_valor_excel_referencia()`** (novo helper): a coluna de
+  valor no Excel de referência varia por export — a TABELA ENTRADAS da
+  geraldo/PB tem `Sum(Valor_total_prod)` E `$VT`, mas a TABELA SAÍDAS só
+  tem `$VT`. Checa nessa ordem de prioridade em vez de um nome fixo
+  (usado nas duas auditorias agora, não só na de saídas).
+- **`interface.render_auditoria_divergencia_saidas()`**: mesma estrutura
+  de `render_auditoria_divergencia_entradas()` (KPIs, "Investigar Chaves
+  Divergentes", "Detalhamento de Chaves Ausentes"), com `HUNTER_SAIDAS_
+  QTD` como métrica principal na prévia (`_COLUNAS_PREVIEW_DIVERGENCIA_
+  SAIDAS`) e chaves de `session_state`/`key=` próprias (sufixo
+  `_saidas`) — sem isso os botões colidiriam com os da seção de entradas
+  (mesmo `key=` do Streamlit não pode se repetir na mesma página).
+- **`render_pagina_auditoria1()`**: chama as duas funções em sequência —
+  cada seção aparece (ou não) de forma independente, conforme a operação
+  tiver o respectivo Excel de referência.
+- Validado ao vivo (runtime portátil de cada operação + Playwright,
+  porta descartável 8601): PB_2023_2025 (11.359 Excel × 11.362 Hunter,
+  resíduo 0) e cometa (204.382 × 204.428, resíduo 0) fecham 100%; geraldo
+  tem 1.372 chaves de resíduo ainda não investigadas (fica pra sessão
+  futura). Confirmado que os dois painéis alternam estado
+  independentemente (clique num não afeta o outro).
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —
