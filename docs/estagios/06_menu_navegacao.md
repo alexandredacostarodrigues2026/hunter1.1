@@ -306,6 +306,38 @@ com os papéis principal/reconciliação invertidos:
   futura). Confirmado que os dois painéis alternam estado
   independentemente (clique num não afeta o outro).
 
+## Botão "Regenerar Entradas e Saídas" (2026-07-17, mesmo dia)
+
+Achado real na geraldo: um arquivo XML de 2019 foi removido de
+`1-DOCFISCAIS/nf/ET/`, mas ninguém rodou `persistir_nfe()`/`persistir_
+estoque_entradas_saidas()` depois — o banco (e a Auditoria1) ficou
+desatualizado sem nenhum aviso visível; o usuário só descobriu comparando
+contra o Excel de referência. Antes disso, regenerar exigia dois passos
+manuais em páginas diferentes: "Carregar novamente" em EXTRAÇÃO
+(`persistir_nfe`, Estágio 1) e "Regerar Entradas/Saídas Enriquecidas" em
+"TABELAS ENTRADAS/SAÍDAS/ESTOQUES" (`persistir_estoque_entradas_saidas`,
+Estágio 4) — fácil rodar só um dos dois e achar que está tudo atualizado.
+
+- Novo botão **"🔄 Regenerar Entradas e Saídas (Estágio 1 + 4)"** no topo
+  de `render_pagina_auditoria1()`, antes das duas auditorias — roda
+  `persistir_nfe()` (relê os `.txt` já classificados em `ET`/`EP`) e, se
+  sem erro, `persistir_estoque_entradas_saidas()` em seguida, num só
+  clique.
+- **Não chama `st.rerun()`**: as duas auditorias já são renderizadas
+  logo abaixo, no mesmo ciclo de execução do script — leem o banco recém
+  atualizado sem precisar de rerun. Um rerun faria a mensagem de sucesso
+  (com os totais regenerados) sumir antes do usuário conseguir ler —
+  achado ao testar com Playwright a primeira versão do botão.
+- **Escopo deliberadamente limitado**: só relê XML já classificado em
+  `ET`/`EP` — não roda `loader.carregar_operacao()` (classificação de
+  XML novo ainda pendente na raiz de `1-DOCFISCAIS/nf/`), que continua
+  sendo exclusivo do botão "Carregar novamente" da página EXTRAÇÃO.
+- Validado ao vivo (Playwright, porta descartável 8601): clique mostra
+  spinner, depois mensagem de sucesso com os totais
+  (`"✅ Regenerado: N entradas reais, N saídas reais → N entradas / N
+  saídas enriquecidas."`), seguida das duas auditorias já com dados
+  frescos, tudo no mesmo carregamento de página.
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —

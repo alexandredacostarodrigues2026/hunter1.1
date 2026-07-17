@@ -1360,10 +1360,59 @@ def render_pagina_auditoria1() -> None:
     logo abaixo — "estenda a auditoria para as saídas", pedido do usuário
     depois de fechar a auditoria de entradas nas 3 operações reais. Cada
     painel aparece (ou não) de forma independente, conforme a operação
-    tiver o respectivo Excel de referência (`*ENTRADAS*`/`*SAIDAS*.xlsx`)."""
+    tiver o respectivo Excel de referência (`*ENTRADAS*`/`*SAIDAS*.xlsx`).
+
+    2026-07-17 (mesmo dia): ganhou o botão "Regenerar Entradas e Saídas"
+    — achado real na geraldo: um arquivo XML de 2019 foi removido de
+    `1-DOCFISCAIS/nf/ET/`, mas ninguém rodou persistir_nfe()/persistir_
+    estoque_entradas_saidas() depois, então o banco (e a auditoria) ficou
+    desatualizado sem nenhum aviso — o usuário só descobriu a
+    inconsistência comparando contra o Excel de referência. O botão fica
+    logo no topo desta página, antes das duas auditorias, pra reduzir
+    esse tipo de investigação: refaz Estágio 1 (persistir_nfe — relê os
+    .txt já classificados em ET/EP) + Estágio 4 (persistir_estoque_
+    entradas_saidas) em sequência, sem precisar abrir "EXTRAÇÃO" e depois
+    "TABELAS ENTRADAS/SAÍDAS/ESTOQUES" separadamente. Não reclassifica
+    XML novo ainda pendente na raiz de `1-DOCFISCAIS/nf/` (isso continua
+    sendo `loader.carregar_operacao()`, botão "Carregar novamente" da
+    página EXTRAÇÃO) — só relê o que já está em ET/EP."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
+
+    if st.button(
+        "🔄 Regenerar Entradas e Saídas (Estágio 1 + 4)",
+        key="btn_regenerar_entradas_saidas_auditoria1",
+        help="Relê os XML já classificados em 1-DOCFISCAIS/nf/ET e /EP "
+             "(persistir_nfe) e recalcula estoque_entradas/estoque_saidas "
+             "(persistir_estoque_entradas_saidas). Use antes de conferir a "
+             "auditoria se algum arquivo fonte mudou (ex.: removeu/adicionou "
+             "um XML em ET/EP) — não reclassifica XML novo ainda pendente na "
+             "raiz de 1-DOCFISCAIS/nf/ (isso é a página EXTRAÇÃO).",
+    ):
+        with st.spinner("Regenerando NF-e (Estágio 1)..."):
+            resultado_nfe = loader.persistir_nfe()
+        if "erro" in resultado_nfe:
+            st.error(f"Erro ao regenerar NF-e: {resultado_nfe['erro']}")
+            return
+        with st.spinner("Regenerando Entradas/Saídas Enriquecidas (Estágio 4)..."):
+            resultado_estoque = loader.persistir_estoque_entradas_saidas()
+        if "erro" in resultado_estoque:
+            st.error(f"Erro ao regenerar Entradas/Saídas: {resultado_estoque['erro']}")
+            return
+        st.success(
+            f"✅ Regenerado: {resultado_nfe.get('xml_entradas_real', 0):,} entradas reais, "
+            f"{resultado_nfe.get('xml_saidas_real', 0):,} saídas reais → "
+            f"{resultado_estoque.get('estoque_entradas', 0):,} entradas / "
+            f"{resultado_estoque.get('estoque_saidas', 0):,} saídas enriquecidas."
+            .replace(",", ".")
+        )
+        st.session_state["estoque_entradas_saidas_gerado"] = True
+        # Sem st.rerun() aqui de propósito: as duas auditorias são chamadas
+        # logo abaixo, no mesmo ciclo de execução do script — já leem o
+        # banco recém-atualizado. Um rerun faria a mensagem de sucesso
+        # sumir antes do usuário conseguir ler os números.
+
     render_auditoria_divergencia_entradas()
     render_auditoria_divergencia_saidas()
