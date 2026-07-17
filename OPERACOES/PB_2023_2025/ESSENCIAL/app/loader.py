@@ -423,9 +423,24 @@ def _classificar_itens_nfe() -> dict:
         auditada_destinataria = pd.Series(False, index=combined.index)
         auditada_emitente     = pd.Series(False, index=combined.index)
 
+    # Autoemissão (emit_cnpj==dest_cnpj==cnpj_auditada, aqui capturada como
+    # auditada_destinataria & auditada_emitente ambos True) com CFOP de baixa
+    # de estoque (mesmo conjunto de _CFOP_WATCHLIST_ET — "5927"/"6927") na
+    # pasta EP: achado real 2026-07-17, operação PB_2023_2025 (chaves
+    # ...23605850/...23540314) — por ser autoemissão, a linha bate nos dois
+    # papéis ao mesmo tempo e contava como ENTRADA real E saída real
+    # simultaneamente, inflando estoque_entradas com o próprio lançamento
+    # simbólico de baixa que a empresa já registra como saída. Exclusão só
+    # de mask_entrada_real (não da watchlist de CFOP nem de mask_principal)
+    # — nfe_saidas/xml_saidas_real continuam contando essas linhas
+    # normalmente, só não duplicam também como entrada.
+    mask_baixa_estoque_autoemissao_ep = (
+        (pasta == "EP") & cfop.isin(_CFOP_WATCHLIST_ET) & auditada_destinataria & auditada_emitente
+    )
+
     mask_entrada_real = mask_principal & (
         (auditada_destinataria & (tpnf == "1")) | (auditada_emitente & (tpnf == "0"))
-    )
+    ) & ~mask_baixa_estoque_autoemissao_ep
     mask_saida_real = mask_principal & (
         (auditada_destinataria & (tpnf == "0")) | (auditada_emitente & (tpnf == "1"))
     )

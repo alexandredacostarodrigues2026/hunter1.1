@@ -28,13 +28,42 @@ definida em `r_definição entradas_saidas_xml.txt` (raiz do projeto — fonte
 original desta classificação, "somente xml"):
 
 - **`entradas_real`** — `(auditada destinatária E tpnf=1)` OU
-  `(auditada emitente E tpnf=0)`.
+  `(auditada emitente E tpnf=0)`, **exceto** autoemissão (destinatária E
+  emitente ambos True — `CPF_CNPJ_emit == CPF_CNPJ_dest`) com CFOP de baixa
+  de estoque (`_CFOP_WATCHLIST_ET`, "5927"/"6927") na pasta EP — ver seção
+  "Autoemissão com CFOP de baixa de estoque" abaixo.
 - **`saidas_real`** — `(auditada destinatária E tpnf=0)` OU
-  `(auditada emitente E tpnf=1)`.
+  `(auditada emitente E tpnf=1)`. Sem exceção — a exclusão acima é só do
+  lado entrada.
 
 Ambas rodam só sobre `mask_principal` (mesma base de `nfe_entradas`/
 `nfe_saidas`) — situação irregular e CFOP de watchlist já foram segregados
 no Estágio 1, então os grupos reais contêm só movimentação física válida.
+
+### Autoemissão com CFOP de baixa de estoque (2026-07-17)
+
+Implementa `regra de negócios unificadas/CNPJ EMIT = CNPJ DEST.txt`
+("permitir tudo e retirar somente cfops de baixa de estoque 5927 e 6927"),
+até então referenciada mas não portada pro código. Quando
+`CPF_CNPJ_emit == CPF_CNPJ_dest == CNPJ da auditada` (autoemissão), a linha
+bate em `auditada_destinataria` **e** `auditada_emitente` ao mesmo tempo —
+se o CFOP for 5927/6927 (lançamento de baixa de estoque, mesmo conjunto do
+Estágio 1) na pasta EP, ela contaria como entrada_real **e** saída_real
+simultaneamente, inflando `estoque_entradas` com o próprio lançamento
+simbólico que a empresa já registra como saída. Achado real na operação
+PB_2023_2025 (chaves `...23605850`/`...23540314`, verificado por
+`AUTOEMISSAO=True`, `CFOP=5927`, `natop="LANÇAMENTO EFETUADO A TÍTULO DE
+BAIXA DE ESTOQUE..."`).
+
+Correção **cirúrgica**, distinta de mexer na watchlist de CFOP (tentativa
+anterior no mesmo dia, revertida — ver `r_extracao.txt` regras 24/25):
+exclui essas linhas só do cálculo de `mask_entrada_real`, sem tocar em
+`_CFOP_WATCHLIST_EP` nem em `mask_principal`. `nfe_saidas`/`xml_saidas_real`
+continuam contando essas linhas normalmente — só deixam de duplicar
+também como entrada. Validado nas 3 operações reais: geraldo sem impacto
+(não tem esse padrão), PB 1293→1282, cometa 7922→7413 (mesmos números da
+tentativa anterior via watchlist, porque na prática 100% dos casos
+encontrados eram autoemissão — mas agora sem afetar `xml_saidas_real`).
 
 Cada linha também ganha a coluna **`AUDITADA_PAPEL`** (`"DESTINATARIA"` ou
 `"EMITENTE"`, `""` se a entidade auditada ainda não foi fixada) — usada
@@ -46,9 +75,9 @@ sobre `tpnf`+papel, então `xml_entradas_real` normalmente é majoritariamente
 (auditada emitente com `tpnf=0` — ex.: devolução recebida, ver seção
 "Validação contra a TABELA ENTRADAS de referência" abaixo). Ver também
 `CNPJ EMIT = CNPJ DEST.txt` na pasta `regra de negócios unificadas/`, raiz
-do projeto — regra correlata, mas sobre um caso específico de exclusão de
-CFOP de baixa de estoque (5927/6927), não sobre a classificação
-entradas/saídas em si.
+do projeto — a exclusão de CFOP de baixa de estoque (5927/6927) em casos
+de autoemissão que esse arquivo descreve está implementada desde
+2026-07-17, ver seção "Autoemissão com CFOP de baixa de estoque" abaixo.
 
 ## Saída
 
@@ -147,8 +176,9 @@ mais correta) da classificação ingênua por `tpnf` isolado:
   da regra `tpnf` × papel da auditada implementada em
   `_classificar_itens_nfe()`.
 - `regra de negócios unificadas/CNPJ EMIT = CNPJ DEST.txt` (raiz do
-  projeto) — regra correlata sobre exclusão de CFOP de baixa de estoque
-  (5927/6927), não a origem da classificação entradas/saídas em si.
+  projeto) — fonte original da exclusão de CFOP de baixa de estoque
+  (5927/6927) em autoemissão, implementada em `mask_entrada_real` desde
+  2026-07-17 (ver seção "Autoemissão com CFOP de baixa de estoque" acima).
 - `TABELA ENTRADAS A SE EXPORTADA AO HUNTER
   (69488f78-131b-433b-9d3f-83142236d794).xlsx` (pasta da operação
   `geraldo_2020_2024`) — gabarito externo usado na seção "Validação contra
