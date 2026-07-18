@@ -2307,6 +2307,143 @@ def consultar_estoque_anual_consolidado(limite: "int | None" = 200) -> "tuple[pd
         return pd.DataFrame(), 0
 
 
+# ── Estágio 7 — Descrição Relevante (produto_alvo) ──────────────────────────
+# Solicitação Técnica (2026-07-18): unifica COD_ITEM_DECLARACAO/DESCR_ITEM_
+# DECLARACAO das 3 tabelas enriquecidas que carregam esse par de colunas
+# (estoque_entradas/estoque_saidas — Estágio 4, movimentação; estoque_anual_
+# consolidado — Estágio 5, inventário declarado) e elege, por código, a
+# descrição estatisticamente mais frequente (moda) — um mesmo produto pode
+# aparecer com grafias levemente diferentes entre as 3 fontes (erro de
+# digitação, abreviação, atualização de cadastro do fornecedor/auditada).
+_COLUNAS_PRODUTO_ALVO = ["COD_ITEM", "DESCR_ALVO"]
+
+_TABELAS_PRODUTO_ALVO_FONTE = ("estoque_entradas", "estoque_saidas", "estoque_anual_consolidado")
+
+_CODIGOS_PLACEHOLDER_PRODUTO_ALVO = {"nd", "nm"}
+# Códigos-sentinela de "não declarado"/"não mapeado" gravados quando o
+# Matching (BC3, Estágio 2) não achou correspondência pro item — achado
+# real: 1.502 linhas em estoque_entradas e 565 em estoque_saidas na
+# geraldo. Comparação EXATA (case-insensitive), não substring — a cometa
+# tem COD_ITEM_DECLARACAO alfanumérico legítimo (ex.: "125KGRAXA",
+# "CQ4533T", "PO916UNF"), então filtrar por "contém nd/nm" arriscaria
+# excluir um código real que só coincidentemente contivesse essas letras.
+
+
+def montar_produto_alvo() -> pd.DataFrame:
+    """Estágio 7 — elege a DESCR_ITEM_DECLARACAO mais frequente (moda) por
+    COD_ITEM_DECLARACAO, unificando estoque_entradas, estoque_saidas
+    (Estágio 4) e estoque_anual_consolidado (Estágio 5) — as 3 tabelas
+    enriquecidas com esse par de colunas. Exclui linhas com COD_ITEM_
+    DECLARACAO nulo ou igual (case-insensitive) a 'nd'/'nm' (ver
+    _CODIGOS_PLACEHOLDER_PRODUTO_ALVO). Empate na contagem é desempatado
+    pela descrição em ordem alfabética (A-Z) — determinístico, não
+    depende da ordem de leitura das tabelas fonte.
+
+    Regra R07: `COD_ITEM` sempre string. Devolve colunas ['COD_ITEM',
+    'DESCR_ALVO']. Vazia se nenhuma das 3 tabelas fonte existir ainda
+    (nenhum erro — pré-requisitos ainda não gerados, ver 'TABELAS
+    ENTRADAS / SAÍDAS / ESTOQUES')."""
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=_COLUNAS_PRODUTO_ALVO)
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            fontes = [t for t in _TABELAS_PRODUTO_ALVO_FONTE if t in tabelas]
+            if not fontes:
+                return pd.DataFrame(columns=_COLUNAS_PRODUTO_ALVO)
+            placeholders = ", ".join(f"'{c}'" for c in _CODIGOS_PLACEHOLDER_PRODUTO_ALVO)
+            uniao = " UNION ALL ".join(
+                f"SELECT COD_ITEM_DECLARACAO AS COD_ITEM, TRIM(DESCR_ITEM_DECLARACAO) AS DESCR "
+                f"FROM {t} WHERE COD_ITEM_DECLARACAO IS NOT NULL "
+                f"AND LOWER(COD_ITEM_DECLARACAO) NOT IN ({placeholders})"
+                for t in fontes
+            )
+            contagem = con.execute(
+                f"SELECT COD_ITEM, DESCR, COUNT(*) AS FREQUENCIA FROM ({uniao}) GROUP BY COD_ITEM, DESCR"
+            ).df()
+    except Exception:
+        logger.exception("Erro ao montar produto_alvo em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=_COLUNAS_PRODUTO_ALVO)
+
+    if contagem.empty:
+        return pd.DataFrame(columns=_COLUNAS_PRODUTO_ALVO)
+
+    # Moda por COD_ITEM: maior FREQUENCIA primeiro; empate pela DESCR em
+    # ordem alfabética (A-Z) — sort_values + groupby(...).first() preserva
+    # a ordem já ordenada dentro de cada grupo (mesmo idioma usado em
+    # _ordenar_duplicatas_por_quantidade()).
+    contagem = contagem.sort_values(
+        ["COD_ITEM", "FREQUENCIA", "DESCR"], ascending=[True, False, True],
+    )
+    eleitos = (
+        contagem.groupby("COD_ITEM", as_index=False)
+        .first()
+        .rename(columns={"DESCR": "DESCR_ALVO"})[_COLUNAS_PRODUTO_ALVO]
+    )
+    return _forcar_colunas_string(eleitos, _COLUNAS_PRODUTO_ALVO).sort_values("COD_ITEM").reset_index(drop=True)
+
+
+def persistir_produto_alvo(callback=None) -> dict:
+    """Estágio 7: persiste produto_alvo no DuckDB — descrição mais
+    frequente (moda) por COD_ITEM, ver montar_produto_alvo(). Usada como
+    base pra padronizar relatórios e apoiar a seleção de produtos pra
+    auditoria física (RN1, Estágio 15). callback(etapa, n) chamado ao
+    final."""
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    resultado = {}
+    try:
+        df = montar_produto_alvo()
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            if not df.empty:
+                con.register("_df_produto_alvo", df)
+                con.execute("CREATE OR REPLACE TABLE produto_alvo AS SELECT * FROM _df_produto_alvo")
+                con.unregister("_df_produto_alvo")
+        resultado["produto_alvo"] = len(df)
+        if callback:
+            callback("produto_alvo", resultado["produto_alvo"])
+    except Exception as exc:
+        logger.exception("Erro ao persistir produto_alvo: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def produto_alvo_ja_gerado() -> bool:
+    """True se a tabela produto_alvo (Estágio 7) já existe no DuckDB da
+    operação (mesma lógica de estoque_anual_ja_gerado())."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            return "produto_alvo" in tabelas
+    except Exception:
+        logger.exception("Erro ao verificar produto_alvo existente em %s", _BANCO_PATH)
+        return False
+
+
+def consultar_produto_alvo(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê produto_alvo já persistida (sem reprocessar), devolvendo uma
+    amostra (até 'limite' linhas) e o total real de linhas. limite=None
+    devolve a tabela inteira (exportação completa)."""
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "produto_alvo" not in tabelas:
+                return pd.DataFrame(), 0
+            total = con.execute("SELECT COUNT(*) FROM produto_alvo").fetchone()[0]
+            query = (
+                "SELECT * FROM produto_alvo" if limite is None
+                else f"SELECT * FROM produto_alvo LIMIT {limite}"
+            )
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar produto_alvo em %s", _BANCO_PATH)
+        return pd.DataFrame(), 0
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio

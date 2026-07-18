@@ -96,3 +96,7 @@ DATA_ELEITA_ORIGEM;Origem da Data
 
 # Novos campos - 2026-07-16 (Estagio 1 - motivo de segregacao no painel SEGREGADOS)
 MOTIVO_SEGREGACAO;Motivo da Segregacao
+
+# Novos campos - 2026-07-18 (Estagio 7 - Descricao Relevante, tabela produto_alvo)
+COD_ITEM;Cod. Produto
+DESCR_ALVO;Descricao Relevante

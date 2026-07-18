@@ -444,6 +444,55 @@ também.
 - Agora **as 3 auditorias da página AUDITORIA1 respeitam o Período de
   Auditoria** de forma consistente.
 
+## 6º botão — "DESCRIÇÃO RELEVANTE" (Estágio 7, 2026-07-18)
+
+Solicitação Técnica pedindo um novo módulo pra eleger, por `COD_ITEM`, a
+descrição estatisticamente mais frequente (moda) entre as 3 tabelas
+enriquecidas que carregam `COD_ITEM_DECLARACAO`/`DESCR_ITEM_DECLARACAO`
+(`estoque_entradas`/`estoque_saidas`, Estágio 4; `estoque_anual_
+consolidado`, Estágio 5) — um mesmo produto pode ter grafias diferentes
+entre as 3 fontes (erro de digitação, abreviação, atualização de
+cadastro). Serve de nome "oficial" pra padronizar relatórios e apoiar a
+seleção de produtos pra auditoria física.
+
+- **`loader.montar_produto_alvo()`/`persistir_produto_alvo()`**: `UNION
+  ALL` das 3 tabelas fonte (só as que já existirem — não exige as 3),
+  excluindo `COD_ITEM_DECLARACAO` nulo ou igual (case-insensitive) a
+  `'nd'`/`'nm'` — sentinelas de "não declarado"/"não mapeado" do Matching
+  (BC3). Agrupa por `(COD_ITEM, DESCR)` contando ocorrências; elege a
+  maior contagem por `COD_ITEM`, empate desempatado em ordem alfabética
+  (A-Z) via `sort_values([...], ascending=[True, False, True]) +
+  groupby(...).first()` — mesmo idioma de `_ordenar_duplicatas_por_
+  quantidade()` (2026-07-17). Persiste em `produto_alvo` (colunas
+  `COD_ITEM`, `DESCR_ALVO`, Regra R07 — `COD_ITEM` string).
+- **Achado real ao filtrar 'nd'/'nm'**: `COD_ITEM_DECLARACAO` NÃO é
+  sempre numérico (diferente do Bloco H usado na Auditoria de Estoque) —
+  a cometa tem códigos alfanuméricos legítimos (`"125KGRAXA"`, `"CQ4533T"`,
+  `"PO916UNF"`). Por isso o filtro de sentinela é por IGUALDADE exata
+  (case-insensitive), não por substring "contém nd/nm" — substring
+  arriscaria excluir um código real que só coincidentemente contivesse
+  essas letras.
+- **`interface.render_descricao_relevante()`/`render_pagina_
+  descricao_relevante()`**: mesmo padrão "Gerar/Regerar" + prévia (200
+  linhas) + total de `render_estoque_anual()`, com `_preparar_preview()`
+  traduzindo `COD_ITEM`/`DESCR_ALVO` pelo Dicionário de Campos ("Cod.
+  Produto"/"Descrição Relevante", 2 entradas novas em `DICIONARIO DE
+  CAMPOS.txt`).
+- **Navegação**: `render_menu_principal()` ganhou um 6º botão ("🏷️
+  DESCRIÇÃO RELEVANTE", `pagina_ativa="descricao_relevante"`) — a
+  Solicitação Técnica pediu explicitamente um botão de PRIMEIRO NÍVEL no
+  Menu Principal, não um sub-painel dentro de "TABELAS ENTRADAS / SAÍDAS
+  / ESTOQUES" (que é onde a nota de numeração original de 2026-07-14
+  reservava os números 7-14) — ver nota atualizada em
+  `ESTAGIOS_PROJETO.md`. `main.py` ganhou o roteamento correspondente.
+- **Validado nas 3 operações reais** (script direto, runtime portátil de
+  cada uma): geraldo 6.138 produtos únicos, PB2 269, cometa 2.617 — sem
+  nenhum código `'nd'`/`'nm'` ou nulo remanescente. Nenhuma das 3
+  operações tem hoje um `COD_ITEM` com mais de uma descrição distinta
+  entre as 3 fontes (moda sempre trivial na prática atual — a lógica de
+  desempate por ordem alfabética existe pra quando isso deixar de ser
+  verdade, não foi exercitada com um caso real de empate).
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —
