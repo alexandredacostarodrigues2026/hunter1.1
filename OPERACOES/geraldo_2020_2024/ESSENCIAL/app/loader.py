@@ -2307,17 +2307,25 @@ def consultar_estoque_anual_consolidado(limite: "int | None" = 200) -> "tuple[pd
         return pd.DataFrame(), 0
 
 
-# ── Estágio 7 — Descrição Relevante (produto_alvo) ──────────────────────────
+# ── Estágio 7 — Escolha do Produto Alvo ──────────────────────────────────────
+# Estágio 7.1 — Fixação da Descrição Relevante (produto_alvo)
 # Solicitação Técnica (2026-07-18): unifica COD_ITEM_DECLARACAO/DESCR_ITEM_
-# DECLARACAO das 3 tabelas enriquecidas que carregam esse par de colunas
-# (estoque_entradas/estoque_saidas — Estágio 4, movimentação; estoque_anual_
+# DECLARACAO das 3 tabelas enriquecidas que o usuário chama informalmente de
+# "entradas, saidas e estoque" (nomes reais no DuckDB, sem mudança —
+# estoque_entradas/estoque_saidas — Estágio 4, movimentação; estoque_anual_
 # consolidado — Estágio 5, inventário declarado) e elege, por código, a
 # descrição estatisticamente mais frequente (moda) — um mesmo produto pode
 # aparecer com grafias levemente diferentes entre as 3 fontes (erro de
 # digitação, abreviação, atualização de cadastro do fornecedor/auditada).
+# Primeiro sub-passo do Estágio 7 (escolha do produto a auditar) — próximos
+# sub-passos (7.2 em diante) ainda não especificados.
 _COLUNAS_PRODUTO_ALVO = ["COD_ITEM", "DESCR_ALVO"]
 
 _TABELAS_PRODUTO_ALVO_FONTE = ("estoque_entradas", "estoque_saidas", "estoque_anual_consolidado")
+# = "entradas, saidas e estoque" na linguagem do usuário — nomes reais das
+# tabelas no DuckDB mantidos como estão (Estágios 4/5 inteiros dependem
+# deles); decisão explícita de não renomear as tabelas em si, só a
+# terminologia usada nos comentários/docstrings deste módulo.
 
 _CODIGOS_PLACEHOLDER_PRODUTO_ALVO = {"nd", "nm"}
 # Códigos-sentinela de "não declarado"/"não mapeado" gravados quando o
@@ -2330,11 +2338,12 @@ _CODIGOS_PLACEHOLDER_PRODUTO_ALVO = {"nd", "nm"}
 
 
 def montar_produto_alvo() -> pd.DataFrame:
-    """Estágio 7 — elege a DESCR_ITEM_DECLARACAO mais frequente (moda) por
-    COD_ITEM_DECLARACAO, unificando estoque_entradas, estoque_saidas
-    (Estágio 4) e estoque_anual_consolidado (Estágio 5) — as 3 tabelas
-    enriquecidas com esse par de colunas. Exclui linhas com COD_ITEM_
-    DECLARACAO nulo ou igual (case-insensitive) a 'nd'/'nm' (ver
+    """Estágio 7.1 (Fixação da Descrição Relevante) — elege a DESCR_ITEM_
+    DECLARACAO mais frequente (moda) por COD_ITEM_DECLARACAO, unificando
+    "entradas, saidas e estoque" (nomes reais no DuckDB: estoque_entradas,
+    estoque_saidas — Estágio 4; estoque_anual_consolidado — Estágio 5) —
+    as 3 tabelas enriquecidas com esse par de colunas. Exclui linhas com
+    COD_ITEM_DECLARACAO nulo ou igual (case-insensitive) a 'nd'/'nm' (ver
     _CODIGOS_PLACEHOLDER_PRODUTO_ALVO). Empate na contagem é desempatado
     pela descrição em ordem alfabética (A-Z) — determinístico, não
     depende da ordem de leitura das tabelas fonte.
@@ -2384,11 +2393,11 @@ def montar_produto_alvo() -> pd.DataFrame:
 
 
 def persistir_produto_alvo(callback=None) -> dict:
-    """Estágio 7: persiste produto_alvo no DuckDB — descrição mais
-    frequente (moda) por COD_ITEM, ver montar_produto_alvo(). Usada como
-    base pra padronizar relatórios e apoiar a seleção de produtos pra
-    auditoria física (RN1, Estágio 15). callback(etapa, n) chamado ao
-    final."""
+    """Estágio 7.1 (Fixação da Descrição Relevante): persiste produto_alvo
+    no DuckDB — descrição mais frequente (moda) por COD_ITEM, ver
+    montar_produto_alvo(). Usada como base pra padronizar relatórios e
+    apoiar a seleção de produtos pra auditoria física (RN1, Estágio 15).
+    callback(etapa, n) chamado ao final."""
     _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
     resultado = {}
     try:
@@ -2408,7 +2417,7 @@ def persistir_produto_alvo(callback=None) -> dict:
 
 
 def produto_alvo_ja_gerado() -> bool:
-    """True se a tabela produto_alvo (Estágio 7) já existe no DuckDB da
+    """True se a tabela produto_alvo (Estágio 7.1) já existe no DuckDB da
     operação (mesma lógica de estoque_anual_ja_gerado())."""
     if not _BANCO_PATH.exists():
         return False

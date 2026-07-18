@@ -444,16 +444,24 @@ também.
 - Agora **as 3 auditorias da página AUDITORIA1 respeitam o Período de
   Auditoria** de forma consistente.
 
-## 6º botão — "DESCRIÇÃO RELEVANTE" (Estágio 7, 2026-07-18)
+## 6º botão — "DESCRIÇÃO RELEVANTE" (Estágio 7.1, 2026-07-18)
 
 Solicitação Técnica pedindo um novo módulo pra eleger, por `COD_ITEM`, a
 descrição estatisticamente mais frequente (moda) entre as 3 tabelas
 enriquecidas que carregam `COD_ITEM_DECLARACAO`/`DESCR_ITEM_DECLARACAO`
-(`estoque_entradas`/`estoque_saidas`, Estágio 4; `estoque_anual_
-consolidado`, Estágio 5) — um mesmo produto pode ter grafias diferentes
-entre as 3 fontes (erro de digitação, abreviação, atualização de
-cadastro). Serve de nome "oficial" pra padronizar relatórios e apoiar a
-seleção de produtos pra auditoria física.
+— usuário chama essas 3 fontes informalmente de "entradas, saídas e
+estoque" (nomes reais no DuckDB mantidos sem mudança: `estoque_entradas`/
+`estoque_saidas`, Estágio 4; `estoque_anual_consolidado`, Estágio 5) — um
+mesmo produto pode ter grafias diferentes entre as 3 fontes (erro de
+digitação, abreviação, atualização de cadastro). Serve de nome "oficial"
+pra padronizar relatórios e apoiar a seleção de produtos pra auditoria
+física.
+
+Numeração: Estágio 7 é "Escolha do Produto Alvo" (mais amplo, ainda em
+andamento); este módulo é o sub-passo **7.1** ("Fixação da Descrição
+Relevante") — primeiro precedente de numeração `N.M` no projeto (o
+Estágio 6 não numerou seus 6 grupos internos dessa forma). Sub-passos
+seguintes (7.2 em diante) ainda não especificados.
 
 - **`loader.montar_produto_alvo()`/`persistir_produto_alvo()`**: `UNION
   ALL` das 3 tabelas fonte (só as que já existirem — não exige as 3),

@@ -920,21 +920,23 @@ _COLUNAS_PREVIEW_PRODUTO_ALVO = ["COD_ITEM", "DESCR_ALVO"]
 
 
 def render_descricao_relevante() -> None:
-    """Estágio 7 — Descrição Relevante (2026-07-18, Solicitação Técnica):
-    unifica COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO de estoque_entradas,
-    estoque_saidas (Estágio 4) e estoque_anual_consolidado (Estágio 5) e
-    elege, por código, a descrição mais frequente (moda) — ver
-    loader.montar_produto_alvo(). Serve de nome "oficial" pra padronizar
-    relatórios e apoiar a seleção de produtos pra auditoria física.
-    Mesmo padrão de botão "Gerar/Regerar" + prévia de render_estoque_
-    anual()."""
-    st.subheader("Estágio 7 — Descrição Relevante")
+    """Estágio 7.1 — Fixação da Descrição Relevante (2026-07-18,
+    Solicitação Técnica; primeiro sub-passo do Estágio 7 — Escolha do
+    Produto Alvo): unifica COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO de
+    "entradas, saidas e estoque" (nomes reais no DuckDB, sem mudança:
+    estoque_entradas, estoque_saidas — Estágio 4; estoque_anual_
+    consolidado — Estágio 5) e elege, por código, a descrição mais
+    frequente (moda) — ver loader.montar_produto_alvo(). Serve de nome
+    "oficial" pra padronizar relatórios e apoiar a seleção de produtos
+    pra auditoria física. Mesmo padrão de botão "Gerar/Regerar" + prévia
+    de render_estoque_anual()."""
+    st.subheader("Estágio 7.1 — Fixação da Descrição Relevante")
     st.caption(
         "Elege, por COD_ITEM, a descrição estatisticamente mais frequente (moda) entre "
-        "estoque_entradas, estoque_saidas e estoque_anual_consolidado — um mesmo produto pode "
-        "aparecer com grafias levemente diferentes entre essas 3 fontes. Ignora códigos nulos ou "
-        "sentinela ('nd'/'nm', gravados quando o Matching não achou correspondência); empate na "
-        "contagem é desempatado em ordem alfabética (A-Z)."
+        "entradas, saídas e estoque — um mesmo produto pode aparecer com grafias levemente "
+        "diferentes entre essas 3 fontes. Ignora códigos nulos ou sentinela ('nd'/'nm', gravados "
+        "quando o Matching não achou correspondência); empate na contagem é desempatado em ordem "
+        "alfabética (A-Z)."
     )
 
     if "produto_alvo_gerado" not in st.session_state:
@@ -945,16 +947,16 @@ def render_descricao_relevante() -> None:
         st.success(f"✅ {total:,} produto(s) único(s) em `produto_alvo`.".replace(",", "."))
         st.markdown(f"Prévia limitada a 200 linhas de {total:,}".replace(",", "."))
         if df_preview.empty:
-            st.info("Nenhum produto elegível encontrado — gere estoque_entradas/estoque_saidas/"
-                    "estoque_anual_consolidado primeiro, em \"TABELAS ENTRADAS / SAÍDAS / ESTOQUES\".")
+            st.info("Nenhum produto elegível encontrado — gere entradas/saídas/estoque primeiro, "
+                    "em \"TABELAS ENTRADAS / SAÍDAS / ESTOQUES\".")
         else:
             st.dataframe(_preparar_preview(df_preview, _COLUNAS_PREVIEW_PRODUTO_ALVO), use_container_width=True)
 
         clicou = st.button(
             "Regerar Descrições Relevantes",
             key="btn_regerar_produto_alvo",
-            help="Reprocessa estoque_entradas/estoque_saidas/estoque_anual_consolidado e "
-                 "recalcula a descrição mais frequente por código.",
+            help="Reprocessa entradas/saídas/estoque e recalcula a descrição mais frequente por "
+                 "código.",
         )
     else:
         clicou = st.button("Gerar/Regerar Descrições Relevantes", key="btn_gerar_produto_alvo")
@@ -1383,7 +1385,7 @@ def render_menu_principal() -> None:
     render_pagina_extracao()/render_pagina_matching()/
     render_pagina_segregados()/render_pagina_construcao()/
     render_pagina_auditoria1()/render_pagina_descricao_relevante() (este
-    último, Estágio 7, 2026-07-18)."""
+    último, Estágio 7.1, 2026-07-18)."""
     st.subheader("Menu Principal")
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     if col1.button("📥 EXTRAÇÃO", key="btn_menu_extracao", use_container_width=True):
@@ -1585,14 +1587,15 @@ def render_pagina_auditoria1() -> None:
 
 
 def render_pagina_descricao_relevante() -> None:
-    """Painel 'DESCRIÇÃO RELEVANTE' (Estágio 7, 2026-07-18 — Solicitação
-    Técnica), botão de 6º nível no Menu Principal: elege a descrição mais
-    frequente (moda) por COD_ITEM entre estoque_entradas, estoque_saidas
-    (Estágio 4) e estoque_anual_consolidado (Estágio 5) — ver
-    loader.montar_produto_alvo()/render_descricao_relevante(). Serve de
-    nome "oficial" pra padronizar relatórios e apoiar a seleção de
-    produtos pra auditoria física. Exige dados_carregados (mesmo padrão
-    das outras páginas — sem carga, as 3 tabelas fonte não existem)."""
+    """Painel 'DESCRIÇÃO RELEVANTE' (Estágio 7.1 — Fixação da Descrição
+    Relevante, primeiro sub-passo do Estágio 7 — Escolha do Produto Alvo;
+    2026-07-18, Solicitação Técnica), botão de 6º nível no Menu Principal:
+    elege a descrição mais frequente (moda) por COD_ITEM entre entradas,
+    saídas (Estágio 4) e estoque (Estágio 5) — ver loader.
+    montar_produto_alvo()/render_descricao_relevante(). Serve de nome
+    "oficial" pra padronizar relatórios e apoiar a seleção de produtos
+    pra auditoria física. Exige dados_carregados (mesmo padrão das outras
+    páginas — sem carga, as 3 tabelas fonte não existem)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
