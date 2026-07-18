@@ -374,9 +374,25 @@ em [docs/estagios/05_tabela_estoque.md](05_tabela_estoque.md#validação-real-20
   exato, cometa 75×75 exato) — reescrito `carregar_excel_estoque_
   referencia()` e novo `loader._declaracoes_estoque_hunter()` pra comparar
   direto nessa granularidade, dispensando o Estágio 5 como pré-requisito.
-  Divergência final: **2/25.591 (geraldo), 0/127 (PB2 — reconciliação
-  total), 1/75 (cometa, `COD_ITEM=4` com diferença grande — achado real
-  ainda não investigado)**.
+- **Investigação do `COD_ITEM=4` da cometa (a pedido do usuário)**: falso
+  positivo, não divergência real. `COD_ITEM=4` é usado por dois produtos
+  diferentes no SPED cru desta operação (`"0000000004"` = FEIJAO CARIOCA
+  AG, `"4"` sem padding = FEIJAO MACASSAR) — colidem no mesmo código
+  normalizado. O Excel de referência tem a MESMA colisão (2 linhas,
+  descrições diferentes), e os valores batiam perfeitamente par a par
+  (17.933,5 e 6.873,7 dos dois lados) — mas `groupby(...).first()`
+  comparava a declaração errada entre si, reportando 11.059,8 de
+  divergência que não existia. Trocado por nova
+  `loader._ordenar_duplicatas_por_quantidade()`: quando há mais de uma
+  linha por `(COD_ITEM, ANO)` de um lado, casa pela quantidade mais
+  próxima (ótimo pra minimizar diferença total) em vez de pela ordem do
+  arquivo — mesma técnica resolve de quebra a duplicidade da geraldo,
+  agora isolando corretamente as 10 declarações espúrias de `31/01/2020`
+  como "só no Hunter" em vez de mascará-las.
+- Divergência final: **0/127 (PB2 — reconciliação total), 0/75 (cometa —
+  reconciliação total, incluindo o `COD_ITEM=4`), 10/25.600 (geraldo — as
+  10 duplicidades conhecidas de `31/01/2020`, nenhuma divergência real de
+  valor)**.
 - Validado via script direto contra as 3 bases reais (`loader.
   auditar_divergencia_estoque()` importado com o runtime portátil de cada
   operação) — sem Playwright nesta sessão (ferramenta de browser

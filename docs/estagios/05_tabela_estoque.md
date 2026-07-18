@@ -106,13 +106,25 @@ linha por declaração física de inventário, igual ao Excel de referência,
 sem passar pelo formato item×ano do Estágio 5. Revisado no mesmo dia:
 `auditar_divergencia_estoque()` agora lê H010 cru direto (`loader.
 _declaracoes_estoque_hunter()`) e compara 1:1 contra o Excel — total de
-linhas bate quase exato nas 3 operações reais (**geraldo 25.591×25.590,
+linhas bate quase exato nas 3 operações reais (**geraldo 25.590×25.600,
 PB2 127×127 exato, cometa 75×75 exato**), dispensando o Estágio 5 como
-pré-requisito desta auditoria. Divergência final: **2/25.591 (geraldo,
-zero divergência de valor — mesma duplicidade pré-existente de declaração
-de antes, ex. `COD_ITEM=18653`), 0/127 (PB2, reconciliação total), 1/75
-(cometa, `COD_ITEM=4` com diferença grande — achado real ainda não
-investigado)**.
+pré-requisito desta auditoria.
+
+Investigando os poucos pares divergentes restantes (a pedido do usuário),
+achado um segundo problema: quando `(COD_ITEM, ANO_REFERENCIA)` tem mais
+de uma linha de um lado (código de item reutilizado por dois produtos
+diferentes no SPED, ou a duplicidade de `31/01/2020` da geraldo), a
+comparação usava `groupby(...).first()` — pegava a declaração na ordem de
+leitura do arquivo, não a mais parecida, criando falsos positivos (ex.:
+cometa `COD_ITEM=4` reportava divergência de 11.059,8 entre duas
+declarações que na verdade batiam exatas cada uma com seu par certo).
+Trocado por `_ordenar_duplicatas_por_quantidade()` — casa duplicatas pela
+quantidade mais próxima entre os dois lados (ótimo pra minimizar a soma
+das diferenças, não é heurística arbitrária). Resultado final: **0/127
+(PB2), 0/75 (cometa — reconciliação total, incluindo o caso `COD_ITEM=4`),
+10/25.600 (geraldo — as 10 declarações duplicadas de `31/01/2020`, agora
+corretamente isoladas como "só no Hunter" em vez de mascaradas por
+`.first()`)**.
 
 ## Ver também
 

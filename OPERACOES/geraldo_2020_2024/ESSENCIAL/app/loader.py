@@ -2859,9 +2859,24 @@ def _declaracoes_estoque_hunter() -> pd.DataFrame:
     })
 
 
+def _ordenar_duplicatas_por_quantidade(df: pd.DataFrame, col_qtd: str, chave: list) -> pd.DataFrame:
+    """Numera duplicatas de `chave` (0, 1, 2...) em ordem CRESCENTE de
+    `col_qtd` — usado por auditar_divergencia_estoque() pra parear
+    declarações duplicadas do mesmo (COD_ITEM, ANO_REFERENCIA) entre
+    Hunter e Excel pela quantidade mais próxima, em vez de manter a ordem
+    original do arquivo (que pode casar a declaração errada quando há
+    mais de uma linha pro mesmo par, gerando falso positivo de
+    divergência). Ordenar os dois lados igual e casar por posição é ótimo
+    pra minimizar a soma das diferenças absolutas entre dois conjuntos do
+    mesmo tamanho — não é uma escolha arbitrária."""
+    df = df.sort_values(chave + [col_qtd], kind="stable").copy()
+    df["_ORDEM"] = df.groupby(chave).cumcount()
+    return df
+
+
 def auditar_divergencia_estoque() -> dict:
     """Estudo de diferenças Hunter × Excel de referência pro lado estoque
-    (2026-07-17, revisado no mesmo dia) — compara as declarações de
+    (2026-07-17, revisado 2x no mesmo dia) — compara as declarações de
     inventário CRUAS do Bloco H (`_declaracoes_estoque_hunter()`, H010
     direto) com o Excel `ESTOQUE(...).xlsx` da raiz da operação, por
     `(COD_ITEM, ANO_REFERENCIA)`, no MESMO modelo de linha do arquivo de
@@ -2884,13 +2899,29 @@ def auditar_divergencia_estoque() -> dict:
     como QUANTIDADE=0 do Hunter, e vice-versa, já capturando o resíduo
     bidirecional dentro da própria tabela de divergência.
 
-    Achado real (geraldo, 2026-07-17): 10 declarações H005 datadas
-    `31/01/2020` são duplicidade pré-existente no SPED (mesma quantidade
-    já coberta pela declaração normal de `31/12/2019`, ausentes do Excel
-    de referência) — colidem em `ANO_REFERENCIA=2020` com a declaração
-    real de `31/12/2020` do mesmo item. Resolvido aqui via
-    `groupby(...).first()` pra não inflar a comparação com fanout — não
-    corrige o SPED original, só evita duplicar linhas na auditoria.
+    Achado real 1 (geraldo): 10 declarações H005 datadas `31/01/2020` são
+    duplicidade pré-existente no SPED (mesma quantidade já coberta pela
+    declaração normal de `31/12/2019`, ausentes do Excel de referência) —
+    colidem em `ANO_REFERENCIA=2020` com a declaração real de
+    `31/12/2020` do mesmo item.
+
+    Achado real 2 (cometa, investigado a pedido do usuário): `COD_ITEM=4`
+    é usado por DOIS produtos diferentes no SPED cru desta operação —
+    `"0000000004"` (FEIJAO CARIOCA AG) e `"4"` sem padding (FEIJAO
+    MACASSAR) — que colidem no mesmo `COD_ITEM` normalizado (ver
+    `_normalizar_cod_item_numerico()`). O Excel de referência tem a MESMA
+    colisão (2 linhas com `CodItem=4`, descrições diferentes) — os
+    valores batem perfeitamente par a par (17.933,5 e 6.873,7 dos dois
+    lados), mas a primeira versão desta função usava `groupby(...).first()`
+    e comparava a declaração errada entre si (17.933,5 Hunter × 6.873,7
+    Excel), reportando uma divergência de 11.059,8 que não existia.
+
+    Ambos os achados são resolvidos pela mesma técnica —
+    `_ordenar_duplicatas_por_quantidade()` em vez de `.first()`: quando um
+    (COD_ITEM, ANO) tem mais de uma linha de um lado, casa pela
+    quantidade mais próxima em vez de pela ordem de leitura do arquivo.
+    Não corrige os dados de origem (SPED cru ou Excel) — só evita
+    comparar a declaração errada dentro da auditoria.
 
     Devolve `{'resumo': dict, 'divergentes': DataFrame, 'erros': list}`
     — `erros` não-vazio quando não há Excel de referência nesta operação
@@ -2905,9 +2936,12 @@ def auditar_divergencia_estoque() -> dict:
             "resumo": {}, "divergentes": pd.DataFrame(),
             "erros": ["Nenhuma declaração de inventário (Bloco H) encontrada nesta operação."],
         }
-    hunter = hunter.groupby(["ANO_REFERENCIA", "COD_ITEM"], as_index=False)["QUANTIDADE"].first()
 
-    base = df_excel.merge(hunter, on=["ANO_REFERENCIA", "COD_ITEM"], how="outer")
+    chave = ["ANO_REFERENCIA", "COD_ITEM"]
+    df_excel = _ordenar_duplicatas_por_quantidade(df_excel, "EXCEL_QTDE", chave)
+    hunter = _ordenar_duplicatas_por_quantidade(hunter, "QUANTIDADE", chave)
+
+    base = df_excel.merge(hunter, on=chave + ["_ORDEM"], how="outer").drop(columns="_ORDEM")
     base["EXCEL_QTDE"] = base["EXCEL_QTDE"].fillna(0.0)
     base["QUANTIDADE"] = base["QUANTIDADE"].fillna(0.0)
     base["EXCEL_DESCR_ITEM"] = base["EXCEL_DESCR_ITEM"].fillna("")
