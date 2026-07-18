@@ -631,6 +631,27 @@ mesma) já é o código dela — sem precisar de Matching. Confirmado: coluna
   únicos, por unir padrões de código antes fragmentados entre Compras e
   Vendas).
 
+## Dedup de autoemissão ET/EP, restrita ao cálculo do 7.2 (2026-07-18, mesmo dia)
+
+Investigando resíduo linha a linha do produto testado (a pedido do
+usuário), achado: `estoque_entradas`/`estoque_saidas` têm **241 itens
+(mesma `CHV_NFE`+`NITEM`) duplicados entre `PASTA_ORIGEM='ET'` e
+`'EP'`** — as 11 notas de autoemissão já documentadas no projeto,
+contando como entrada E saída ao mesmo tempo; R$74.773,52 inflados em
+dobro em CADA tabela. A correção de 2026-07-17 só resolveu o subcaso
+CFOP 5927/6927 — não este padrão geral.
+
+Usuário pediu correção "somente para o levantamento do 7.2" — sem
+regenerar `estoque_entradas`/`estoque_saidas` (Estágio 4). `loader.
+_valores_por_ano_item()` ganhou `ROW_NUMBER() OVER (PARTITION BY
+CHV_NFE, NITEM ORDER BY PASTA_ORIGEM)` antes da soma, restrito a esta
+consulta — mantém 1 linha por item físico. Resultado pro produto
+testado: divergência de 2022 caiu de R$-99,83 pra **R$4,17** (a
+duplicidade era a causa dominante daquele resíduo). Pendência de
+corrigir a duplicação nas tabelas do Estágio 4 em si (afetando também as
+3 auditorias de AUDITORIA1) continua em aberto, registrada em
+`memoria/2026-07-18.md`.
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —

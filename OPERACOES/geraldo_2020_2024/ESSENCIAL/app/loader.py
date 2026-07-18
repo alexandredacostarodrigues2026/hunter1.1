@@ -2538,7 +2538,21 @@ def _valores_por_ano_item(tabela: str, coluna_ano: str, coluna_cod_item: str) ->
     normalizado aqui — ver `_normalizar_cod_item_flexivel()`, aplicado
     pelo chamador antes de casar com `produto_alvo`/Compras/Estoque
     (paddings diferentes pro MESMO item entre `COD_ITEM_DECLARACAO` e
-    `cprod`). Vazia se a tabela não existir ainda (Estágio 4 não gerado)."""
+    `cprod`). Vazia se a tabela não existir ainda (Estágio 4 não gerado).
+
+    Deduplicação ET/EP (2026-07-18, achado ao investigar resíduo do 7.2 a
+    pedido do usuário): `estoque_entradas`/`estoque_saidas` têm 241 itens
+    (mesma `CHV_NFE`+`NITEM`) duplicados entre `PASTA_ORIGEM='ET'` e
+    `'EP'` — as 11 notas de autoemissão já documentadas no projeto
+    (`_chaves_autoemissao_duplicada()`), que contam como entrada E saída
+    ao mesmo tempo; R$74.773,52 inflados em dobro em CADA tabela. A
+    correção de 2026-07-17 só excluiu o subcaso CFOP 5927/6927 de
+    `mask_entrada_real` — não elimina esta duplicação mais geral, que
+    ainda existe nas tabelas persistidas do Estágio 4. Usuário pediu
+    correção "somente para o levantamento do 7.2" — não tocar nas
+    tabelas do Estágio 4: aqui, `ROW_NUMBER() OVER (PARTITION BY
+    CHV_NFE, NITEM ORDER BY PASTA_ORIGEM)` mantém só 1 linha por item
+    físico antes de somar, restrito à consulta deste módulo."""
     colunas = ["ANO", "COD_ITEM", "VALOR"]
     if not _BANCO_PATH.exists():
         return pd.DataFrame(columns=colunas)
@@ -2548,9 +2562,17 @@ def _valores_por_ano_item(tabela: str, coluna_ano: str, coluna_cod_item: str) ->
             if tabela not in tabelas:
                 return pd.DataFrame(columns=colunas)
             df = con.execute(
-                f"SELECT {coluna_ano} AS ANO, {coluna_cod_item} AS COD_ITEM, "
-                f"SUM(TRY_CAST(fatoitemnfe_infnfe_det_prod_vprod AS DOUBLE)) AS VALOR FROM {tabela} "
-                f"WHERE {coluna_cod_item} IS NOT NULL GROUP BY {coluna_ano}, {coluna_cod_item}"
+                f"WITH dedup_et_ep AS ("
+                f"  SELECT {coluna_ano} AS ANO, {coluna_cod_item} AS COD_ITEM, "
+                f"         fatoitemnfe_infnfe_det_prod_vprod AS VPROD, "
+                f"         ROW_NUMBER() OVER ("
+                f"           PARTITION BY fatoitemnfe_infprot_chnfe, fatoitemnfe_infnfe_det_nitem "
+                f"           ORDER BY PASTA_ORIGEM"
+                f"         ) AS rn "
+                f"  FROM {tabela} WHERE {coluna_cod_item} IS NOT NULL"
+                f") "
+                f"SELECT ANO, COD_ITEM, SUM(TRY_CAST(VPROD AS DOUBLE)) AS VALOR "
+                f"FROM dedup_et_ep WHERE rn = 1 GROUP BY ANO, COD_ITEM"
             ).df()
         return df
     except Exception:
