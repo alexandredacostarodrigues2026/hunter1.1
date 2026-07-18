@@ -2453,6 +2453,236 @@ def consultar_produto_alvo(limite: "int | None" = 200) -> "tuple[pd.DataFrame, i
         return pd.DataFrame(), 0
 
 
+# ── Estágio 7.2 — Cruzamento por Valor ───────────────────────────────────────
+# Solicitação Técnica (2026-07-18): aplica a identidade contábil EI+Compras=
+# Vendas+EF por (COD_ITEM, ANO), em R$ — perspectiva híbrida definida pelo
+# usuário: Compras (estoque_entradas) e Estoque (Bloco H) pela visão da
+# própria auditada (dado já vinculado ao COD_ITEM_DECLARACAO dela via
+# Matching/BC3, ou por ela mesma declarado no SPED), Vendas (estoque_saidas)
+# pela visão física do XML (nota fiscal emitida) — mesmo raciocínio de
+# "verdade física vs. declarada" da RN1 original (`regra de negócios
+# unificadas/regra negocio_pu_rn1_ei+c=v+ef_1.txt`); aqui só a MONTAGEM da
+# base em valor, sem a lógica de PU/omissão do texto original (isso continua
+# reservado pro Estágio 15).
+_COLUNAS_CRUZAMENTO_VALOR = [
+    "ANO", "COD_ITEM", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO",
+    "VENDAS", "EF", "TOTAL_CREDITO", "DIVERGENCIA",
+]
+
+
+def _valores_estoque_hunter() -> pd.DataFrame:
+    """Valor (VL_ITEM) do Bloco H, no formato "largo" ano×item — EI e EF
+    na MESMA linha física (diferente de `_declaracoes_estoque_hunter()`,
+    uma linha por declaração, usada pela Auditoria de Estoque): cada
+    declaração contribui pro EF do ano de `DT_INV` e, ao mesmo tempo, pro
+    EI do ano seguinte — mesma regra de continuidade de `montar_estoque_
+    anual_consolidado()` (Estágio 5), aqui aplicada a VALOR em vez de
+    QUANTIDADE. `VL_ITEM` não existe em `estoque_anual_consolidado` (só
+    QUANTIDADE_INICIAL/FINAL) — lido direto do SPED cru (`load_
+    declaracao_estoque()`). Função paralela, decisão explícita do usuário
+    de não estender o schema do Estágio 5 pra isso. `COD_ITEM` não
+    normalizado (mesma convenção de `montar_produto_alvo()` — igualdade
+    exata com o `COD_ITEM_DECLARACAO` cru, sem stripping de zeros).
+    Soma VL_ITEM por (ANO, COD_ITEM) — declarações duplicadas (achado
+    real de 2026-07-17/18, ex.: geraldo `DT_INV=31/01/2020`) se somam
+    entre si; caso raro, mitigado na prática pelo filtro de Período de
+    Auditoria em `gerar_cruzamento_valor()`."""
+    df_est, _ = load_declaracao_estoque()
+    if df_est.empty or "DT_INV" not in df_est.columns:
+        return pd.DataFrame(columns=["ANO", "COD_ITEM", "VALOR_INICIAL", "VALOR_FINAL"])
+    df = df_est[df_est["DT_INV"].str.fullmatch(r"\d{8}")].copy()
+    if df.empty:
+        return pd.DataFrame(columns=["ANO", "COD_ITEM", "VALOR_INICIAL", "VALOR_FINAL"])
+
+    ano_inv = df["DT_INV"].str[4:8].astype(int)
+    valor = _numero_decimal_br(df["VL_ITEM"])
+    cod_item = df["COD_ITEM"].astype(str)
+
+    base_ei = (
+        pd.DataFrame({"ANO": (ano_inv + 1).astype(str), "COD_ITEM": cod_item, "VALOR_INICIAL": valor})
+        .groupby(["ANO", "COD_ITEM"], as_index=False)["VALOR_INICIAL"].sum()
+    )
+    base_ef = (
+        pd.DataFrame({"ANO": ano_inv.astype(str), "COD_ITEM": cod_item, "VALOR_FINAL": valor})
+        .groupby(["ANO", "COD_ITEM"], as_index=False)["VALOR_FINAL"].sum()
+    )
+    return base_ei.merge(base_ef, on=["ANO", "COD_ITEM"], how="outer")
+
+
+def _valores_por_ano_item(tabela: str, coluna_ano: str) -> pd.DataFrame:
+    """Soma `fatoitemnfe_infnfe_det_prod_vprod` ("Valor bruto do produto",
+    ver DICIONARIO DE CAMPOS.txt — não existe coluna literal `VL_ITEM`
+    nas tabelas de XML) por (`COD_ITEM_DECLARACAO`, `coluna_ano`) numa
+    tabela do Estágio 4 (`estoque_entradas`/`estoque_saidas`) — usado por
+    `gerar_cruzamento_valor()` pra Compras/Vendas. `coluna_ano` só recebe
+    literais fixos do chamador (nunca input do usuário). Coluna gravada
+    como VARCHAR (achado real: sempre decimal com ponto nas 3 operações
+    reais, nunca vírgula — `TRY_CAST` direto, sem `REPLACE`; `TRY_CAST`
+    em vez de `CAST` pra não quebrar a query inteira se algum valor futuro
+    vier malformado, tratando como NULL/0 em vez de erro). Vazia se a
+    tabela não existir ainda (Estágio 4 não gerado)."""
+    colunas = ["ANO", "COD_ITEM", "VALOR"]
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas)
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if tabela not in tabelas:
+                return pd.DataFrame(columns=colunas)
+            df = con.execute(
+                f"SELECT {coluna_ano} AS ANO, COD_ITEM_DECLARACAO AS COD_ITEM, "
+                f"SUM(TRY_CAST(fatoitemnfe_infnfe_det_prod_vprod AS DOUBLE)) AS VALOR FROM {tabela} "
+                f"WHERE COD_ITEM_DECLARACAO IS NOT NULL GROUP BY {coluna_ano}, COD_ITEM_DECLARACAO"
+            ).df()
+        return df
+    except Exception:
+        logger.exception("Erro ao somar valor por ano/item em %s (%s)", tabela, _BANCO_PATH)
+        return pd.DataFrame(columns=colunas)
+
+
+def gerar_cruzamento_valor() -> dict:
+    """Estágio 7.2 — monta o Cruzamento por Valor: uma linha por (ANO,
+    COD_ITEM) com EI, Compras, Total Débito (EI+Compras), Vendas, EF,
+    Total Crédito (Vendas+EF) e Divergência (Débito−Crédito), em R$.
+
+    Identidade: INNER JOIN com `produto_alvo` (Estágio 7.1) por
+    `COD_ITEM` — itens sem `DESCR_ALVO` (código 'nd'/'nm'/nulo, já
+    filtrados na origem) ficam de fora, mesmo critério de 7.1.
+
+    Continuidade: EI(ano) = EF(ano-1) da mesma declaração de inventário
+    (ver `_valores_estoque_hunter()`).
+
+    Escopo do Período de Auditoria: quando configurado (`obter_periodo_
+    auditoria()`), restringe `ANO` a `[ano_inicial, ano_final]` — mesmo
+    filtro das 3 auditorias de AUDITORIA1 (2026-07-18). Sem período
+    configurado, mostra todos os anos presentes nos dados.
+
+    Ausência de uma métrica pra um (ANO, COD_ITEM) vira 0 (`fillna`) —
+    não erro: um item comprado mas nunca vendido naquele ano aparece com
+    VENDAS=0, por exemplo.
+
+    Regra R07: `ANO`/`COD_ITEM` sempre string.
+
+    Devolve `{'resumo': dict, 'cruzamento': DataFrame, 'erros': list}` —
+    `erros` não-vazio quando `produto_alvo` (Estágio 7.1) ainda não foi
+    gerada."""
+    produto_alvo, _ = consultar_produto_alvo(limite=None)
+    if produto_alvo.empty:
+        return {
+            "resumo": {}, "cruzamento": pd.DataFrame(),
+            "erros": ["Tabela produto_alvo (Estágio 7.1) ainda não foi gerada."],
+        }
+
+    compras = _valores_por_ano_item("estoque_entradas", "ANO_ELEITO").rename(columns={"VALOR": "COMPRAS"})
+    vendas = _valores_por_ano_item("estoque_saidas", "ANO_ELEITO").rename(columns={"VALOR": "VENDAS"})
+    estoque = _valores_estoque_hunter()
+
+    periodo = obter_periodo_auditoria()
+    if periodo:
+        ano_ini, ano_fim = int(periodo["ano_inicial"]), int(periodo["ano_final"])
+        compras = compras[compras["ANO"].astype(int).between(ano_ini, ano_fim)]
+        vendas = vendas[vendas["ANO"].astype(int).between(ano_ini, ano_fim)]
+        if not estoque.empty:
+            estoque = estoque[estoque["ANO"].astype(int).between(ano_ini, ano_fim)]
+
+    base = compras.merge(vendas, on=["ANO", "COD_ITEM"], how="outer")
+    if estoque.empty:
+        base["VALOR_INICIAL"] = 0.0
+        base["VALOR_FINAL"] = 0.0
+    else:
+        base = base.merge(estoque, on=["ANO", "COD_ITEM"], how="outer")
+    if base.empty:
+        return {"resumo": {}, "cruzamento": pd.DataFrame(), "erros": []}
+
+    for col in ("COMPRAS", "VENDAS", "VALOR_INICIAL", "VALOR_FINAL"):
+        base[col] = base[col].fillna(0.0)
+    base = base.rename(columns={"VALOR_INICIAL": "EI", "VALOR_FINAL": "EF"})
+
+    base = base.merge(produto_alvo, on="COD_ITEM", how="inner")
+    if base.empty:
+        return {"resumo": {}, "cruzamento": pd.DataFrame(), "erros": []}
+
+    base["TOTAL_DEBITO"] = (base["EI"] + base["COMPRAS"]).round(2)
+    base["TOTAL_CREDITO"] = (base["VENDAS"] + base["EF"]).round(2)
+    base["DIVERGENCIA"] = (base["TOTAL_DEBITO"] - base["TOTAL_CREDITO"]).round(2)
+
+    cruzamento = (
+        _forcar_colunas_string(base, ["ANO", "COD_ITEM"])[_COLUNAS_CRUZAMENTO_VALOR]
+        .sort_values(["ANO", "COD_ITEM"])
+        .reset_index(drop=True)
+    )
+
+    resumo = {
+        "total_linhas": len(cruzamento),
+        "total_produtos": int(cruzamento["COD_ITEM"].nunique()),
+        "total_divergencia_absoluta": float(cruzamento["DIVERGENCIA"].abs().sum()),
+        "periodo": periodo,
+    }
+    return {"resumo": resumo, "cruzamento": cruzamento, "erros": []}
+
+
+def persistir_cruzamento_valor(callback=None) -> dict:
+    """Estágio 7.2: persiste cruzamento_valor no DuckDB, ver
+    gerar_cruzamento_valor(). callback(etapa, n) chamado ao final."""
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    resultado = {}
+    try:
+        r = gerar_cruzamento_valor()
+        if r["erros"]:
+            resultado["erro"] = " | ".join(r["erros"])
+            return resultado
+        df = r["cruzamento"]
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            if not df.empty:
+                con.register("_df_cruzamento_valor", df)
+                con.execute("CREATE OR REPLACE TABLE cruzamento_valor AS SELECT * FROM _df_cruzamento_valor")
+                con.unregister("_df_cruzamento_valor")
+        resultado["cruzamento_valor"] = len(df)
+        if callback:
+            callback("cruzamento_valor", resultado["cruzamento_valor"])
+    except Exception as exc:
+        logger.exception("Erro ao persistir cruzamento_valor: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def cruzamento_valor_ja_gerado() -> bool:
+    """True se a tabela cruzamento_valor (Estágio 7.2) já existe no
+    DuckDB da operação."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            return "cruzamento_valor" in tabelas
+    except Exception:
+        logger.exception("Erro ao verificar cruzamento_valor existente em %s", _BANCO_PATH)
+        return False
+
+
+def consultar_cruzamento_valor(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê cruzamento_valor já persistida (sem reprocessar), devolvendo
+    uma amostra (até 'limite' linhas) e o total real de linhas.
+    limite=None devolve a tabela inteira."""
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "cruzamento_valor" not in tabelas:
+                return pd.DataFrame(), 0
+            total = con.execute("SELECT COUNT(*) FROM cruzamento_valor").fetchone()[0]
+            query = (
+                "SELECT * FROM cruzamento_valor" if limite is None
+                else f"SELECT * FROM cruzamento_valor LIMIT {limite}"
+            )
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar cruzamento_valor em %s", _BANCO_PATH)
+        return pd.DataFrame(), 0
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio

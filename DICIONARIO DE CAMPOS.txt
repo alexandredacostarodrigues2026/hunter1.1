@@ -97,6 +97,16 @@ DATA_ELEITA_ORIGEM;Origem da Data
 # Novos campos - 2026-07-16 (Estagio 1 - motivo de segregacao no painel SEGREGADOS)
 MOTIVO_SEGREGACAO;Motivo da Segregacao
 
-# Novos campos - 2026-07-18 (Estagio 7 - Descricao Relevante, tabela produto_alvo)
+# Novos campos - 2026-07-18 (Estagio 7.1 - Descricao Relevante, tabela produto_alvo)
 COD_ITEM;Cod. Produto
 DESCR_ALVO;Descricao Relevante
+
+# Novos campos - 2026-07-18 (Estagio 7.2 - Cruzamento por Valor, tabela cruzamento_valor)
+ANO;Ano
+EI;EI (R$)
+COMPRAS;Compras (R$)
+TOTAL_DEBITO;Total Debito (R$)
+VENDAS;Vendas (R$)
+EF;EF (R$)
+TOTAL_CREDITO;Total Credito (R$)
+DIVERGENCIA;Divergencia (R$)

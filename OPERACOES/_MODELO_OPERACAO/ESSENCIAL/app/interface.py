@@ -975,6 +975,87 @@ def render_descricao_relevante() -> None:
     st.rerun()
 
 
+_COLUNAS_PREVIEW_CRUZAMENTO_VALOR = [
+    "ANO", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO", "DIVERGENCIA",
+]
+
+
+def render_cruzamento_valor() -> None:
+    """Estágio 7.2 — Cruzamento por Valor (2026-07-18, Solicitação
+    Técnica): aplica EI+Compras=Vendas+EF por (ANO, COD_ITEM), em R$ — ver
+    loader.gerar_cruzamento_valor(). Identidade pela DESCR_ALVO do
+    Estágio 7.1 (produto_alvo); exige essa tabela já gerada. Mesmo padrão
+    "Gerar/Regerar" + prévia de render_descricao_relevante(), com filtros
+    de Ano (multiselect) e busca textual por Descrição — aplicados só na
+    exibição (client-side sobre a prévia carregada), não refazem o
+    cálculo."""
+    st.subheader("Estágio 7.2 — Cruzamento por Valor")
+    st.caption(
+        "Aplica EI + Compras = Vendas + EF por (Ano, Produto), em R$ — Compras (entradas) e "
+        "Estoque pela visão declarada/vinculada da auditada, Vendas (saídas) pela visão física "
+        "do XML. Identidade pela Descrição Relevante (Estágio 7.1); itens sem descrição eleita "
+        "ficam de fora."
+    )
+
+    if "cruzamento_valor_gerado" not in st.session_state:
+        st.session_state["cruzamento_valor_gerado"] = loader.cruzamento_valor_ja_gerado()
+
+    if st.session_state["cruzamento_valor_gerado"]:
+        df_preview, total = loader.consultar_cruzamento_valor(limite=None)
+        periodo_txt = ""
+        if not df_preview.empty:
+            periodo = loader.obter_periodo_auditoria()
+            periodo_txt = _texto_periodo_auditoria(periodo)
+        st.success(f"✅ {total:,} linha(s) em `cruzamento_valor`.{periodo_txt}".replace(",", "."))
+
+        if df_preview.empty:
+            st.info('Nenhuma linha gerada — gere "Descrições Relevantes" (Estágio 7.1) e as '
+                    'tabelas de entradas/saídas/estoque primeiro.')
+        else:
+            col_ano, col_busca = st.columns(2)
+            anos_disponiveis = sorted(df_preview["ANO"].unique())
+            anos_selecionados = col_ano.multiselect(
+                "Filtrar por Ano", anos_disponiveis, default=anos_disponiveis, key="filtro_ano_cruzamento_valor",
+            )
+            busca_descricao = col_busca.text_input(
+                "Buscar por Descrição", key="filtro_descricao_cruzamento_valor",
+            )
+
+            filtrado = df_preview[df_preview["ANO"].isin(anos_selecionados)]
+            if busca_descricao.strip():
+                filtrado = filtrado[
+                    filtrado["DESCR_ALVO"].str.contains(busca_descricao.strip(), case=False, na=False)
+                ]
+
+            st.markdown(f"**{len(filtrado):,} linha(s)** após filtro.".replace(",", "."))
+            st.dataframe(
+                _preparar_preview(filtrado.head(200), _COLUNAS_PREVIEW_CRUZAMENTO_VALOR),
+                use_container_width=True,
+            )
+
+        clicou = st.button(
+            "Regerar Cruzamento por Valor",
+            key="btn_regerar_cruzamento_valor",
+            help="Reprocessa entradas/saídas/estoque + produto_alvo e recalcula EI/Compras/"
+                 "Vendas/EF por ano e produto.",
+        )
+    else:
+        clicou = st.button("Gerar Cruzamento por Valor", key="btn_gerar_cruzamento_valor")
+
+    if not clicou:
+        return
+
+    with st.spinner("Calculando EI/Compras/Vendas/EF por ano e produto..."):
+        resultado = loader.persistir_cruzamento_valor()
+
+    if "erro" in resultado:
+        st.error(f"Erro: {resultado['erro']}")
+        return
+
+    st.session_state["cruzamento_valor_gerado"] = True
+    st.rerun()
+
+
 _COLUNAS_PREVIEW_DIVERGENCIA = [
     "CHV_NFE", "EXCEL_QTD_ITENS", "HUNTER_ENTRADAS_QTD", "ITENS_ENTRADAS_REAIS",
     "ITENS_SAIDAS_REAIS", "ITENS_SITUACAO", "ITENS_ANALISE_CFOP",
@@ -1381,13 +1462,14 @@ def render_auditoria_divergencia_estoque() -> None:
 # desde 2026-07-13 e não mudou — só a navegação.
 
 def render_menu_principal() -> None:
-    """Menu principal (Estágio 6): 6 botões despacham para
+    """Menu principal (Estágio 6): 7 botões despacham para
     render_pagina_extracao()/render_pagina_matching()/
     render_pagina_segregados()/render_pagina_construcao()/
-    render_pagina_auditoria1()/render_pagina_descricao_relevante() (este
-    último, Estágio 7.1, 2026-07-18)."""
+    render_pagina_auditoria1()/render_pagina_descricao_relevante()
+    (Estágio 7.1)/render_pagina_cruzamento_valor() (Estágio 7.2,
+    2026-07-18)."""
     st.subheader("Menu Principal")
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
     if col1.button("📥 EXTRAÇÃO", key="btn_menu_extracao", use_container_width=True):
         st.session_state["pagina_ativa"] = "extracao"
         st.rerun()
@@ -1408,6 +1490,9 @@ def render_menu_principal() -> None:
         st.rerun()
     if col6.button("🏷️ DESCRIÇÃO RELEVANTE", key="btn_menu_descricao_relevante", use_container_width=True):
         st.session_state["pagina_ativa"] = "descricao_relevante"
+        st.rerun()
+    if col7.button("📉 7.2: CRUZAMENTO POR VALOR", key="btn_menu_cruzamento_valor", use_container_width=True):
+        st.session_state["pagina_ativa"] = "cruzamento_valor"
         st.rerun()
 
 
@@ -1601,3 +1686,19 @@ def render_pagina_descricao_relevante() -> None:
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     render_descricao_relevante()
+
+
+def render_pagina_cruzamento_valor() -> None:
+    """Painel '7.2: CRUZAMENTO POR VALOR' (Estágio 7.2 — segundo sub-passo
+    do Estágio 7 — Escolha do Produto Alvo; 2026-07-18, Solicitação
+    Técnica), botão de 7º nível no Menu Principal: aplica EI+Compras=
+    Vendas+EF por (ANO, COD_ITEM) em R$ — ver loader.
+    gerar_cruzamento_valor()/render_cruzamento_valor(). Exige
+    dados_carregados (mesmo padrão das outras páginas — sem carga, as
+    tabelas fonte não existem); depende também de produto_alvo (Estágio
+    7.1) já gerada, checado dentro de render_cruzamento_valor()."""
+    _botao_voltar_menu()
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        return
+    render_cruzamento_valor()

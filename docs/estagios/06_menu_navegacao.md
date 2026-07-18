@@ -501,6 +501,68 @@ seguintes (7.2 em diante) ainda não especificados.
   desempate por ordem alfabética existe pra quando isso deixar de ser
   verdade, não foi exercitada com um caso real de empate).
 
+## 7º botão — "7.2: CRUZAMENTO POR VALOR" (Estágio 7.2, 2026-07-18, mesmo dia)
+
+Solicitação Técnica seguinte, pedindo um segundo sub-passo do Estágio 7
+("Escolha do Produto Alvo"): elevar a métrica de análise de QUANTIDADE
+(Auditoria de Estoque, Estágio 5) pra VALOR (R$), aplicando a identidade
+contábil `EI + Compras = Vendas + EF` por `(ANO, COD_ITEM)` — perspectiva
+híbrida definida pelo usuário: Compras (`estoque_entradas`) e Estoque
+(Bloco H) pela visão da própria auditada, Vendas (`estoque_saidas`) pela
+visão física do XML.
+
+- **Lacuna de dados achada antes de implementar**: `estoque_anual_
+  consolidado` (Estágio 5) não tem NENHUMA coluna de valor — só
+  `QUANTIDADE_INICIAL`/`QUANTIDADE_FINAL`. O `VL_ITEM` do inventário
+  existe no SPED cru (H010), mas nunca foi carregado pra tabela
+  consolidada. **Perguntado ao usuário antes de mexer** (`AskUserQuestion`):
+  construir uma função paralela que lê `VL_ITEM` direto do SPED cru (sem
+  tocar o Estágio 5) ou estender o schema de `estoque_anual_consolidado`
+  (exigiria regenerar as 3 operações reais). Confirmado: função paralela
+  — `loader._valores_estoque_hunter()`, mesma técnica de `_declaracoes_
+  estoque_hunter()` (Auditoria de Estoque), mas no formato "largo"
+  (EI/EF na mesma linha, não uma linha por declaração) porque o relatório
+  pedido precisa das duas colunas juntas por `(ANO, COD_ITEM)`.
+- **Segundo achado real**: `fatoitemnfe_infnfe_det_prod_vprod` ("Valor
+  bruto do produto", a coluna de valor de `estoque_entradas`/
+  `estoque_saidas` — não existe coluna literal `VL_ITEM` nessas tabelas)
+  é gravada como `VARCHAR`, quebrando `SUM()` direto no DuckDB
+  (`Binder Error: no function matches sum(VARCHAR)`) — achado só ao
+  testar contra as 3 bases reais. Corrigido com `SUM(TRY_CAST(... AS
+  DOUBLE))`; confirmado que a coluna é sempre decimal com PONTO nas 3
+  operações reais (nunca vírgula, nunca nula/vazia), então não precisou
+  de `REPLACE` de vírgula.
+- **`loader._valores_por_ano_item(tabela, coluna_ano)`**: soma o valor
+  por `(COD_ITEM_DECLARACAO, coluna_ano)` numa tabela do Estágio 4 —
+  usada pra Compras (`estoque_entradas`, `ANO_ELEITO`) e Vendas
+  (`estoque_saidas`, `ANO_ELEITO`).
+- **`loader.gerar_cruzamento_valor()`**: `outer merge` de Compras/Vendas/
+  Estoque por `(ANO, COD_ITEM)`, ausência de uma métrica vira 0 (mesmo
+  padrão das 3 auditorias), depois `INNER JOIN` com `produto_alvo`
+  (Estágio 7.1) — itens sem `DESCR_ALVO` (código `'nd'`/`'nm'`/nulo)
+  ficam de fora, mesmo critério de 7.1. Calcula `TOTAL_DEBITO=EI+COMPRAS`,
+  `TOTAL_CREDITO=VENDAS+EF`, `DIVERGENCIA=TOTAL_DEBITO-TOTAL_CREDITO`.
+  Restrito ao Período de Auditoria configurado (confirmado com o usuário
+  — consistente com as 3 auditorias de AUDITORIA1).
+- **`interface.render_cruzamento_valor()`/`render_pagina_
+  cruzamento_valor()`**: botão "Gerar/Regerar" + prévia, com filtro
+  `st.multiselect` por Ano e `st.text_input` de busca por Descrição
+  (aplicados sobre a tabela já persistida, sem reprocessar). Tradução via
+  Dicionário de Campos (8 entradas novas: `ANO`, `EI`, `COMPRAS`,
+  `TOTAL_DEBITO`, `VENDAS`, `EF`, `TOTAL_CREDITO`, `DIVERGENCIA`).
+- **Navegação**: 7º botão em `render_menu_principal()` ("📉 7.2:
+  CRUZAMENTO POR VALOR", `pagina_ativa="cruzamento_valor"`) + roteamento
+  em `main.py` — mesmo padrão de botão de 1º nível do Estágio 7.1.
+- **Relação com o Estágio 15 (RN1)**: este painel já monta a identidade
+  `EI+C=V+EF` em valor, mas SEM a lógica de PU (preço unitário) e
+  omissão do texto original da RN1 (condições `c>0`/`c=0`, cálculo de PU
+  distinto pra cada uma) — isso continua reservado pro Estágio 15.
+- **Validado nas 3 operações reais** (script direto): geraldo 17.889
+  linhas/5.717 produtos, PB2 350 linhas/252 produtos, cometa 3.152
+  linhas/2.616 produtos — sem erro nas 3, divergências reais e variadas
+  (ex.: cometa tem itens com Compras alta e Vendas zerada no período —
+  achado a investigar por auditoria física, não um bug desta função).
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —
