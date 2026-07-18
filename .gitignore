@@ -80,3 +80,11 @@ OPERACOES/*/*.xlsx
 # sped_entradas_terceiros.csv por operação) — contêm descrição de
 # produto/valores reais do cliente, mesma política acima.
 /testes_match_b3/
+
+# Pastas de referência ad-hoc que o usuário cola dentro de uma operação
+# pra comparar contra o Hunter (ex.: cruzmento_declar_vlalores/ — Excel da
+# aplicação de produção dele + export do Hunter, usado só como insumo
+# local de investigação, 2026-07-18) — mesma política de dado fiscal real
+# do cliente acima; achado real: foi commitado por engano na primeira vez
+# (git add OPERACOES varreu tudo dentro da pasta da operação).
+OPERACOES/*/cruzmento_declar_vlalores/
