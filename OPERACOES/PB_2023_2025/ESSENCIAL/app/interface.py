@@ -923,6 +923,16 @@ _COLUNAS_PREVIEW_DIVERGENCIA = [
 ]
 
 
+def _texto_periodo_auditoria(periodo: "dict | None") -> str:
+    """Trecho de legenda comum às 3 auditorias da AUDITORIA1 (entradas,
+    saídas, estoque, 2026-07-18) — informa se a comparação está restrita
+    ao Período de Auditoria configurado (`config_auditoria`, EXTRAÇÃO) ou
+    mostrando todos os anos presentes nos dados (sem período)."""
+    if periodo:
+        return f" Restrita ao Período de Auditoria configurado ({periodo['ano_inicial']}-{periodo['ano_final']})."
+    return " Nenhum Período de Auditoria configurado — mostrando todos os anos presentes nos dados."
+
+
 def render_auditoria_divergencia_entradas() -> None:
     """Estudo de diferenças Hunter × Excel de referência (2026-07-13), SEM
     cruzar código de item — ver loader.auditar_divergencia_entradas().
@@ -945,7 +955,11 @@ def render_auditoria_divergencia_entradas() -> None:
     Seção "Detalhamento de Chaves Ausentes" (2026-07-15): dois botões que
     revelam `resultado['residuo_hunter']`/`['residuo_csv']` — análise
     bidirecional por PRESENÇA/AUSÊNCIA total da chave (complementar ao
-    "Investigar Chaves Divergentes" acima, que é por CONTAGEM)."""
+    "Investigar Chaves Divergentes" acima, que é por CONTAGEM).
+
+    Escopo do Período de Auditoria (2026-07-18): quando configurado em
+    "EXTRAÇÃO", restringe às chaves cujo ano (dígitos 3-4 da CHV_NFE) cai
+    dentro do período — ver `loader.auditar_divergencia_entradas()`."""
     resultado = loader.auditar_divergencia_entradas()
     if resultado["erros"]:
         if resultado["erros"] == [loader.MSG_SEM_EXCEL_ENTRADAS_REFERENCIA]:
@@ -962,14 +976,15 @@ def render_auditoria_divergencia_entradas() -> None:
 
     st.divider()
     st.subheader("Auditoria — Divergência de Entradas (Hunter × Excel)")
+    resumo = resultado["resumo"]
     st.caption(
         "Compara o Excel de referência (`*ENTRADAS*.xlsx` na pasta da operação) com "
         "estoque_entradas por CHV_NFE + contagem de itens por nota — sem cruzar código de "
         "item. Reconcilia o resíduo checando xml_saidas_real (Estágio 3), nfe_situacao_et/ep "
         "(Notas Não Autorizadas) e nfe_analise_et/ep (CFOPs Não Autorizados), nessa ordem."
+        + _texto_periodo_auditoria(resumo.get("periodo"))
     )
 
-    resumo = resultado["resumo"]
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Itens em Entradas Reais", f"{resumo['itens_entradas_reais']:,}".replace(",", "."))
     col2.metric("Itens em Saídas Reais", f"{resumo['itens_saidas_reais']:,}".replace(",", "."))
@@ -1079,7 +1094,11 @@ def render_auditoria_divergencia_saidas() -> None:
     HUNTER_ENTRADAS_QTD e chaves de session_state/widget próprias
     (sufixo `_saidas`) — sem isso, os botões desta seção e os de
     render_auditoria_divergencia_entradas() colidiriam (mesmo
-    `key=` do Streamlit) e compartilhariam estado indevidamente."""
+    `key=` do Streamlit) e compartilhariam estado indevidamente.
+
+    Escopo do Período de Auditoria (2026-07-18): mesmo filtro de
+    render_auditoria_divergencia_entradas() — ver
+    loader.auditar_divergencia_saidas()."""
     resultado = loader.auditar_divergencia_saidas()
     if resultado["erros"]:
         if resultado["erros"] == [loader.MSG_SEM_EXCEL_SAIDAS_REFERENCIA]:
@@ -1096,14 +1115,14 @@ def render_auditoria_divergencia_saidas() -> None:
 
     st.divider()
     st.subheader("Auditoria — Divergência de Saídas (Hunter × Excel)")
+    resumo = resultado["resumo"]
     st.caption(
         "Compara o Excel de referência (`*SAIDAS*.xlsx` na pasta da operação) com "
         "estoque_saidas por CHV_NFE + contagem de itens por nota — sem cruzar código de "
         "item. Reconcilia o resíduo checando xml_entradas_real (Estágio 3), nfe_situacao_et/ep "
         "(Notas Não Autorizadas) e nfe_analise_et/ep (CFOPs Não Autorizados), nessa ordem."
+        + _texto_periodo_auditoria(resumo.get("periodo"))
     )
-
-    resumo = resultado["resumo"]
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Itens em Saídas Reais", f"{resumo['itens_saidas_reais']:,}".replace(",", "."))
     col2.metric("Itens em Entradas Reais", f"{resumo['itens_entradas_reais']:,}".replace(",", "."))
@@ -1240,18 +1259,11 @@ def render_auditoria_divergencia_estoque() -> None:
     st.divider()
     st.subheader("Auditoria — Divergência de Estoque (Hunter × Excel)")
     resumo = resultado["resumo"]
-    periodo = resumo.get("periodo")
-    texto_periodo = (
-        f" Restrita ao Período de Auditoria configurado ({periodo['ano_inicial']}-"
-        f"{periodo['ano_final']})."
-        if periodo else
-        " Nenhum Período de Auditoria configurado — mostrando todos os anos presentes nos dados."
-    )
     st.caption(
         "Compara o Excel de referência (`*ESTOQUE*.xlsx` na pasta da operação) com as "
         "declarações de inventário cruas do Bloco H (H010), por (COD_ITEM, ANO_REFERENCIA) — "
         "uma linha por declaração física, mesmo modelo do Excel, sem passar pelo formato "
-        "item×ano expandido do Estágio 5." + texto_periodo
+        "item×ano expandido do Estágio 5." + _texto_periodo_auditoria(resumo.get("periodo"))
     )
 
     col1, col2, col3, col4 = st.columns(4)

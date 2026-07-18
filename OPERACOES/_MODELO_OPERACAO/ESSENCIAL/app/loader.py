@@ -2595,6 +2595,32 @@ def _detalhar_chaves_hunter_ausentes_no_excel(chaves: set, tabela: str = "estoqu
         return pd.DataFrame(columns=colunas)
 
 
+def _filtrar_serie_chv_por_periodo(serie: pd.Series, periodo: "dict | None") -> pd.Series:
+    """Filtra uma Series indexada por CHV_NFE ao Período de Auditoria
+    (`periodo`, já resolvido por `obter_periodo_auditoria()` — recebido
+    como parâmetro em vez de consultado aqui de novo, pra não reabrir o
+    banco a cada série filtrada) — ano embutido nos dígitos 3-4 da chave
+    de acesso ('AA' -> '20AA'), mesmo critério já usado na quebra "por
+    ano" de `interface.render_auditoria_divergencia_entradas()`. Sem
+    período configurado (`periodo=None`), devolve a Series inalterada —
+    mesmo comportamento de antes de 2026-07-18."""
+    if not periodo or serie.empty:
+        return serie
+    ano_ini, ano_fim = int(periodo["ano_inicial"]), int(periodo["ano_final"])
+    anos = ("20" + pd.Series(serie.index, index=serie.index).astype(str).str[2:4]).astype(int)
+    return serie[(anos >= ano_ini) & (anos <= ano_fim)]
+
+
+def _filtrar_df_chv_por_periodo(df: pd.DataFrame, periodo: "dict | None", coluna: str = "CHV_NFE") -> pd.DataFrame:
+    """Mesmo filtro de `_filtrar_serie_chv_por_periodo()`, pra um
+    DataFrame com uma coluna de CHV_NFE em vez de índice."""
+    if not periodo or df.empty:
+        return df
+    ano_ini, ano_fim = int(periodo["ano_inicial"]), int(periodo["ano_final"])
+    anos = ("20" + df[coluna].astype(str).str[2:4]).astype(int)
+    return df[(anos >= ano_ini) & (anos <= ano_fim)]
+
+
 def auditar_divergencia_entradas() -> dict:
     """Estudo de diferenças Hunter × Excel de referência, SEM cruzar código
     de item — só `CHV_NFE` + contagem de itens por nota. Pra cada chave do
@@ -2626,6 +2652,13 @@ def auditar_divergencia_entradas() -> dict:
       `ITENS_NAO_IDENTIFICADOS` (que também inclui chaves parcialmente
       presentes, só com contagem diferente).
 
+    Escopo do Período de Auditoria (2026-07-18): quando `obter_periodo_
+    auditoria()` está configurado, restringe a comparação às chaves cujo
+    ano (dígitos 3-4 da CHV_NFE) cai entre `ano_inicial` e `ano_final` —
+    mesmo filtro já aplicado em `auditar_divergencia_estoque()`. Sem
+    período configurado, mantém o comportamento anterior (todas as
+    chaves, de qualquer ano).
+
     Devolve `{'resumo': dict, 'chaves_divergentes': DataFrame,
     'residuo_hunter': DataFrame, 'residuo_csv': DataFrame, 'erros': list}`
     — `erros` não-vazio quando não há Excel de referência nesta operação
@@ -2638,14 +2671,23 @@ def auditar_divergencia_entradas() -> dict:
             "erros": meta_excel.get("erros", []),
         }
 
+    periodo = obter_periodo_auditoria()
+    df_excel = _filtrar_df_chv_por_periodo(df_excel, periodo)
+
     excel_por_chave = df_excel.groupby("CHV_NFE").size().rename("EXCEL_QTD_ITENS")
-    hunter_entradas = _contagem_por_chave_nfe("estoque_entradas").rename("HUNTER_ENTRADAS_QTD")
-    hunter_saidas   = _contagem_por_chave_nfe("xml_saidas_real").rename("HUNTER_SAIDAS_QTD")
-    hunter_situacao = (
-        _contagem_por_chave_nfe("nfe_situacao_et").add(_contagem_por_chave_nfe("nfe_situacao_ep"), fill_value=0)
+    hunter_entradas = _filtrar_serie_chv_por_periodo(
+        _contagem_por_chave_nfe("estoque_entradas"), periodo
+    ).rename("HUNTER_ENTRADAS_QTD")
+    hunter_saidas = _filtrar_serie_chv_por_periodo(
+        _contagem_por_chave_nfe("xml_saidas_real"), periodo
+    ).rename("HUNTER_SAIDAS_QTD")
+    hunter_situacao = _filtrar_serie_chv_por_periodo(
+        _contagem_por_chave_nfe("nfe_situacao_et").add(_contagem_por_chave_nfe("nfe_situacao_ep"), fill_value=0),
+        periodo,
     ).rename("HUNTER_SITUACAO_QTD")
-    hunter_analise = (
-        _contagem_por_chave_nfe("nfe_analise_et").add(_contagem_por_chave_nfe("nfe_analise_ep"), fill_value=0)
+    hunter_analise = _filtrar_serie_chv_por_periodo(
+        _contagem_por_chave_nfe("nfe_analise_et").add(_contagem_por_chave_nfe("nfe_analise_ep"), fill_value=0),
+        periodo,
     ).rename("HUNTER_ANALISE_QTD")
 
     base = pd.DataFrame(excel_por_chave)
@@ -2692,6 +2734,7 @@ def auditar_divergencia_entradas() -> dict:
     resumo["chaves_autoemissao_na_divergencia"] = int(
         (base.index.isin(chaves_autoemissao) & (base["ITENS_NAO_IDENTIFICADOS"] > 0)).sum()
     )
+    resumo["periodo"] = periodo
 
     divergentes = base[base["EXCEL_QTD_ITENS"] != base["HUNTER_ENTRADAS_QTD"]].copy()
     divergentes.index.name = "CHV_NFE"
@@ -2746,7 +2789,10 @@ def auditar_divergencia_saidas() -> dict:
     DataFrame, 'residuo_csv': DataFrame, 'erros': list}` — as colunas de
     `chaves_divergentes`/`resumo` usam os MESMOS nomes (`ITENS_ENTRADAS_
     REAIS`/`ITENS_SAIDAS_REAIS` etc.) que a versão entradas; só o que é
-    "principal" vs. "reconciliação" se inverte."""
+    "principal" vs. "reconciliação" se inverte.
+
+    Escopo do Período de Auditoria (2026-07-18): mesmo filtro de
+    `auditar_divergencia_entradas()` — ver docstring lá."""
     df_excel, meta_excel = carregar_excel_saidas_referencia()
     if df_excel.empty:
         return {
@@ -2755,14 +2801,23 @@ def auditar_divergencia_saidas() -> dict:
             "erros": meta_excel.get("erros", []),
         }
 
+    periodo = obter_periodo_auditoria()
+    df_excel = _filtrar_df_chv_por_periodo(df_excel, periodo)
+
     excel_por_chave = df_excel.groupby("CHV_NFE").size().rename("EXCEL_QTD_ITENS")
-    hunter_saidas   = _contagem_por_chave_nfe("estoque_saidas").rename("HUNTER_SAIDAS_QTD")
-    hunter_entradas = _contagem_por_chave_nfe("xml_entradas_real").rename("HUNTER_ENTRADAS_QTD")
-    hunter_situacao = (
-        _contagem_por_chave_nfe("nfe_situacao_et").add(_contagem_por_chave_nfe("nfe_situacao_ep"), fill_value=0)
+    hunter_saidas = _filtrar_serie_chv_por_periodo(
+        _contagem_por_chave_nfe("estoque_saidas"), periodo
+    ).rename("HUNTER_SAIDAS_QTD")
+    hunter_entradas = _filtrar_serie_chv_por_periodo(
+        _contagem_por_chave_nfe("xml_entradas_real"), periodo
+    ).rename("HUNTER_ENTRADAS_QTD")
+    hunter_situacao = _filtrar_serie_chv_por_periodo(
+        _contagem_por_chave_nfe("nfe_situacao_et").add(_contagem_por_chave_nfe("nfe_situacao_ep"), fill_value=0),
+        periodo,
     ).rename("HUNTER_SITUACAO_QTD")
-    hunter_analise = (
-        _contagem_por_chave_nfe("nfe_analise_et").add(_contagem_por_chave_nfe("nfe_analise_ep"), fill_value=0)
+    hunter_analise = _filtrar_serie_chv_por_periodo(
+        _contagem_por_chave_nfe("nfe_analise_et").add(_contagem_por_chave_nfe("nfe_analise_ep"), fill_value=0),
+        periodo,
     ).rename("HUNTER_ANALISE_QTD")
 
     base = pd.DataFrame(excel_por_chave)
@@ -2801,6 +2856,7 @@ def auditar_divergencia_saidas() -> dict:
     resumo["chaves_autoemissao_na_divergencia"] = int(
         (base.index.isin(chaves_autoemissao) & (base["ITENS_NAO_IDENTIFICADOS"] > 0)).sum()
     )
+    resumo["periodo"] = periodo
 
     divergentes = base[base["EXCEL_QTD_ITENS"] != base["HUNTER_SAIDAS_QTD"]].copy()
     divergentes.index.name = "CHV_NFE"

@@ -415,6 +415,35 @@ em [docs/estagios/05_tabela_estoque.md](05_tabela_estoque.md#validação-real-20
   indisponível); recomenda-se um clique manual em "AUDITORIA1" na próxima
   sessão com Streamlit rodando pra confirmar visualmente os 3 painéis.
 
+## Filtro de Período de Auditoria estendido pra entradas/saídas (2026-07-18, mesmo dia)
+
+Depois do filtro acima (só na auditoria de estoque), usuário perguntou
+"de não estender o filtro? como assim?" — achado que eu tinha registrado
+por engano uma confirmação que nunca foi dada (a pergunta anterior era só
+sobre o Estágio 5/Tabela de Estoque, não sobre entradas/saídas).
+Perguntado de novo especificamente, usuário confirmou: quer o mesmo
+filtro de Período de Auditoria nas auditorias de entradas e saídas
+também.
+
+- Novas `loader._filtrar_serie_chv_por_periodo()`/`_filtrar_df_chv_por_
+  periodo()`: filtram por ano embutido nos dígitos 3-4 da `CHV_NFE` ('AA'
+  → '20AA'), recebendo o `periodo` já resolvido como parâmetro (evita
+  reabrir o banco a cada série filtrada).
+- Aplicado em `auditar_divergencia_entradas()`/`auditar_divergencia_
+  saidas()`: `df_excel` e as 4 séries Hunter (principal, fallback,
+  situação, análise CFOP) filtradas ANTES do waterfall de reconciliação.
+  `resumo['periodo']` devolvido igual à auditoria de estoque.
+- Nova `interface._texto_periodo_auditoria()` — legenda compartilhada
+  pelas 3 auditorias (a de estoque usava uma versão inline duplicada,
+  refatorada pra reusar a mesma função).
+- **Reconciliação continua 100% nas 3 operações reais, mesmo restrita ao
+  período**: geraldo (entradas 12.614×12.855, saídas 37.300×37.541), PB2
+  (entradas 1.279×1.282, saídas 11.359×11.362 — sem mudança, período já
+  cobria tudo), cometa (entradas 6.583×6.629, saídas 179.303×179.349) —
+  todas com resíduo 0.
+- Agora **as 3 auditorias da página AUDITORIA1 respeitam o Período de
+  Auditoria** de forma consistente.
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —
