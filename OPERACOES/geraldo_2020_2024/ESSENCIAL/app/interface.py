@@ -1210,7 +1210,14 @@ def render_auditoria_divergencia_estoque() -> None:
     divergência, sem seção separada de "Resíduo" (a ausência de um lado
     já aparece como quantidade 0 dentro da própria tabela). Mostra um
     aviso (não erro) se a operação não tiver o Excel de referência nem
-    nenhum SPED de Bloco H — normal em ambos os casos."""
+    nenhum SPED de Bloco H — normal em ambos os casos.
+
+    Escopo do Período de Auditoria (2026-07-18): quando configurado em
+    "EXTRAÇÃO" (`config_auditoria`), a comparação é restrita a
+    `ANO_REFERENCIA` entre `ano_inicial` e `ano_final` — evita contar como
+    divergência anos fora do período fiscalizado (achado real: geraldo
+    tinha declarações de 2019/2020 fora do período 2021-2024 configurado,
+    que antes entravam na comparação sem necessidade)."""
     resultado = loader.auditar_divergencia_estoque()
     if resultado["erros"]:
         if resultado["erros"] == [loader.MSG_SEM_EXCEL_ESTOQUE_REFERENCIA]:
@@ -1232,14 +1239,21 @@ def render_auditoria_divergencia_estoque() -> None:
 
     st.divider()
     st.subheader("Auditoria — Divergência de Estoque (Hunter × Excel)")
+    resumo = resultado["resumo"]
+    periodo = resumo.get("periodo")
+    texto_periodo = (
+        f" Restrita ao Período de Auditoria configurado ({periodo['ano_inicial']}-"
+        f"{periodo['ano_final']})."
+        if periodo else
+        " Nenhum Período de Auditoria configurado — mostrando todos os anos presentes nos dados."
+    )
     st.caption(
         "Compara o Excel de referência (`*ESTOQUE*.xlsx` na pasta da operação) com as "
         "declarações de inventário cruas do Bloco H (H010), por (COD_ITEM, ANO_REFERENCIA) — "
         "uma linha por declaração física, mesmo modelo do Excel, sem passar pelo formato "
-        "item×ano expandido do Estágio 5."
+        "item×ano expandido do Estágio 5." + texto_periodo
     )
 
-    resumo = resultado["resumo"]
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Pares Item×Ano", f"{resumo['total_pares']:,}".replace(",", "."))
     col2.metric("Divergentes", f"{resumo['pares_divergentes']:,}".replace(",", "."))

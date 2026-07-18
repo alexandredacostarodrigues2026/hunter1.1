@@ -2923,6 +2923,15 @@ def auditar_divergencia_estoque() -> dict:
     Não corrige os dados de origem (SPED cru ou Excel) — só evita
     comparar a declaração errada dentro da auditoria.
 
+    Escopo do Período de Auditoria (2026-07-18): quando `obter_periodo_
+    auditoria()` está configurado (`config_auditoria`, definido em
+    "EXTRAÇÃO"), a auditoria só considera `ANO_REFERENCIA` entre
+    `ano_inicial` e `ano_final` — os Estoques Finais efetivamente exigidos
+    pela fiscalização (ex.: período 2021-2024 processa EF(2021..2024),
+    extraídos das declarações com `DT_INV` em 2021..2024 respectivamente —
+    ver regra do usuário). Sem período configurado, mantém o comportamento
+    anterior (mostra todos os anos presentes nos dados) — não filtra nada.
+
     Devolve `{'resumo': dict, 'divergentes': DataFrame, 'erros': list}`
     — `erros` não-vazio quando não há Excel de referência nesta operação
     ou nenhum SPED de Bloco H foi encontrado."""
@@ -2936,6 +2945,12 @@ def auditar_divergencia_estoque() -> dict:
             "resumo": {}, "divergentes": pd.DataFrame(),
             "erros": ["Nenhuma declaração de inventário (Bloco H) encontrada nesta operação."],
         }
+
+    periodo = obter_periodo_auditoria()
+    if periodo:
+        ano_ini, ano_fim = int(periodo["ano_inicial"]), int(periodo["ano_final"])
+        df_excel = df_excel[df_excel["ANO_REFERENCIA"].astype(int).between(ano_ini, ano_fim)]
+        hunter = hunter[hunter["ANO_REFERENCIA"].astype(int).between(ano_ini, ano_fim)]
 
     chave = ["ANO_REFERENCIA", "COD_ITEM"]
     df_excel = _ordenar_duplicatas_por_quantidade(df_excel, "EXCEL_QTDE", chave)
@@ -2955,6 +2970,7 @@ def auditar_divergencia_estoque() -> dict:
         "pares_divergentes": int(divergente.sum()),
         "itens_so_excel": int((base["QUANTIDADE"].eq(0) & base["EXCEL_QTDE"].ne(0)).sum()),
         "itens_so_hunter": int((base["EXCEL_QTDE"].eq(0) & base["QUANTIDADE"].ne(0)).sum()),
+        "periodo": periodo,
     }
 
     divergentes = base.loc[divergente, [

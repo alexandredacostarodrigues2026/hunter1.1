@@ -393,6 +393,22 @@ em [docs/estagios/05_tabela_estoque.md](05_tabela_estoque.md#validação-real-20
   reconciliação total, incluindo o `COD_ITEM=4`), 10/25.600 (geraldo — as
   10 duplicidades conhecidas de `31/01/2020`, nenhuma divergência real de
   valor)**.
+- **Escopo pelo Período de Auditoria (2026-07-18)**: usuário avisou que o
+  período da geraldo mudou pra 2021-2024 e reafirmou a regra de mapeamento
+  estoque↔declaração (consistente com a correção de 1 ano acima, e
+  confirmada de forma independente por um comentário pré-existente em
+  `loader.verificar_cobertura_periodo()`). `config_auditoria` já tinha
+  período configurado nas 3 operações reais (geraldo 2021-2024, PB2
+  2023-2025, cometa 2021-2025), mas a auditoria de estoque ignorava esse
+  escopo — comparava todos os anos presentes nos dados brutos. Confirmado
+  com o usuário (`AskUserQuestion`) e filtrado `ANO_REFERENCIA` por
+  `obter_periodo_auditoria()` em `auditar_divergencia_estoque()` (sem
+  período configurado, mantém mostrando tudo); `resumo['periodo']`
+  devolvido pra UI mostrar o escopo aplicado. **As 3 operações reais
+  fecham 100% agora**: geraldo 0/15.840 (era 10/25.600 — as 10
+  duplicidades de `31/01/2020` caem fora do período 2021-2024), PB2 0/127
+  (sem mudança), cometa 0/67 (era 0/75 — só reduziu o universo de pares,
+  já não tinha divergência de valor).
 - Validado via script direto contra as 3 bases reais (`loader.
   auditar_divergencia_estoque()` importado com o runtime portátil de cada
   operação) — sem Playwright nesta sessão (ferramenta de browser

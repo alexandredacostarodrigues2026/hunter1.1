@@ -120,11 +120,28 @@ cometa `COD_ITEM=4` reportava divergência de 11.059,8 entre duas
 declarações que na verdade batiam exatas cada uma com seu par certo).
 Trocado por `_ordenar_duplicatas_por_quantidade()` — casa duplicatas pela
 quantidade mais próxima entre os dois lados (ótimo pra minimizar a soma
-das diferenças, não é heurística arbitrária). Resultado final: **0/127
-(PB2), 0/75 (cometa — reconciliação total, incluindo o caso `COD_ITEM=4`),
+das diferenças, não é heurística arbitrária). Resultado: **0/127 (PB2),
+0/75 (cometa — reconciliação total, incluindo o caso `COD_ITEM=4`),
 10/25.600 (geraldo — as 10 declarações duplicadas de `31/01/2020`, agora
 corretamente isoladas como "só no Hunter" em vez de mascaradas por
 `.first()`)**.
+
+**Escopo pelo Período de Auditoria (2026-07-18)**: as 10 declarações
+duplicadas de `31/01/2020` da geraldo ficaram sem divergência de VALOR,
+mas ainda inflavam a contagem de pares porque a auditoria comparava TODOS
+os anos presentes nos dados, mesmo fora do período fiscalizado
+configurado (`config_auditoria`, EXTRAÇÃO). Usuário confirmou o período
+mudou pra 2021-2024 na geraldo e reafirmou a regra: "Para auditar o
+período de 2021 a 2024, o sistema processará os estoques finais de 2021,
+2022, 2023 e 2024, que são extraídos respectivamente das declarações de
+2022, 2023, 2024 e 2025" — consistente com a correção do desvio de 1 ano
+acima ("declaração de X" = arquivo filed no ano X, `DT_INV` do ano X-1) e
+confirmado de forma independente por um comentário pré-existente em
+`loader.verificar_cobertura_periodo()`. `auditar_divergencia_estoque()`
+agora filtra `ANO_REFERENCIA` por `obter_periodo_auditoria()` quando
+configurado (sem período, mantém mostrando tudo). Resultado final: **as 3
+operações reais fecham 100% — geraldo 0/15.840 (era 10/25.600), PB2
+0/127 (sem mudança), cometa 0/67 (era 0/75)**.
 
 ## Ver também
 
