@@ -563,6 +563,74 @@ visão física do XML.
   (ex.: cometa tem itens com Compras alta e Vendas zerada no período —
   achado a investigar por auditoria física, não um bug desta função).
 
+## Correção da fonte de Vendas — `cprod` em vez de `COD_ITEM_DECLARACAO` (2026-07-18, mesmo dia)
+
+Usuário pediu pra conferir a divergência do produto "BOLACHA MANTEGA DO
+SERTAO JUCURUTU" contra `OPERACOES\geraldo_2020_2024\cruzmento_declar_
+vlalores\CRUZAMENTO DE CÓDIGOS DE PRODUTOS POR ANO - VALORES.xlsx`
+(referência da aplicação de produção dele). Comparando ano a ano: **EI e
+EF bateram exatos em todos os anos** (confirma a extração de valor do
+Bloco H, `_valores_estoque_hunter()`, correta), mas **Vendas ficou
+drasticamente subestimada** (ex.: 2021 mostrava R$0 no Hunter contra
+R$1.124,50 na produção).
+
+Causa raiz: `estoque_saidas.COD_ITEM_DECLARACAO` (usado até então pra
+agrupar Vendas, igual Compras) é nulo em **98,8% das linhas** (59.901 de
+60.623 na geraldo) — o Matching (BC3) só vincula no sentido
+fornecedor→auditada (compras); não existe elo equivalente pro sentido
+auditada→cliente. Confirmado buscando as vendas desse produto por NOME
+(`fatoitemnfe_infnfe_det_prod_xprod`) em vez de código: os valores reais
+batiam quase exato com a produção, provando que o dado existe na base,
+só não estava vinculado ao código usado pro agrupamento.
+
+Usuário esclareceu a regra: **"nas saídas do XML, o código do produto é
+o código da declaração"** — **"o próprio XML, emissão própria, já é a
+declaração"** (não existe SPED separado listando produto de saída pra
+casar contra, diferente de compras). Quando a auditada é EMITENTE da
+nota, `fatoitemnfe_infnfe_det_prod_cprod` (código do produto no XML dela
+mesma) já é o código dela — sem precisar de Matching. Confirmado: coluna
+100% preenchida em `estoque_saidas` nas 3 operações reais.
+
+- **`loader._valores_por_ano_item()`** ganhou parâmetro `coluna_cod_item`
+  (era hardcoded `COD_ITEM_DECLARACAO`) — Vendas agora passa
+  `fatoitemnfe_infnfe_det_prod_cprod`.
+- **Nova `loader._normalizar_cod_item_flexivel()`**: `COD_ITEM_
+  DECLARACAO` (Compras/Estoque) e `cprod` (Vendas) têm padding de zeros
+  diferente pro MESMO item (ex.: `"00000000013990"` vs `"013990"`) —
+  diferente de `_normalizar_cod_item_numerico()` (usada só no Bloco H,
+  confirmado 100% numérico), esta preserva código alfanumérico como está
+  (a cometa tem `cprod`/`COD_ITEM_DECLARACAO` alfanumérico legítimo,
+  ex.: `"VEIC_008047"`) — só remove zeros à esquerda de código
+  puramente numérico.
+- **Nova `loader._normalizar_agrupar_valor()`**: reagrupa (soma) por
+  `(ANO, COD_ITEM)` DEPOIS de normalizar — necessário porque normalizar
+  pode unir grupos antes distintos (mesmo item, padding diferente).
+  Aplicada nas 3 fontes (Compras, Vendas, Estoque) antes do merge;
+  `produto_alvo` também normalizado e deduplicado (`keep="first"`,
+  colisão rara, mesmo tipo de caso do `COD_ITEM=4` da cometa em
+  `auditar_divergencia_estoque()`) — o `COD_ITEM` exibido no resultado
+  final continua sendo o de `produto_alvo` (identidade "oficial" do
+  Estágio 7.1), não o normalizado internamente.
+- **Resultado pro produto testado**: Vendas bateu EXATO em 3 dos 4 anos
+  (2021: R$1.124,50 = R$1.124,50; 2023: R$6.214,68 = R$6.214,68; 2024:
+  R$7.420,92 = R$7.420,92); 2022 ficou com resíduo pequeno (R$7.729,55
+  Hunter × R$7.686,25 produção, diferença de R$43,30) — não é código mal
+  vinculado (confirmado, todas as 132 linhas de 2022 já usam o `cprod`
+  correto), provavelmente critério de transação específico (devolução,
+  CFOP) que a produção aplica e o Hunter ainda não — não investigado a
+  fundo.
+- Compras também tem resíduo pequeno em 2022/2023 (+R$592/+R$656) pro
+  produto testado, ainda não diagnosticado — separado deste achado.
+- **Revalidado nas 3 operações reais** (script direto): geraldo 17.916
+  linhas/5.721 produtos (era 17.889/5.717), PB2 350/252 (mesma contagem —
+  PB2 tem a MESMA cobertura ruim de `COD_ITEM_DECLARACAO` em Vendas
+  (99,9% nulo), mas o conjunto de pares `(COD_ITEM, ANO)` já vinha quase
+  todo de Compras/Estoque via outer join; só os VALORES de Vendas
+  mudaram, não quantas linhas existem), cometa 3.194/2.512 (era
+  3.152/2.616 — aqui a normalização também mudou a contagem de produtos
+  únicos, por unir padrões de código antes fragmentados entre Compras e
+  Vendas).
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —

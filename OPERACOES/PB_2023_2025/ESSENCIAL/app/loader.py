@@ -2509,18 +2509,36 @@ def _valores_estoque_hunter() -> pd.DataFrame:
     return base_ei.merge(base_ef, on=["ANO", "COD_ITEM"], how="outer")
 
 
-def _valores_por_ano_item(tabela: str, coluna_ano: str) -> pd.DataFrame:
+def _valores_por_ano_item(tabela: str, coluna_ano: str, coluna_cod_item: str) -> pd.DataFrame:
     """Soma `fatoitemnfe_infnfe_det_prod_vprod` ("Valor bruto do produto",
     ver DICIONARIO DE CAMPOS.txt — não existe coluna literal `VL_ITEM`
-    nas tabelas de XML) por (`COD_ITEM_DECLARACAO`, `coluna_ano`) numa
-    tabela do Estágio 4 (`estoque_entradas`/`estoque_saidas`) — usado por
-    `gerar_cruzamento_valor()` pra Compras/Vendas. `coluna_ano` só recebe
-    literais fixos do chamador (nunca input do usuário). Coluna gravada
-    como VARCHAR (achado real: sempre decimal com ponto nas 3 operações
-    reais, nunca vírgula — `TRY_CAST` direto, sem `REPLACE`; `TRY_CAST`
-    em vez de `CAST` pra não quebrar a query inteira se algum valor futuro
-    vier malformado, tratando como NULL/0 em vez de erro). Vazia se a
-    tabela não existir ainda (Estágio 4 não gerado)."""
+    nas tabelas de XML) por (`coluna_cod_item`, `coluna_ano`) numa tabela
+    do Estágio 4 (`estoque_entradas`/`estoque_saidas`) — usado por
+    `gerar_cruzamento_valor()` pra Compras/Vendas. `coluna_ano`/`coluna_
+    cod_item` só recebem literais fixos do chamador (nunca input do
+    usuário). Coluna de valor gravada como VARCHAR (achado real: sempre
+    decimal com ponto nas 3 operações reais, nunca vírgula — `TRY_CAST`
+    direto, sem `REPLACE`; `TRY_CAST` em vez de `CAST` pra não quebrar a
+    query inteira se algum valor futuro vier malformado, tratando como
+    NULL/0 em vez de erro).
+
+    `coluna_cod_item` varia por direção — achado real (2026-07-18, usuário
+    apontou): `estoque_entradas.COD_ITEM_DECLARACAO` (vindo do Matching/
+    BC3) tem cobertura quase total (~99,9%), mas `estoque_saidas.COD_
+    ITEM_DECLARACAO` é nulo em 98,8% das linhas — BC3 só vincula no
+    sentido fornecedor→auditada (compras); não existe elo equivalente pro
+    sentido auditada→cliente. Pro lado saídas, o usuário esclareceu que
+    "nas saídas do XML, o código do produto é o código da declaração" —
+    "o próprio XML, emissão própria, já é a declaração" (não existe um
+    SPED separado listando produto de saída pra casar): quando a auditada
+    é EMITENTE da nota, `fatoitemnfe_infnfe_det_prod_cprod` (código do
+    produto/serviço, no próprio XML dela) já É o código dela mesma, sem
+    precisar de Matching — coluna 100% preenchida nas 3 operações reais
+    (diferente de `COD_ITEM_DECLARACAO`). `COD_ITEM` resultante NÃO
+    normalizado aqui — ver `_normalizar_cod_item_flexivel()`, aplicado
+    pelo chamador antes de casar com `produto_alvo`/Compras/Estoque
+    (paddings diferentes pro MESMO item entre `COD_ITEM_DECLARACAO` e
+    `cprod`). Vazia se a tabela não existir ainda (Estágio 4 não gerado)."""
     colunas = ["ANO", "COD_ITEM", "VALOR"]
     if not _BANCO_PATH.exists():
         return pd.DataFrame(columns=colunas)
@@ -2530,9 +2548,9 @@ def _valores_por_ano_item(tabela: str, coluna_ano: str) -> pd.DataFrame:
             if tabela not in tabelas:
                 return pd.DataFrame(columns=colunas)
             df = con.execute(
-                f"SELECT {coluna_ano} AS ANO, COD_ITEM_DECLARACAO AS COD_ITEM, "
+                f"SELECT {coluna_ano} AS ANO, {coluna_cod_item} AS COD_ITEM, "
                 f"SUM(TRY_CAST(fatoitemnfe_infnfe_det_prod_vprod AS DOUBLE)) AS VALOR FROM {tabela} "
-                f"WHERE COD_ITEM_DECLARACAO IS NOT NULL GROUP BY {coluna_ano}, COD_ITEM_DECLARACAO"
+                f"WHERE {coluna_cod_item} IS NOT NULL GROUP BY {coluna_ano}, {coluna_cod_item}"
             ).df()
         return df
     except Exception:
@@ -2540,14 +2558,50 @@ def _valores_por_ano_item(tabela: str, coluna_ano: str) -> pd.DataFrame:
         return pd.DataFrame(columns=colunas)
 
 
+def _normalizar_agrupar_valor(df: pd.DataFrame, colunas_valor: list) -> pd.DataFrame:
+    """Normaliza COD_ITEM (`_normalizar_cod_item_flexivel()`) e reagrupa
+    (soma) por (ANO, COD_ITEM) — necessário porque normalizar PODE unir
+    grupos que antes eram distintos por padding (ex.: `"00000000013990"`
+    e `"013990"` viram o mesmo `"13990"`), então uma soma feita ANTES da
+    normalização ficaria fragmentada. Usado por gerar_cruzamento_valor()
+    nas 3 fontes (Compras, Vendas, Estoque)."""
+    if df.empty:
+        return df
+    df = df.copy()
+    df["COD_ITEM"] = _normalizar_cod_item_flexivel(df["COD_ITEM"])
+    return df.groupby(["ANO", "COD_ITEM"], as_index=False)[colunas_valor].sum()
+
+
 def gerar_cruzamento_valor() -> dict:
     """Estágio 7.2 — monta o Cruzamento por Valor: uma linha por (ANO,
     COD_ITEM) com EI, Compras, Total Débito (EI+Compras), Vendas, EF,
     Total Crédito (Vendas+EF) e Divergência (Débito−Crédito), em R$.
 
-    Identidade: INNER JOIN com `produto_alvo` (Estágio 7.1) por
-    `COD_ITEM` — itens sem `DESCR_ALVO` (código 'nd'/'nm'/nulo, já
-    filtrados na origem) ficam de fora, mesmo critério de 7.1.
+    Fonte de Vendas corrigida (2026-07-18, achado real ao investigar
+    divergência apontada pelo usuário pro produto "BOLACHA MANTEGA DO
+    SERTAO JUCURUTU" contra o cruzamento da aplicação de produção dele):
+    `estoque_saidas.COD_ITEM_DECLARACAO` (vindo do Matching/BC3) é nulo
+    em 98,8% das linhas — BC3 só vincula no sentido fornecedor→auditada
+    (compras). Usuário esclareceu: "nas saídas do XML, o código do
+    produto é o código da declaração" — "o próprio XML, emissão própria,
+    já é a declaração" (não existe SPED separado listando produto de
+    saída pra casar contra). Vendas agora usa `fatoitemnfe_infnfe_det_
+    prod_cprod` (código do produto no próprio XML da auditada, como
+    emitente — 100% preenchido nas 3 operações reais) em vez de
+    `COD_ITEM_DECLARACAO`.
+
+    Identidade cross-fonte: `COD_ITEM_DECLARACAO` (Compras/Estoque) e
+    `cprod` (Vendas) têm padding de zeros diferente pro MESMO item (ex.:
+    `"00000000013990"` vs `"013990"`) — as 3 fontes (Compras, Vendas,
+    Estoque) e `produto_alvo` (Estágio 7.1) são normalizadas por
+    `_normalizar_cod_item_flexivel()` (remove zeros à esquerda só de
+    código puramente numérico, preserva alfanumérico — diferente de
+    `_normalizar_cod_item_numerico()`, que destruiria código alfanumérico
+    legítimo da cometa) antes de casar. `produto_alvo` deduplicado por
+    código normalizado (`keep="first"`) — colisão rara, mesmo tipo de
+    caso já visto em `auditar_divergencia_estoque()` (cometa `COD_ITEM=4`).
+    O `COD_ITEM` exibido no resultado final é o de `produto_alvo` (a
+    identidade "oficial" do Estágio 7.1), não o normalizado internamente.
 
     Continuidade: EI(ano) = EF(ano-1) da mesma declaração de inventário
     (ver `_valores_estoque_hunter()`).
@@ -2573,8 +2627,10 @@ def gerar_cruzamento_valor() -> dict:
             "erros": ["Tabela produto_alvo (Estágio 7.1) ainda não foi gerada."],
         }
 
-    compras = _valores_por_ano_item("estoque_entradas", "ANO_ELEITO").rename(columns={"VALOR": "COMPRAS"})
-    vendas = _valores_por_ano_item("estoque_saidas", "ANO_ELEITO").rename(columns={"VALOR": "VENDAS"})
+    compras = _valores_por_ano_item("estoque_entradas", "ANO_ELEITO", "COD_ITEM_DECLARACAO")
+    compras = compras.rename(columns={"VALOR": "COMPRAS"})
+    vendas = _valores_por_ano_item("estoque_saidas", "ANO_ELEITO", "fatoitemnfe_infnfe_det_prod_cprod")
+    vendas = vendas.rename(columns={"VALOR": "VENDAS"})
     estoque = _valores_estoque_hunter()
 
     periodo = obter_periodo_auditoria()
@@ -2584,6 +2640,10 @@ def gerar_cruzamento_valor() -> dict:
         vendas = vendas[vendas["ANO"].astype(int).between(ano_ini, ano_fim)]
         if not estoque.empty:
             estoque = estoque[estoque["ANO"].astype(int).between(ano_ini, ano_fim)]
+
+    compras = _normalizar_agrupar_valor(compras, ["COMPRAS"])
+    vendas = _normalizar_agrupar_valor(vendas, ["VENDAS"])
+    estoque = _normalizar_agrupar_valor(estoque, ["VALOR_INICIAL", "VALOR_FINAL"])
 
     base = compras.merge(vendas, on=["ANO", "COD_ITEM"], how="outer")
     if estoque.empty:
@@ -2598,9 +2658,14 @@ def gerar_cruzamento_valor() -> dict:
         base[col] = base[col].fillna(0.0)
     base = base.rename(columns={"VALOR_INICIAL": "EI", "VALOR_FINAL": "EF"})
 
-    base = base.merge(produto_alvo, on="COD_ITEM", how="inner")
+    produto_alvo_idx = produto_alvo.rename(columns={"COD_ITEM": "COD_ITEM_ALVO"}).copy()
+    produto_alvo_idx["COD_ITEM"] = _normalizar_cod_item_flexivel(produto_alvo_idx["COD_ITEM_ALVO"])
+    produto_alvo_idx = produto_alvo_idx.drop_duplicates("COD_ITEM", keep="first")
+
+    base = base.merge(produto_alvo_idx, on="COD_ITEM", how="inner")
     if base.empty:
         return {"resumo": {}, "cruzamento": pd.DataFrame(), "erros": []}
+    base = base.drop(columns="COD_ITEM").rename(columns={"COD_ITEM_ALVO": "COD_ITEM"})
 
     base["TOTAL_DEBITO"] = (base["EI"] + base["COMPRAS"]).round(2)
     base["TOTAL_CREDITO"] = (base["VENDAS"] + base["EF"]).round(2)
@@ -2834,6 +2899,23 @@ def _normalizar_cod_item_numerico(serie: pd.Series) -> pd.Series:
     Confirmado nas 3 operações reais: COD_ITEM_DECLARACAO é sempre
     puramente numérico nesta base."""
     return pd.to_numeric(serie, errors="coerce").astype("Int64").astype(str)
+
+
+def _normalizar_cod_item_flexivel(serie: pd.Series) -> pd.Series:
+    """Remove zeros à esquerda só de códigos PURAMENTE numéricos (unifica
+    padding entre fontes — ex.: `estoque_entradas.COD_ITEM_DECLARACAO`
+    grava `"00000000013990"`, `estoque_saidas.fatoitemnfe_infnfe_det_
+    prod_cprod` grava `"013990"` pro MESMO item — ver gerar_cruzamento_
+    valor()); preserva código alfanumérico como está (ex.: `"125KGRAXA"`,
+    `"VEIC_008047"` da cometa), que `_normalizar_cod_item_numerico()`
+    destruiria virando `NaN`/`"<NA>"` — diferente daquela função (usada
+    só no contexto do Bloco H, confirmado 100% numérico), aqui o dado
+    fonte é XML de venda, onde código alfanumérico é legítimo e comum."""
+    s = serie.astype(str).str.strip()
+    numerico = s.str.fullmatch(r"\d+").fillna(False)
+    s = s.copy()
+    s.loc[numerico] = pd.to_numeric(s.loc[numerico]).astype("int64").astype(str)
+    return s
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
