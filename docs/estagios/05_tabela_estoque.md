@@ -28,12 +28,17 @@ movimentação (entradas/saídas) ou busca de divergência entra nesta etapa
    primeiro/segundo mês competente do ano seguinte.
 2. **Regra de continuidade** (`loader.montar_estoque_anual_consolidado()`):
    cada inventário declarado (identificado por `DT_INV`) vira, na mesma
-   linha física, o Estoque Final do ano anterior a `DT_INV` **e**, ao mesmo
-   tempo, o Estoque Inicial do ano de `DT_INV` — não são duas contagens
-   físicas diferentes, é a mesma foto vista dos dois lados da virada do
-   ano. Implementado com dois `DataFrame`s (um com `ANO_REFERENCIA = ano de
-   DT_INV`, outro com `ANO_REFERENCIA = ano de DT_INV − 1`) unidos por
-   `outer join` em `(ANO_REFERENCIA, COD_ITEM)`.
+   linha física, o Estoque Final do ano de `DT_INV` **e**, ao mesmo tempo,
+   o Estoque Inicial do ano SEGUINTE a `DT_INV` — não são duas contagens
+   físicas diferentes, é a mesma foto vista dos dois lados da virada do ano
+   (ex.: `DT_INV=31/12/2020` é EF(2020) e EI(2021)). Implementado com dois
+   `DataFrame`s (um com `ANO_REFERENCIA = ano de DT_INV`, outro com
+   `ANO_REFERENCIA = ano de DT_INV + 1`) unidos por `outer join` em
+   `(ANO_REFERENCIA, COD_ITEM)`. **Corrigido 2026-07-17**: até então o
+   código fazia o oposto (EI no ano de `DT_INV`, EF no ano anterior) — um
+   desvio sistemático de 1 ano, achado pela Auditoria de Divergência de
+   Estoque comparando contra `ESTOQUE(...).xlsx` (ver seção "Validação
+   real" abaixo).
 3. **Enriquecimento**: `DESCR_ITEM_DECLARACAO` vem do Registro 0200
    (`loader.load_declaracao_produtos()`), por `COD_ITEM`.
 
@@ -70,7 +75,7 @@ sua simples presença já é o sinal relevante).
 `UNIDADE` sempre `dtype=str`. `QUANTIDADE_INICIAL`/`QUANTIDADE_FINAL` são
 medidas numéricas de verdade (não códigos de ligação) — ficam `float`.
 
-## Validação real (2026-07-12)
+## Validação real (2026-07-12, aprofundada 2026-07-17)
 
 Comparado contra `DADOS BRUTOS/GERALDO_2020A2024/ESTOQUE(...).xlsx` — tabela
 de referência já usada em outra aplicação do usuário (formato "longo": uma
@@ -86,8 +91,27 @@ gerada com uma declaração mais recente ainda não sincronizada nesta pasta.
 Persistido nas 3 operações reais: geraldo 31.956 linhas, PB2 223, cometa
 132.
 
+Esta validação de 2026-07-12 só conferiu o UNIVERSO de itens (mesmos
+COD_ITEM nas duas fontes) e a contagem de linhas — não as QUANTIDADES por
+`(COD_ITEM, ANO_REFERENCIA)`. A Auditoria de Divergência de Estoque
+(`interface.render_auditoria_divergencia_estoque()`, 2026-07-17) fechou
+essa lacuna e achou o desvio sistemático de 1 ano corrigido acima: antes da
+correção, quase 100% dos pares comparados divergiam (28.705/38.111 na
+geraldo; 319/319 na PB2; 188/188 na cometa). Depois de corrigir
+`montar_estoque_anual_consolidado()` e regenerar as 3 operações reais, a
+divergência caiu para **4/31.938 (geraldo), 0/223 (PB2), 2/132 (cometa)**
+— os poucos pares restantes são duplicidade pré-existente de declaração
+(mesmo `COD_ITEM`+`ANO_REFERENCIA` com quantidades diferentes entre dois
+H005/H010, ex.: `COD_ITEM=18653` na geraldo), não erro de continuidade.
+
 ## Ver também
 
+- Auditoria de Divergência de Estoque (`interface.render_auditoria_
+  divergencia_estoque()`, `loader.auditar_divergencia_estoque()`,
+  2026-07-17) — compara esta tabela com `ESTOQUE(...).xlsx` por
+  `(COD_ITEM, ANO_REFERENCIA)`, direto na página AUDITORIA1 (mesmo grupo
+  das auditorias de entradas/saídas). Foi essa comparação que achou o
+  desvio de 1 ano corrigido acima.
 - [Estágio 4 — Cronologia e Ano Eleito](04_cronologia_ano_eleito.md) —
   `DATA_ELEITA`/`ANO_ELEITO`, a mesma chave de ano usada aqui; produz
   `estoque_entradas`/`estoque_saidas`, que ainda é movimentação, não

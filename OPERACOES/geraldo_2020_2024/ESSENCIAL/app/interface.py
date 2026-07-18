@@ -1193,6 +1193,77 @@ def render_auditoria_divergencia_saidas() -> None:
             st.dataframe(residuo_csv, use_container_width=True)
 
 
+_COLUNAS_PREVIEW_DIVERGENCIA_ESTOQUE = [
+    "COD_ITEM", "ANO_REFERENCIA", "DESCR_ITEM_DECLARACAO",
+    "EXCEL_QTDE_INICIAL", "QUANTIDADE_INICIAL", "DIF_INICIAL",
+    "EXCEL_QTDE_FINAL", "QUANTIDADE_FINAL", "DIF_FINAL",
+]
+
+
+def render_auditoria_divergencia_estoque() -> None:
+    """Auditoria de estoque (2026-07-17) — ver loader.auditar_divergencia_
+    estoque(). Diferente de render_auditoria_divergencia_entradas/saidas()
+    (que cruzam por CHV_NFE + contagem de itens, sem valor e com waterfall
+    de reconciliação em várias tabelas), aqui a comparação é direta por
+    QUANTIDADE entre estoque_anual_consolidado (Estágio 5) e o Excel
+    'ESTOQUE(...).xlsx' da pasta da operação, por (COD_ITEM,
+    ANO_REFERENCIA) — só uma tabela de divergência, sem seção separada de
+    "Resíduo" (a ausência de um lado já aparece como quantidade 0 dentro
+    da própria tabela). Mostra um aviso (não erro) se a operação não tiver
+    o Excel de referência nem a tabela estoque_anual_consolidado ainda
+    gerada — normal em ambos os casos."""
+    resultado = loader.auditar_divergencia_estoque()
+    if resultado["erros"]:
+        if resultado["erros"] == [loader.MSG_SEM_EXCEL_ESTOQUE_REFERENCIA]:
+            st.info(
+                "Sem Excel de referência (`*ESTOQUE*.xlsx`) na pasta desta operação — "
+                "este estudo só se aplica a quem tiver esse arquivo."
+            )
+        elif "estoque_anual_consolidado" in " ".join(resultado["erros"]):
+            st.info(
+                'Tabela de Estoque (Estágio 5) ainda não foi gerada — use "Gerar Tabela de '
+                'Estoque" em "TABELAS ENTRADAS / SAÍDAS / ESTOQUES" primeiro.'
+            )
+        else:
+            st.error(
+                "Excel de referência encontrado, mas não foi possível carregá-lo: "
+                + " | ".join(resultado["erros"])
+            )
+        return
+
+    st.divider()
+    st.subheader("Auditoria — Divergência de Estoque (Hunter × Excel)")
+    st.caption(
+        "Compara o Excel de referência (`*ESTOQUE*.xlsx` na pasta da operação) com "
+        "estoque_anual_consolidado por (COD_ITEM, ANO_REFERENCIA) — comparação direta de "
+        "QUANTIDADE_INICIAL/QUANTIDADE_FINAL, sem waterfall de reconciliação (diferente das "
+        "auditorias de entradas/saídas acima)."
+    )
+
+    resumo = resultado["resumo"]
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Pares Item×Ano", f"{resumo['total_pares']:,}".replace(",", "."))
+    col2.metric("Divergentes", f"{resumo['pares_divergentes']:,}".replace(",", "."))
+    col3.metric("Só no Excel", f"{resumo['itens_so_excel']:,}".replace(",", "."))
+    col4.metric("Só no Hunter", f"{resumo['itens_so_hunter']:,}".replace(",", "."))
+
+    if "mostrar_divergentes_estoque" not in st.session_state:
+        st.session_state["mostrar_divergentes_estoque"] = False
+    if st.button("Investigar Itens Divergentes", key="btn_investigar_divergentes_estoque"):
+        st.session_state["mostrar_divergentes_estoque"] = True
+
+    if st.session_state["mostrar_divergentes_estoque"]:
+        df_div = resultado["divergentes"]
+        st.markdown(
+            f"**{len(df_div):,} par(es) COD_ITEM×ANO com quantidade divergente**"
+            .replace(",", ".")
+        )
+        if df_div.empty:
+            st.info("Nenhum item divergente encontrado.")
+        else:
+            st.dataframe(df_div[_COLUNAS_PREVIEW_DIVERGENCIA_ESTOQUE], use_container_width=True)
+
+
 # ── Estágio 6 — VAMOS ORGANIZAR (Menu de Navegação) ─────────────────────────
 # Reorganiza a tela única (todos os painéis empilhados) em 4 grupos
 # navegáveis, controlados por st.session_state["pagina_ativa"]
@@ -1375,7 +1446,15 @@ def render_pagina_auditoria1() -> None:
     "TABELAS ENTRADAS/SAÍDAS/ESTOQUES" separadamente. Não reclassifica
     XML novo ainda pendente na raiz de `1-DOCFISCAIS/nf/` (isso continua
     sendo `loader.carregar_operacao()`, botão "Carregar novamente" da
-    página EXTRAÇÃO) — só relê o que já está em ET/EP."""
+    página EXTRAÇÃO) — só relê o que já está em ET/EP.
+
+    2026-07-17 (mesmo dia): ganhou o terceiro espelho render_auditoria_
+    divergencia_estoque() — "falta agora para os estoques", pedido do
+    usuário logo após fechar entradas/saídas. Estrutura diferente das
+    outras duas (comparação direta de quantidade por COD_ITEM×ANO, sem
+    waterfall) porque a fonte Hunter (estoque_anual_consolidado, Estágio
+    5) não tem os múltiplos afluentes que estoque_entradas/saidas têm —
+    ver loader.auditar_divergencia_estoque()."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
@@ -1416,3 +1495,4 @@ def render_pagina_auditoria1() -> None:
 
     render_auditoria_divergencia_entradas()
     render_auditoria_divergencia_saidas()
+    render_auditoria_divergencia_estoque()

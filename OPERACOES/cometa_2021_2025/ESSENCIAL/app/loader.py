@@ -2171,8 +2171,8 @@ def montar_estoque_anual_consolidado() -> pd.DataFrame:
     """Estágio 5: consolida o inventário declarado (H005+H010, ver
     load_declaracao_estoque()) numa linha por item x ano. Regra de
     continuidade: cada inventário declarado (identificado por DT_INV) vira,
-    na MESMA linha física, o Estoque Final do ano anterior a DT_INV e o
-    Estoque Inicial do ano de DT_INV — não são duas contagens diferentes, é
+    na MESMA linha física, o Estoque Final do ano de DT_INV e o Estoque
+    Inicial do ano SEGUINTE a DT_INV — não são duas contagens diferentes, é
     a mesma foto vista dos dois lados da virada do ano (ex.: inventário com
     DT_INV=31/12/2020 é EF(2020) e, ao mesmo tempo, EI(2021)). O último ano
     coberto fica sem QUANTIDADE_FINAL até o inventário seguinte ser
@@ -2180,7 +2180,18 @@ def montar_estoque_anual_consolidado() -> pd.DataFrame:
     cadastro de produto (Registro 0200), por COD_ITEM. Regra R07:
     ANO_REFERENCIA/COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO/UNIDADE sempre
     string; QUANTIDADE_INICIAL/QUANTIDADE_FINAL são medidas numéricas de
-    verdade (não códigos), ficam float."""
+    verdade (não códigos), ficam float.
+
+    Corrigido 2026-07-17: até então o código gravava EI(ano_inv)/
+    EF(ano_inv-1) — o OPOSTO do que este próprio docstring sempre
+    documentou no exemplo acima (EF(2020)/EI(2021) pra DT_INV=31/12/2020),
+    um desvio sistemático de 1 ano. Achado pela nova Auditoria de
+    Divergência de Estoque (ver interface.render_auditoria_divergencia_
+    estoque()): comparando contra o Excel de referência (ESTOQUE(...).xlsx,
+    fonte de outra aplicação do usuário), quase 100% dos pares (COD_ITEM,
+    ANO) divergiam; deslocar ANO_REFERENCIA em +1 ano fazia 31.954/31.955
+    baterem exatamente na base da geraldo — confirmação inequívoca do
+    desvio, não ruído de arredondamento."""
     df_est, _ = load_declaracao_estoque()
     if df_est.empty or "DT_INV" not in df_est.columns:
         return pd.DataFrame(columns=_COLUNAS_ESTOQUE_ANUAL)
@@ -2195,13 +2206,13 @@ def montar_estoque_anual_consolidado() -> pd.DataFrame:
     qtd_num = _numero_decimal_br(df["QTD"])
 
     base_ei = pd.DataFrame({
-        "ANO_REFERENCIA":      ano_inv.astype(str),
+        "ANO_REFERENCIA":      (ano_inv + 1).astype(str),
         "COD_ITEM_DECLARACAO": df["COD_ITEM"].to_numpy(),
         "UNIDADE_EI":          df["UNID"].to_numpy(),
         "QUANTIDADE_INICIAL":  qtd_num.to_numpy(),
     })
     base_ef = pd.DataFrame({
-        "ANO_REFERENCIA":      (ano_inv - 1).astype(str),
+        "ANO_REFERENCIA":      ano_inv.astype(str),
         "COD_ITEM_DECLARACAO": df["COD_ITEM"].to_numpy(),
         "UNIDADE_EF":          df["UNID"].to_numpy(),
         "QUANTIDADE_FINAL":    qtd_num.to_numpy(),
@@ -2413,6 +2424,99 @@ def carregar_excel_saidas_referencia() -> "tuple[pd.DataFrame, dict]":
     meta["total_linhas"] = len(df)
     meta["total_chaves"] = df["CHV_NFE"].nunique()
     return df, meta
+
+
+MSG_SEM_EXCEL_ESTOQUE_REFERENCIA = "Nenhum arquivo '*ESTOQUE*.xlsx' encontrado na pasta da operação."
+# Mesmo papel de MSG_SEM_EXCEL_ENTRADAS_REFERENCIA/MSG_SEM_EXCEL_SAIDAS_
+# REFERENCIA, pro lado estoque (auditar_divergencia_estoque(), 2026-07-17).
+
+
+def _localizar_excel_estoque_referencia() -> "Path | None":
+    """Localiza o Excel de referência de estoque na raiz da operação —
+    mesmo critério de _localizar_excel_entradas_referencia()/_localizar_
+    excel_saidas_referencia(): busca por '.xlsx' na raiz cujo nome
+    normalizado (_normalizar_str()) contenha 'ESTOQUE'. As 3 operações
+    reais usam 'ESTOQUE(<uuid>).xlsx' (sem acento — não precisaria de
+    _normalizar_str aqui, usado só por consistência com as outras duas
+    buscas). Ignora arquivos temporários (~$...). None se a operação não
+    tiver esse arquivo (normal — estudo pontual, não dado obrigatório)."""
+    candidatos = sorted(
+        p for p in _OPERACAO_DIR.glob("*.xlsx")
+        if not p.name.startswith("~$") and "ESTOQUE" in _normalizar_str(p.stem)
+    )
+    return candidatos[0] if candidatos else None
+
+
+def _normalizar_cod_item_numerico(serie: pd.Series) -> pd.Series:
+    """Normaliza código de item puramente numérico pra comparação entre
+    fontes com padding de zeros à esquerda diferente — achado real: SPED
+    grava COD_ITEM_DECLARACAO com zeros à esquerda (ex.: geraldo usa 14
+    dígitos, cometa varia entre 7 e 13 dígitos dentro da MESMA operação),
+    mas o Excel ESTOQUE(...).xlsx grava CodItem como inteiro puro (sem
+    padding) — comparação direta por string sempre divergiria. Converte
+    pra número e volta pra string, removendo o padding dos dois lados.
+    Confirmado nas 3 operações reais: COD_ITEM_DECLARACAO é sempre
+    puramente numérico nesta base."""
+    return pd.to_numeric(serie, errors="coerce").astype("Int64").astype(str)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def carregar_excel_estoque_referencia() -> "tuple[pd.DataFrame, dict]":
+    """Carrega o Excel de referência de estoque (outra aplicação do
+    usuário) — formato 'longo' já documentado (ver docs/estagios/
+    05_tabela_estoque.md): uma linha por declaração de inventário (H010),
+    com EstFinal/EstInicial marcando os dois anos-fronteira que aquela
+    MESMA quantidade (Qtde) representa (Estoque Final do ano EstFinal e,
+    ao mesmo tempo, Estoque Inicial do ano EstInicial = EstFinal+1) — o
+    mesmo raciocínio de continuidade cronológica que loader.
+    montar_estoque_anual_consolidado() aplica ao Bloco H. Reformata pro
+    formato 'largo' (uma linha por COD_ITEM x ANO_REFERENCIA, com
+    EXCEL_QTDE_INICIAL/EXCEL_QTDE_FINAL) via dois DataFrames unidos por
+    outer join em (ANO_REFERENCIA, COD_ITEM) — espelha a construção de
+    base_ei/base_ef em montar_estoque_anual_consolidado(). Regra R07:
+    ANO_REFERENCIA/COD_ITEM sempre string; quantidades ficam float
+    (_numero_decimal_br, tolera vírgula ou ponto decimal)."""
+    caminho = _localizar_excel_estoque_referencia()
+    meta: dict = {"arquivo": str(caminho) if caminho else None, "erros": []}
+    if caminho is None:
+        meta["erros"].append(MSG_SEM_EXCEL_ESTOQUE_REFERENCIA)
+        return pd.DataFrame(), meta
+    try:
+        df = pd.read_excel(caminho)
+    except Exception as exc:
+        meta["erros"].append(str(exc))
+        logger.exception("Erro ao ler Excel de referência de estoque em %s: %s", caminho, exc)
+        return pd.DataFrame(), meta
+
+    colunas_obrigatorias = {"CodItem", "Qtde", "EstInicial", "EstFinal", "DescItem"}
+    faltando = colunas_obrigatorias - set(df.columns)
+    if faltando:
+        meta["erros"].append(f"Coluna(s) {sorted(faltando)} não encontrada(s) em {caminho.name}.")
+        return pd.DataFrame(), meta
+
+    cod_item = _normalizar_cod_item_numerico(df["CodItem"])
+    qtd = _numero_decimal_br(df["Qtde"])
+
+    base_ei = pd.DataFrame({
+        "ANO_REFERENCIA": df["EstInicial"].astype(str),
+        "COD_ITEM": cod_item,
+        "EXCEL_QTDE_INICIAL": qtd,
+    })
+    base_ef = pd.DataFrame({
+        "ANO_REFERENCIA": df["EstFinal"].astype(str),
+        "COD_ITEM": cod_item,
+        "EXCEL_QTDE_FINAL": qtd,
+    })
+    consolidado = base_ei.merge(base_ef, on=["ANO_REFERENCIA", "COD_ITEM"], how="outer")
+
+    descricoes = pd.DataFrame({
+        "COD_ITEM": cod_item, "EXCEL_DESCR_ITEM": df["DescItem"].astype(str),
+    }).drop_duplicates("COD_ITEM")
+    consolidado = consolidado.merge(descricoes, on="COD_ITEM", how="left")
+
+    meta["total_linhas"] = len(df)
+    meta["total_itens"] = consolidado["COD_ITEM"].nunique()
+    return consolidado, meta
 
 
 def _contagem_por_chave_nfe(tabela: str) -> pd.Series:
@@ -2733,6 +2837,100 @@ def auditar_divergencia_saidas() -> dict:
         "residuo_hunter": residuo_hunter, "residuo_csv": residuo_csv,
         "erros": [],
     }
+
+
+_TOLERANCIA_DIVERGENCIA_ESTOQUE = 0.01
+# Tolerância de arredondamento na comparação de quantidades — Qtde do Excel
+# e QUANTIDADE_INICIAL/FINAL do Hunter passam por conversões BR (vírgula
+# decimal) independentes; diferenças de centésimos são ruído de ponto
+# flutuante, não divergência real.
+
+
+def auditar_divergencia_estoque() -> dict:
+    """Estudo de diferenças Hunter × Excel de referência pro lado estoque
+    (2026-07-17) — compara estoque_anual_consolidado (Estágio 5) com o
+    Excel 'ESTOQUE(...).xlsx' da raiz da operação, por (COD_ITEM,
+    ANO_REFERENCIA) — já validado manualmente em docs/estagios/
+    05_tabela_estoque.md (5.975 itens únicos batendo entre as duas fontes
+    na geraldo, 2026-07-12). Diferente de auditar_divergencia_entradas/
+    saidas() (que cruzam por CHV_NFE + contagem de itens, sem valor), aqui
+    a comparação é direta por QUANTIDADE — não há waterfall de
+    reconciliação porque estoque_anual_consolidado é a ÚNICA fonte Hunter
+    do inventário declarado (Estágio 5 não tem os múltiplos afluentes que
+    estoque_entradas/estoque_saidas têm no Estágio 4 — situação/análise
+    CFOP não se aplicam a um inventário já declarado).
+
+    Ausência de um lado é tratada como quantidade 0 do lado ausente
+    (fillna(0)) — não como erro: um item que só existe no Excel aparece
+    como QUANTIDADE_INICIAL/FINAL=0 do Hunter, e vice-versa, já capturando
+    o resíduo bidirecional dentro da própria tabela de divergência, sem
+    precisar de residuo_hunter/residuo_csv separados (que fariam sentido
+    se houvesse mais de uma tabela Hunter a checar, como no lado
+    entradas/saídas).
+
+    Achado real (2026-07-17): estoque_anual_consolidado tem um pequeno
+    número de linhas (ANO_REFERENCIA, COD_ITEM) duplicadas em geraldo (18
+    linhas) e cometa (2 linhas) — bug pré-existente do Estágio 5
+    (montar_estoque_anual_consolidado()), não desta auditoria. Resolvido
+    aqui via groupby(...).first() pra não inflar a comparação com
+    fanout — não corrige a tabela original.
+
+    Devolve `{'resumo': dict, 'divergentes': DataFrame, 'erros': list}`
+    — `erros` não-vazio quando não há Excel de referência nesta operação
+    ou a tabela estoque_anual_consolidado ainda não foi gerada."""
+    df_excel, meta_excel = carregar_excel_estoque_referencia()
+    if df_excel.empty:
+        return {"resumo": {}, "divergentes": pd.DataFrame(), "erros": meta_excel.get("erros", [])}
+
+    df_hunter, _ = consultar_estoque_anual_consolidado(limite=None)
+    if df_hunter.empty:
+        return {
+            "resumo": {}, "divergentes": pd.DataFrame(),
+            "erros": ["Tabela estoque_anual_consolidado (Estágio 5) ainda não foi gerada."],
+        }
+
+    hunter = df_hunter.copy()
+    hunter["COD_ITEM"] = _normalizar_cod_item_numerico(hunter["COD_ITEM_DECLARACAO"])
+    hunter = (
+        hunter.groupby(["ANO_REFERENCIA", "COD_ITEM"], as_index=False)
+        .agg({"DESCR_ITEM_DECLARACAO": "first", "QUANTIDADE_INICIAL": "first", "QUANTIDADE_FINAL": "first"})
+    )
+
+    base = df_excel.merge(hunter, on=["ANO_REFERENCIA", "COD_ITEM"], how="outer")
+    for col in ("EXCEL_QTDE_INICIAL", "EXCEL_QTDE_FINAL", "QUANTIDADE_INICIAL", "QUANTIDADE_FINAL"):
+        base[col] = base[col].fillna(0.0)
+    base["DESCR_ITEM_DECLARACAO"] = base["DESCR_ITEM_DECLARACAO"].fillna(base["EXCEL_DESCR_ITEM"])
+
+    base["DIF_INICIAL"] = (base["EXCEL_QTDE_INICIAL"] - base["QUANTIDADE_INICIAL"]).round(2)
+    base["DIF_FINAL"] = (base["EXCEL_QTDE_FINAL"] - base["QUANTIDADE_FINAL"]).round(2)
+    divergente = (
+        (base["DIF_INICIAL"].abs() > _TOLERANCIA_DIVERGENCIA_ESTOQUE)
+        | (base["DIF_FINAL"].abs() > _TOLERANCIA_DIVERGENCIA_ESTOQUE)
+    )
+
+    resumo = {
+        "total_pares": len(base),
+        "total_itens_unicos": int(base["COD_ITEM"].nunique()),
+        "pares_divergentes": int(divergente.sum()),
+        "itens_so_excel": int(
+            (base["QUANTIDADE_INICIAL"].eq(0) & base["QUANTIDADE_FINAL"].eq(0)
+             & (base["EXCEL_QTDE_INICIAL"].ne(0) | base["EXCEL_QTDE_FINAL"].ne(0))).sum()
+        ),
+        "itens_so_hunter": int(
+            (base["EXCEL_QTDE_INICIAL"].eq(0) & base["EXCEL_QTDE_FINAL"].eq(0)
+             & (base["QUANTIDADE_INICIAL"].ne(0) | base["QUANTIDADE_FINAL"].ne(0))).sum()
+        ),
+    }
+
+    divergentes = base.loc[divergente, [
+        "COD_ITEM", "ANO_REFERENCIA", "DESCR_ITEM_DECLARACAO",
+        "EXCEL_QTDE_INICIAL", "QUANTIDADE_INICIAL", "DIF_INICIAL",
+        "EXCEL_QTDE_FINAL", "QUANTIDADE_FINAL", "DIF_FINAL",
+    ]].copy()
+    divergentes["_ORDEM"] = divergentes["DIF_INICIAL"].abs() + divergentes["DIF_FINAL"].abs()
+    divergentes = divergentes.sort_values("_ORDEM", ascending=False).drop(columns="_ORDEM")
+
+    return {"resumo": resumo, "divergentes": divergentes, "erros": []}
 
 
 if __name__ == "__main__":

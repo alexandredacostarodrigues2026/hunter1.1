@@ -338,6 +338,43 @@ Estágio 4) — fácil rodar só um dos dois e achar que está tudo atualizado.
   saídas enriquecidas."`), seguida das duas auditorias já com dados
   frescos, tudo no mesmo carregamento de página.
 
+## Auditoria de Divergência de Estoque (2026-07-17, mesmo dia)
+
+Terceiro espelho na página AUDITORIA1, pedido pelo usuário logo após fechar
+entradas/saídas ("falta agora para os estoques") — ver detalhamento técnico
+em [docs/estagios/05_tabela_estoque.md](05_tabela_estoque.md#validação-real-2026-07-12-aprofundada-2026-07-17).
+
+- **`loader.auditar_divergencia_estoque()`**: diferente das duas
+  auditorias acima (que cruzam por `CHV_NFE` + contagem de itens, sem
+  valor, com waterfall de reconciliação em várias tabelas), aqui a
+  comparação é direta de QUANTIDADE por `(COD_ITEM, ANO_REFERENCIA)` entre
+  `estoque_anual_consolidado` (Estágio 5) e o Excel `ESTOQUE(...).xlsx` —
+  só uma fonte Hunter, sem afluentes de situação/análise CFOP (não se
+  aplicam a inventário já declarado). Ausência de um lado vira quantidade
+  0, capturando o resíduo bidirecional dentro da própria tabela de
+  divergência (sem seção "Resíduo Hunter/CSV" separada, diferente das
+  outras duas).
+- **`interface.render_auditoria_divergencia_estoque()`**: 4 KPIs (Pares
+  Item×Ano, Divergentes, Só no Excel, Só no Hunter) + botão "Investigar
+  Itens Divergentes", chamada logo após `render_auditoria_divergencia_
+  saidas()` em `render_pagina_auditoria1()`.
+- **Achado real ao validar contra a base da geraldo**: quase 100% dos
+  pares divergiam (28.705/38.111) — não era bug da auditoria nova, era um
+  desvio sistemático de 1 ano em `montar_estoque_anual_consolidado()`
+  (Estágio 5): o código gravava `EI(ano_inv)`/`EF(ano_inv-1)`, o oposto do
+  que o próprio docstring da função sempre documentou no exemplo
+  (`EF(2020)`/`EI(2021)` pra `DT_INV=31/12/2020`). Confirmado deslocando
+  `ANO_REFERENCIA` em +1 ano: 31.954/31.955 quantidades bateram
+  exatamente. Corrigido nas 4 pastas e `estoque_anual_consolidado`
+  regenerado nas 3 operações reais — divergência caiu para 4/31.938
+  (geraldo), 0/223 (PB2), 2/132 (cometa); o resíduo é duplicidade
+  pré-existente de declaração no SPED, não erro de continuidade.
+- Validado via script direto contra as 3 bases reais (`loader.
+  auditar_divergencia_estoque()` importado com o runtime portátil de cada
+  operação) — sem Playwright nesta sessão (ferramenta de browser
+  indisponível); recomenda-se um clique manual em "AUDITORIA1" na próxima
+  sessão com Streamlit rodando pra confirmar visualmente os 3 painéis.
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —
