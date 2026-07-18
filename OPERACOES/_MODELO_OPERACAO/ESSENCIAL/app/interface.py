@@ -1194,24 +1194,23 @@ def render_auditoria_divergencia_saidas() -> None:
 
 
 _COLUNAS_PREVIEW_DIVERGENCIA_ESTOQUE = [
-    "COD_ITEM", "ANO_REFERENCIA", "DESCR_ITEM_DECLARACAO",
-    "EXCEL_QTDE_INICIAL", "QUANTIDADE_INICIAL", "DIF_INICIAL",
-    "EXCEL_QTDE_FINAL", "QUANTIDADE_FINAL", "DIF_FINAL",
+    "COD_ITEM", "ANO_REFERENCIA", "EXCEL_DESCR_ITEM", "EXCEL_QTDE", "QUANTIDADE", "DIF",
 ]
 
 
 def render_auditoria_divergencia_estoque() -> None:
-    """Auditoria de estoque (2026-07-17) — ver loader.auditar_divergencia_
-    estoque(). Diferente de render_auditoria_divergencia_entradas/saidas()
-    (que cruzam por CHV_NFE + contagem de itens, sem valor e com waterfall
-    de reconciliação em várias tabelas), aqui a comparação é direta por
-    QUANTIDADE entre estoque_anual_consolidado (Estágio 5) e o Excel
-    'ESTOQUE(...).xlsx' da pasta da operação, por (COD_ITEM,
-    ANO_REFERENCIA) — só uma tabela de divergência, sem seção separada de
-    "Resíduo" (a ausência de um lado já aparece como quantidade 0 dentro
-    da própria tabela). Mostra um aviso (não erro) se a operação não tiver
-    o Excel de referência nem a tabela estoque_anual_consolidado ainda
-    gerada — normal em ambos os casos."""
+    """Auditoria de estoque (2026-07-17, revisada no mesmo dia) — ver
+    loader.auditar_divergencia_estoque(). Diferente de render_auditoria_
+    divergencia_entradas/saidas() (que cruzam por CHV_NFE + contagem de
+    itens, sem valor e com waterfall de reconciliação em várias tabelas),
+    aqui a comparação é direta por QUANTIDADE, uma linha por declaração
+    de inventário — MESMO modelo de linha do Excel de referência (usuário
+    pediu explicitamente pra comparar "no modelo do CSV" em vez do
+    formato item×ano expandido do Estágio 5) — só uma tabela de
+    divergência, sem seção separada de "Resíduo" (a ausência de um lado
+    já aparece como quantidade 0 dentro da própria tabela). Mostra um
+    aviso (não erro) se a operação não tiver o Excel de referência nem
+    nenhum SPED de Bloco H — normal em ambos os casos."""
     resultado = loader.auditar_divergencia_estoque()
     if resultado["erros"]:
         if resultado["erros"] == [loader.MSG_SEM_EXCEL_ESTOQUE_REFERENCIA]:
@@ -1219,10 +1218,10 @@ def render_auditoria_divergencia_estoque() -> None:
                 "Sem Excel de referência (`*ESTOQUE*.xlsx`) na pasta desta operação — "
                 "este estudo só se aplica a quem tiver esse arquivo."
             )
-        elif "estoque_anual_consolidado" in " ".join(resultado["erros"]):
+        elif "Bloco H" in " ".join(resultado["erros"]):
             st.info(
-                'Tabela de Estoque (Estágio 5) ainda não foi gerada — use "Gerar Tabela de '
-                'Estoque" em "TABELAS ENTRADAS / SAÍDAS / ESTOQUES" primeiro.'
+                "Nenhuma declaração de inventário (Bloco H — H005/H010) encontrada nos SPED "
+                "desta operação."
             )
         else:
             st.error(
@@ -1234,10 +1233,10 @@ def render_auditoria_divergencia_estoque() -> None:
     st.divider()
     st.subheader("Auditoria — Divergência de Estoque (Hunter × Excel)")
     st.caption(
-        "Compara o Excel de referência (`*ESTOQUE*.xlsx` na pasta da operação) com "
-        "estoque_anual_consolidado por (COD_ITEM, ANO_REFERENCIA) — comparação direta de "
-        "QUANTIDADE_INICIAL/QUANTIDADE_FINAL, sem waterfall de reconciliação (diferente das "
-        "auditorias de entradas/saídas acima)."
+        "Compara o Excel de referência (`*ESTOQUE*.xlsx` na pasta da operação) com as "
+        "declarações de inventário cruas do Bloco H (H010), por (COD_ITEM, ANO_REFERENCIA) — "
+        "uma linha por declaração física, mesmo modelo do Excel, sem passar pelo formato "
+        "item×ano expandido do Estágio 5."
     )
 
     resumo = resultado["resumo"]

@@ -347,13 +347,10 @@ em [docs/estagios/05_tabela_estoque.md](05_tabela_estoque.md#validação-real-20
 - **`loader.auditar_divergencia_estoque()`**: diferente das duas
   auditorias acima (que cruzam por `CHV_NFE` + contagem de itens, sem
   valor, com waterfall de reconciliação em várias tabelas), aqui a
-  comparação é direta de QUANTIDADE por `(COD_ITEM, ANO_REFERENCIA)` entre
-  `estoque_anual_consolidado` (Estágio 5) e o Excel `ESTOQUE(...).xlsx` —
-  só uma fonte Hunter, sem afluentes de situação/análise CFOP (não se
-  aplicam a inventário já declarado). Ausência de um lado vira quantidade
-  0, capturando o resíduo bidirecional dentro da própria tabela de
-  divergência (sem seção "Resíduo Hunter/CSV" separada, diferente das
-  outras duas).
+  comparação é direta de QUANTIDADE por `(COD_ITEM, ANO_REFERENCIA)` —
+  ausência de um lado vira quantidade 0, capturando o resíduo
+  bidirecional dentro da própria tabela de divergência (sem seção
+  "Resíduo Hunter/CSV" separada, diferente das outras duas).
 - **`interface.render_auditoria_divergencia_estoque()`**: 4 KPIs (Pares
   Item×Ano, Divergentes, Só no Excel, Só no Hunter) + botão "Investigar
   Itens Divergentes", chamada logo após `render_auditoria_divergencia_
@@ -366,9 +363,20 @@ em [docs/estagios/05_tabela_estoque.md](05_tabela_estoque.md#validação-real-20
   (`EF(2020)`/`EI(2021)` pra `DT_INV=31/12/2020`). Confirmado deslocando
   `ANO_REFERENCIA` em +1 ano: 31.954/31.955 quantidades bateram
   exatamente. Corrigido nas 4 pastas e `estoque_anual_consolidado`
-  regenerado nas 3 operações reais — divergência caiu para 4/31.938
-  (geraldo), 0/223 (PB2), 2/132 (cometa); o resíduo é duplicidade
-  pré-existente de declaração no SPED, não erro de continuidade.
+  regenerado nas 3 operações reais.
+- **Revisão "modelo do CSV" (mesmo dia)**: primeira versão comparava
+  contra `estoque_anual_consolidado` já expandido no formato "largo"
+  (EI/EF separados — 223 linhas na PB, contra 127 do Excel bruto).
+  Usuário notou o descompasso e pediu pra comparar na MESMA granularidade
+  do Excel — uma linha por declaração física de inventário. Confirmado
+  que `load_declaracao_estoque()` (H010 cru, pré-Estágio 5) já bate quase
+  exato com o Excel nas 3 operações (geraldo 25.600×25.590, PB2 127×127
+  exato, cometa 75×75 exato) — reescrito `carregar_excel_estoque_
+  referencia()` e novo `loader._declaracoes_estoque_hunter()` pra comparar
+  direto nessa granularidade, dispensando o Estágio 5 como pré-requisito.
+  Divergência final: **2/25.591 (geraldo), 0/127 (PB2 — reconciliação
+  total), 1/75 (cometa, `COD_ITEM=4` com diferença grande — achado real
+  ainda não investigado)**.
 - Validado via script direto contra as 3 bases reais (`loader.
   auditar_divergencia_estoque()` importado com o runtime portátil de cada
   operação) — sem Playwright nesta sessão (ferramenta de browser

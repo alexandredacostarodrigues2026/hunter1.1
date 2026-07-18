@@ -97,12 +97,22 @@ COD_ITEM nas duas fontes) e a contagem de linhas — não as QUANTIDADES por
 (`interface.render_auditoria_divergencia_estoque()`, 2026-07-17) fechou
 essa lacuna e achou o desvio sistemático de 1 ano corrigido acima: antes da
 correção, quase 100% dos pares comparados divergiam (28.705/38.111 na
-geraldo; 319/319 na PB2; 188/188 na cometa). Depois de corrigir
-`montar_estoque_anual_consolidado()` e regenerar as 3 operações reais, a
-divergência caiu para **4/31.938 (geraldo), 0/223 (PB2), 2/132 (cometa)**
-— os poucos pares restantes são duplicidade pré-existente de declaração
-(mesmo `COD_ITEM`+`ANO_REFERENCIA` com quantidades diferentes entre dois
-H005/H010, ex.: `COD_ITEM=18653` na geraldo), não erro de continuidade.
+geraldo; 319/319 na PB2; 188/188 na cometa).
+
+A primeira versão da auditoria comparava contra `estoque_anual_
+consolidado` já expandido no formato "largo" (EI/EF separados, 223 linhas
+na PB) — usuário pediu pra comparar "no modelo do CSV" em vez disso: uma
+linha por declaração física de inventário, igual ao Excel de referência,
+sem passar pelo formato item×ano do Estágio 5. Revisado no mesmo dia:
+`auditar_divergencia_estoque()` agora lê H010 cru direto (`loader.
+_declaracoes_estoque_hunter()`) e compara 1:1 contra o Excel — total de
+linhas bate quase exato nas 3 operações reais (**geraldo 25.591×25.590,
+PB2 127×127 exato, cometa 75×75 exato**), dispensando o Estágio 5 como
+pré-requisito desta auditoria. Divergência final: **2/25.591 (geraldo,
+zero divergência de valor — mesma duplicidade pré-existente de declaração
+de antes, ex. `COD_ITEM=18653`), 0/127 (PB2, reconciliação total), 1/75
+(cometa, `COD_ITEM=4` com diferença grande — achado real ainda não
+investigado)**.
 
 ## Ver também
 
