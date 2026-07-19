@@ -652,6 +652,24 @@ corrigir a duplicação nas tabelas do Estágio 4 em si (afetando também as
 3 auditorias de AUDITORIA1) continua em aberto, registrada em
 `memoria/2026-07-18.md`.
 
+## Exclusão de autoemissão em Vendas (2026-07-18, mesmo dia)
+
+Segundo produto testado ("FRALDA NENE BABY 3") revelou que o problema é
+mais amplo que a dedup ET/EP acima: qualquer nota de autoemissão
+(`emit_cnpj==dest_cnpj`) satisfaz `mask_entrada_real` E `mask_saida_
+real` simultaneamente, pra QUALQUER `TPNF` — propriedade estrutural do
+formato OR das duas máscaras em `loader.py`, não limitada ao CFOP
+5927/6927 já corrigido em 2026-07-17. Confirmado que as 482 linhas
+autoemitidas em `estoque_saidas` (241 itens × 2 pastas) são o MESMO
+conjunto já achado na dedup — não um problema adicional em volume, só
+em escopo de exclusão.
+
+`loader._valores_por_ano_item()` ganhou `AND emit_cnpj != dest_cnpj`
+(só quando `tabela='estoque_saidas'`), mesmo escopo contido (não toca
+`estoque_saidas`). Resultado: fralda 2022 fechou EXATO (R$900,00);
+bolacha 2022 piorou levemente (confirma outro fator de resíduo
+independente, ainda não identificado, pra esse produto específico).
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —

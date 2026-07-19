@@ -2552,7 +2552,21 @@ def _valores_por_ano_item(tabela: str, coluna_ano: str, coluna_cod_item: str) ->
     correção "somente para o levantamento do 7.2" — não tocar nas
     tabelas do Estágio 4: aqui, `ROW_NUMBER() OVER (PARTITION BY
     CHV_NFE, NITEM ORDER BY PASTA_ORIGEM)` mantém só 1 linha por item
-    físico antes de somar, restrito à consulta deste módulo."""
+    físico antes de somar, restrito à consulta deste módulo.
+
+    Exclusão de autoemissão em Vendas (2026-07-18, mesmo dia — achado ao
+    investigar resíduo de "FRALDA NENE BABY 3"): uma nota autoemitida
+    (`fatonfe_infnfe_emit_cnpj == fatonfe_infnfe_dest_cnpj`) satisfaz
+    `mask_entrada_real` E `mask_saida_real` SIMULTANEAMENTE, sempre —
+    não é dependente de CFOP nem de `TPNF` (a exclusão de 2026-07-17,
+    `mask_baixa_estoque_autoemissao_ep`, só cobre o subcaso CFOP
+    5927/6927; uma nota de "Devolução de Mercadorias" autoemitida, por
+    exemplo, não é coberta e ainda conta em dobro). Confirmado: as 482
+    linhas autoemitidas em `estoque_saidas` (241 itens × 2 pastas) são
+    exatamente o mesmo conjunto da deduplicação ET/EP acima — mesmo
+    R$74.773,52. Usuário confirmou excluir TODA nota de autoemissão de
+    Vendas (mantendo em Compras, espelhando a decisão de 2026-07-17
+    pro lado entradas) — aplicado só quando `tabela='estoque_saidas'`."""
     colunas = ["ANO", "COD_ITEM", "VALOR"]
     if not _BANCO_PATH.exists():
         return pd.DataFrame(columns=colunas)
@@ -2561,6 +2575,10 @@ def _valores_por_ano_item(tabela: str, coluna_ano: str, coluna_cod_item: str) ->
             tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
             if tabela not in tabelas:
                 return pd.DataFrame(columns=colunas)
+            filtro_autoemissao = (
+                " AND fatonfe_infnfe_emit_cnpj != fatonfe_infnfe_dest_cnpj"
+                if tabela == "estoque_saidas" else ""
+            )
             df = con.execute(
                 f"WITH dedup_et_ep AS ("
                 f"  SELECT {coluna_ano} AS ANO, {coluna_cod_item} AS COD_ITEM, "
@@ -2569,7 +2587,7 @@ def _valores_por_ano_item(tabela: str, coluna_ano: str, coluna_cod_item: str) ->
                 f"           PARTITION BY fatoitemnfe_infprot_chnfe, fatoitemnfe_infnfe_det_nitem "
                 f"           ORDER BY PASTA_ORIGEM"
                 f"         ) AS rn "
-                f"  FROM {tabela} WHERE {coluna_cod_item} IS NOT NULL"
+                f"  FROM {tabela} WHERE {coluna_cod_item} IS NOT NULL{filtro_autoemissao}"
                 f") "
                 f"SELECT ANO, COD_ITEM, SUM(TRY_CAST(VPROD AS DOUBLE)) AS VALOR "
                 f"FROM dedup_et_ep WHERE rn = 1 GROUP BY ANO, COD_ITEM"
