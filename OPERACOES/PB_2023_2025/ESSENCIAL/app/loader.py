@@ -2857,6 +2857,154 @@ def consultar_cruzamento_valor(limite: "int | None" = 200) -> "tuple[pd.DataFram
         return pd.DataFrame(), 0
 
 
+# ── Estágio 7.2.1 — Cruzamento por Produto ─────────────────────────────────
+# Condensação do Estágio 7.2 (2026-07-19, Solicitação Técnica): uma linha por
+# ANO+COD_ITEM fragmenta o "rombo" total de um produto ao longo dos anos —
+# aqui soma tudo numa linha por DESCR_ALVO (Descrição Relevante, Estágio
+# 7.1), pra responder direto "qual produto causou o maior prejuízo
+# financeiro no período todo".
+_COLUNAS_CRUZAMENTO_PRODUTO = [
+    "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
+    "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
+]
+_COLUNAS_SOMA_CRUZAMENTO_PRODUTO = [
+    "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO", "DIVERGENCIA",
+]
+
+
+def gerar_cruzamento_produto() -> dict:
+    """Estágio 7.2.1 — Cruzamento por Produto: condensa `cruzamento_valor`
+    (Estágio 7.2, uma linha por ANO+COD_ITEM) numa linha por DESCR_ALVO,
+    somando EI/Compras/Total Débito/Vendas/EF/Total Crédito/Divergência
+    de todos os anos do produto. Lê de `cruzamento_valor` JÁ PERSISTIDA
+    (não reprocessa entradas/saídas/estoque do zero) — exige essa tabela
+    já gerada.
+
+    `DIVERGENCIA` aqui é a SOMA das divergências anuais (magnitude total
+    acumulada de irregularidade no período) — DELIBERADAMENTE não é
+    `|∑TOTAL_DEBITO - ∑TOTAL_CREDITO|` (a "divergência do total líquido"),
+    que poderia dar um valor MENOR ou até 0 se anos com direções opostas
+    se cancelassem (ex.: 2021 com entrada sem NF e 2022 com saída sem NF
+    do mesmo produto) — isso esconderia produtos com histórico recorrente
+    de irregularidade atrás de um total líquido enganosamente baixo.
+
+    `INFRACAO`/`PCT_DIVERGENCIA` SÃO recalculados sobre os totais
+    acumulados (∑TOTAL_DEBITO, ∑TOTAL_CREDITO) — não é uma simples soma
+    das colunas originais, senão o rótulo de Infração de um produto
+    dependeria arbitrariamente de qual ano "pesa mais" na soma. Mesma
+    direção de INFRACAO do Estágio 7.2 (confirmado com o usuário
+    2026-07-19, pra manter consistência entre os dois painéis — o 7.2.1
+    é a versão somada da MESMA equação, não uma regra nova): ∑TD < ∑TC →
+    'Entradas sem NF' (compra sem nota); ∑TD ≥ ∑TC → 'Saídas sem NF'
+    (venda sem nota). `PCT_DIVERGENCIA` usa a mesma fórmula/proteção
+    contra zero do Estágio 7.2 (`DIVERGENCIA / min(∑TD,∑TC) × 100`,
+    denominador 0 vira 0.00001 — ver gerar_cruzamento_valor()).
+
+    Ordenação: por `DIVERGENCIA` (acumulada) decrescente — maiores
+    "rombos" financeiros totais no topo.
+
+    Regra R07: `DESCR_ALVO` sempre string.
+
+    Devolve `{'resumo': dict, 'cruzamento': DataFrame, 'erros': list}` —
+    `erros` não-vazio quando `cruzamento_valor` (Estágio 7.2) ainda não
+    foi gerada."""
+    base, _ = consultar_cruzamento_valor(limite=None)
+    if base.empty:
+        return {
+            "resumo": {}, "cruzamento": pd.DataFrame(),
+            "erros": ["Tabela cruzamento_valor (Estágio 7.2) ainda não foi gerada."],
+        }
+
+    for col in _COLUNAS_SOMA_CRUZAMENTO_PRODUTO:
+        base[col] = pd.to_numeric(base[col], errors="coerce").fillna(0.0)
+
+    agrupado = base.groupby("DESCR_ALVO", as_index=False)[_COLUNAS_SOMA_CRUZAMENTO_PRODUTO].sum()
+
+    diferenca = agrupado["TOTAL_DEBITO"] - agrupado["TOTAL_CREDITO"]
+    agrupado["INFRACAO"] = np.where(diferenca < 0, _INFRACAO_ENTRADAS_SEM_NF, _INFRACAO_SAIDAS_SEM_NF)
+
+    minimo = agrupado[["TOTAL_DEBITO", "TOTAL_CREDITO"]].min(axis=1)
+    minimo_seguro = minimo.where(minimo != 0, 0.00001)
+    agrupado["PCT_DIVERGENCIA"] = (agrupado["DIVERGENCIA"] / minimo_seguro * 100).round(2)
+
+    for col in _COLUNAS_SOMA_CRUZAMENTO_PRODUTO:
+        agrupado[col] = agrupado[col].round(2)
+
+    cruzamento = (
+        _forcar_colunas_string(agrupado, ["DESCR_ALVO"])[_COLUNAS_CRUZAMENTO_PRODUTO]
+        .sort_values("DIVERGENCIA", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    resumo = {
+        "total_produtos": len(cruzamento),
+        "total_divergencia_acumulada": float(cruzamento["DIVERGENCIA"].sum()),
+    }
+    return {"resumo": resumo, "cruzamento": cruzamento, "erros": []}
+
+
+def persistir_cruzamento_produto(callback=None) -> dict:
+    """Estágio 7.2.1: persiste cruzamento_produto no DuckDB, ver
+    gerar_cruzamento_produto(). callback(etapa, n) chamado ao final."""
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    resultado = {}
+    try:
+        r = gerar_cruzamento_produto()
+        if r["erros"]:
+            resultado["erro"] = " | ".join(r["erros"])
+            return resultado
+        df = r["cruzamento"]
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            if not df.empty:
+                con.register("_df_cruzamento_produto", df)
+                con.execute("CREATE OR REPLACE TABLE cruzamento_produto AS SELECT * FROM _df_cruzamento_produto")
+                con.unregister("_df_cruzamento_produto")
+        resultado["cruzamento_produto"] = len(df)
+        if callback:
+            callback("cruzamento_produto", resultado["cruzamento_produto"])
+    except Exception as exc:
+        logger.exception("Erro ao persistir cruzamento_produto: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def cruzamento_produto_ja_gerado() -> bool:
+    """True se a tabela cruzamento_produto (Estágio 7.2.1) já existe no
+    DuckDB da operação."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            return "cruzamento_produto" in tabelas
+    except Exception:
+        logger.exception("Erro ao verificar cruzamento_produto existente em %s", _BANCO_PATH)
+        return False
+
+
+def consultar_cruzamento_produto(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê cruzamento_produto já persistida (sem reprocessar), devolvendo
+    uma amostra (até 'limite' linhas) e o total real de linhas.
+    limite=None devolve a tabela inteira."""
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "cruzamento_produto" not in tabelas:
+                return pd.DataFrame(), 0
+            total = con.execute("SELECT COUNT(*) FROM cruzamento_produto").fetchone()[0]
+            query = (
+                "SELECT * FROM cruzamento_produto" if limite is None
+                else f"SELECT * FROM cruzamento_produto LIMIT {limite}"
+            )
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar cruzamento_produto em %s", _BANCO_PATH)
+        return pd.DataFrame(), 0
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio

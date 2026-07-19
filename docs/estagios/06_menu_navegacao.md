@@ -728,6 +728,95 @@ novo, já sai único da fonte. Revalidado: geraldo/PB2 inalterados
 (códigos já bem formados), cometa recontou pra 2.513 produtos (era
 2.617 — unificação de variantes antes fragmentadas).
 
+## Painel 7.2 ganhou teto ">1000%" e formatação BR — e um bug real de "nan%" causado pela própria correção (2026-07-19, mesmo dia)
+
+Dois refinamentos de UX pedidos em sequência sobre o painel 7.2 (não
+mudam numeração nem navegação, só o `st.dataframe()` de
+`render_cruzamento_valor()`):
+
+- **Alta densidade**: `hide_index=True`, CSS escopado via
+  `st.container(key=...)` reduzindo a fonte da tabela a 12px, e
+  formatação monetária padrão BR (`"1.234,56"`, milhar `.` decimal `,`)
+  — `st.column_config.NumberColumn` só formata em en-US
+  (`"1,234.56"`, sprintf-js), sem opção de inverter os separadores, por
+  isso as colunas viraram texto pré-formatado (`_formatar_moeda_br()`)
+  em vez de usar `column_config`.
+- **Teto `">1000%"`** em `PCT_DIVERGENCIA` (`_formatar_pct_br()`) — evita
+  número gigante na tela quando o denominador é ~0 (mesmo caso de
+  omissão total da seção "Indicadores de risco" acima). `loader.
+  gerar_cruzamento_valor()` também trocou o denominador `0` por
+  `0.00001` (em vez de `NaN`), eliminando o `"N/A"` que antes aparecia.
+- **Bug real, mesma tarde**: usuário reportou "continua nan%" logo
+  depois da mudança. Causa: `_formatar_pct_br()` não tratava `NaN`
+  explicitamente — Python formata `float('nan')` como a string `"nan"`,
+  então `f"{nan:.2f}%"` virava `"nan%"` na tela. A correção do
+  denominador em `gerar_cruzamento_valor()` só afeta dado CALCULADO
+  DAQUI PRA FRENTE — as tabelas `cruzamento_valor` já persistidas
+  (geradas ANTES da correção) continuavam com `NaN` gravado
+  fisicamente. Confirmado nos 3 bancos: geraldo 203/17.916 linhas, PB2
+  187/350, **cometa 3.062/3.179 (96%)**. Corrigido tratando `pd.isna(v)`
+  no mesmo `if` do teto — `NaN` também vira `">1000%"`, sem precisar
+  regerar as tabelas pra corrigir a exibição (regenerar continua
+  recomendado pra limpar o dado bruto, não só a tela).
+- Verificado com Playwright + runtime portátil real (geraldo e cometa,
+  a operação com mais `NaN` residual) — sem `"nan%"`/`"N/A"` visível,
+  separadores BR corretos, fonte 12px confirmada via
+  `getComputedStyle`.
+
+## 8º botão — "7.2.1: CRUZAMENTO POR PRODUTO" (Estágio 7.2.1, 2026-07-19, mesmo dia)
+
+Solicitação Técnica seguinte: o 7.2 tem uma linha por `(ANO, COD_ITEM)`,
+fragmentando o "rombo" total de um produto ao longo dos anos — pedido um
+novo sub-passo que condensa por Descrição Relevante, pra responder direto
+"qual produto causou o maior prejuízo financeiro no período todo", com
+drill-down pro detalhamento anual.
+
+- **Achado antes de implementar, mesmo padrão do `INFRACAO` do 7.2**: a
+  Solicitação Técnica descrevia a regra de Infração do 7.2.1 com a
+  direção INVERTIDA (`∑TD<∑TC` → "Saídas sem NF") em relação à regra já
+  confirmada no 7.2 (`TD<TC` → "Entradas sem NF", ver seção "Indicadores
+  de risco" acima). Perguntado ao usuário antes de codificar
+  (`AskUserQuestion`) — confirmado manter a MESMA direção do 7.2, já que
+  o 7.2.1 é a versão somada da mesma equação, não uma regra nova.
+- **`loader.gerar_cruzamento_produto()`**: lê `cruzamento_valor` JÁ
+  PERSISTIDA (não reprocessa entradas/saídas/estoque do zero) — exige
+  essa tabela já gerada. Agrupa por `DESCR_ALVO`, somando EI/Compras/
+  Total Débito/Vendas/EF/Total Crédito/**Divergência**. `INFRACAO`/
+  `PCT_DIVERGENCIA` são RECALCULADOS sobre os totais acumulados
+  (`∑TOTAL_DEBITO`, `∑TOTAL_CREDITO`), não somados — senão o rótulo de
+  um produto dependeria arbitrariamente de qual ano "pesa mais" na soma.
+  `DIVERGENCIA`, ao contrário, é a SOMA das divergências anuais
+  (magnitude total acumulada) — deliberadamente NÃO é
+  `|∑TOTAL_DEBITO-∑TOTAL_CREDITO|` (a "divergência do total líquido"),
+  que poderia dar um valor menor ou até 0 se anos com direções opostas
+  se cancelassem, escondendo produtos com histórico recorrente de
+  irregularidade atrás de um total líquido enganosamente baixo. Mesma
+  proteção contra denominador zero do 7.2 (`0.00001`). Ordenado por
+  `DIVERGENCIA` (acumulada) decrescente.
+- **`persistir_cruzamento_produto()`/`cruzamento_produto_ja_gerado()`/
+  `consultar_cruzamento_produto()`**: mesmo padrão de 4 funções do 7.2,
+  nova tabela `cruzamento_produto` no DuckDB.
+- **`interface.render_cruzamento_produto()`**: mesmo padrão "Gerar/
+  Regerar" + prévia de alta densidade (hide_index, fonte 12px,
+  `_formatar_moeda_br()`/`_formatar_pct_br()` reaproveitados do 7.2, sem
+  duplicar formatação). **Drill-down**: `st.selectbox` com as Descrições
+  Relevantes já geradas — ao escolher uma, filtra `cruzamento_valor`
+  (7.2) por essa descrição e mostra o detalhamento ano a ano abaixo, na
+  mesma formatação.
+- **Navegação**: 8º botão em `render_menu_principal()` ("📊 7.2.1:
+  CRUZAMENTO POR PRODUTO", `pagina_ativa="cruzamento_produto"`,
+  `st.columns(8)`) + roteamento em `main.py` + `render_pagina_
+  cruzamento_produto()` (mesmo padrão de gate `dados_carregados` das
+  outras páginas).
+- Regra R07: `DESCR_ALVO` sempre string.
+- **Validado ao vivo** (Playwright, runtime portátil real da geraldo,
+  porta descartável 8601, app completo via `main.py` — não script de
+  bypass): clique no botão do menu → "Gerar Cruzamento por Produto" →
+  5.721 produtos condensados, ordenados corretamente por Divergência
+  decrescente, teto `">1000%"` aparecendo numa linha real; selectbox de
+  drill-down testado escolhendo "ABRIDOR DE LATA" → mostrou a linha de
+  2021 (única) com os mesmos valores/formatação do 7.2.
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —

@@ -1109,6 +1109,123 @@ def render_cruzamento_valor() -> None:
     st.rerun()
 
 
+_COLUNAS_PREVIEW_CRUZAMENTO_PRODUTO = [
+    "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
+    "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
+]
+
+
+def render_cruzamento_produto() -> None:
+    """Estágio 7.2.1 — Cruzamento por Produto (2026-07-19, Solicitação
+    Técnica): condensa `cruzamento_valor` (Estágio 7.2, uma linha por
+    ANO+COD_ITEM) numa linha por Descrição Relevante, somando os valores
+    financeiros e recalculando Infração/% Diverg sobre os totais
+    acumulados — ver loader.gerar_cruzamento_produto() pro raciocínio
+    completo (inclusive por que DIVERGENCIA é somada, não recalculada
+    como |∑TD-∑TC|). Exige `cruzamento_valor` (Estágio 7.2) já gerada.
+    Mesmo padrão "Gerar/Regerar" + prévia de alta densidade das outras
+    páginas (hide_index, fonte 12px, formatação BR — reaproveita
+    _formatar_moeda_br()/_formatar_pct_br() do Estágio 7.2). Drill-down:
+    um st.selectbox com as Descrições Relevantes já geradas — ao
+    escolher uma, filtra `cruzamento_valor` por essa descrição e mostra
+    o detalhamento ano a ano abaixo, na mesma formatação."""
+    st.subheader("Estágio 7.2.1 — Cruzamento por Produto")
+    st.caption(
+        "Condensa o Cruzamento por Valor (Estágio 7.2) por Descrição Relevante — soma EI, "
+        "Compras, Total Débito, Vendas, EF, Total Crédito e Divergência de todos os anos do "
+        "produto. Infração e % Diverg recalculados sobre os totais acumulados (mesma regra do "
+        "Estágio 7.2: Total Débito < Total Crédito acumulado → 'Entradas sem NF'; caso "
+        "contrário → 'Saídas sem NF'). Ordenado por Divergência acumulada decrescente — "
+        "produtos com maior 'rombo' total no período no topo."
+    )
+
+    if "cruzamento_produto_gerado" not in st.session_state:
+        st.session_state["cruzamento_produto_gerado"] = loader.cruzamento_produto_ja_gerado()
+
+    if st.session_state["cruzamento_produto_gerado"]:
+        df_preview, total = loader.consultar_cruzamento_produto(limite=None)
+        st.success(f"✅ {total:,} produto(s) em `cruzamento_produto`.".replace(",", "."))
+
+        if df_preview.empty:
+            st.info('Nenhum produto gerado — gere "Cruzamento por Valor" (Estágio 7.2) primeiro.')
+        else:
+            busca_descricao = st.text_input(
+                "Buscar por Descrição", key="filtro_descricao_cruzamento_produto",
+            )
+            filtrado = df_preview
+            if busca_descricao.strip():
+                filtrado = filtrado[
+                    filtrado["DESCR_ALVO"].str.contains(busca_descricao.strip(), case=False, na=False)
+                ]
+
+            st.markdown(f"**{len(filtrado):,} produto(s)** após filtro.".replace(",", "."))
+            amostra = filtrado.head(200).copy()
+            amostra["PCT_DIVERGENCIA"] = amostra["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+            for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
+                amostra[_col] = amostra[_col].apply(_formatar_moeda_br)
+            with st.container(key="cruzamento_produto_tabela"):
+                st.markdown(
+                    "<style>.st-key-cruzamento_produto_tabela [data-testid='stDataFrame'] "
+                    "* { font-size: 12px; }</style>",
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(
+                    _preparar_preview(amostra, _COLUNAS_PREVIEW_CRUZAMENTO_PRODUTO),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            st.divider()
+            st.markdown("**Detalhamento por Ano (drill-down do Estágio 7.2)**")
+            produtos_disponiveis = sorted(df_preview["DESCR_ALVO"].unique())
+            produto_selecionado = st.selectbox(
+                "Selecione um produto para ver o detalhamento anual",
+                options=["Selecione..."] + produtos_disponiveis,
+                key="drilldown_cruzamento_produto",
+            )
+            if produto_selecionado != "Selecione...":
+                df_valor, _ = loader.consultar_cruzamento_valor(limite=None)
+                detalhe = df_valor[df_valor["DESCR_ALVO"] == produto_selecionado].sort_values("ANO").copy()
+                if detalhe.empty:
+                    st.info("Nenhum detalhamento anual encontrado pra este produto.")
+                else:
+                    detalhe["PCT_DIVERGENCIA"] = detalhe["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+                    for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
+                        detalhe[_col] = detalhe[_col].apply(_formatar_moeda_br)
+                    with st.container(key="cruzamento_produto_drilldown_tabela"):
+                        st.markdown(
+                            "<style>.st-key-cruzamento_produto_drilldown_tabela "
+                            "[data-testid='stDataFrame'] * { font-size: 12px; }</style>",
+                            unsafe_allow_html=True,
+                        )
+                        st.dataframe(
+                            _preparar_preview(detalhe, _COLUNAS_PREVIEW_CRUZAMENTO_VALOR),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+        clicou = st.button(
+            "Regerar Cruzamento por Produto",
+            key="btn_regerar_cruzamento_produto",
+            help="Reprocessa a partir de cruzamento_valor (Estágio 7.2) e recalcula os totais por produto.",
+        )
+    else:
+        clicou = st.button("Gerar Cruzamento por Produto", key="btn_gerar_cruzamento_produto")
+
+    if not clicou:
+        return
+
+    with st.spinner("Consolidando por produto..."):
+        resultado = loader.persistir_cruzamento_produto()
+
+    if "erro" in resultado:
+        st.error(f"Erro: {resultado['erro']}")
+        return
+
+    st.session_state["cruzamento_produto_gerado"] = True
+    st.rerun()
+
+
 _COLUNAS_PREVIEW_DIVERGENCIA = [
     "CHV_NFE", "EXCEL_QTD_ITENS", "HUNTER_ENTRADAS_QTD", "ITENS_ENTRADAS_REAIS",
     "ITENS_SAIDAS_REAIS", "ITENS_SITUACAO", "ITENS_ANALISE_CFOP",
@@ -1515,14 +1632,15 @@ def render_auditoria_divergencia_estoque() -> None:
 # desde 2026-07-13 e não mudou — só a navegação.
 
 def render_menu_principal() -> None:
-    """Menu principal (Estágio 6): 7 botões despacham para
+    """Menu principal (Estágio 6): 8 botões despacham para
     render_pagina_extracao()/render_pagina_matching()/
     render_pagina_segregados()/render_pagina_construcao()/
     render_pagina_auditoria1()/render_pagina_descricao_relevante()
     (Estágio 7.1)/render_pagina_cruzamento_valor() (Estágio 7.2,
-    2026-07-18)."""
+    2026-07-18)/render_pagina_cruzamento_produto() (Estágio 7.2.1,
+    2026-07-19 — condensação do 7.2 por Descrição Relevante)."""
     st.subheader("Menu Principal")
-    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
     if col1.button("📥 EXTRAÇÃO", key="btn_menu_extracao", use_container_width=True):
         st.session_state["pagina_ativa"] = "extracao"
         st.rerun()
@@ -1546,6 +1664,9 @@ def render_menu_principal() -> None:
         st.rerun()
     if col7.button("📉 7.2: CRUZAMENTO POR VALOR", key="btn_menu_cruzamento_valor", use_container_width=True):
         st.session_state["pagina_ativa"] = "cruzamento_valor"
+        st.rerun()
+    if col8.button("📊 7.2.1: CRUZAMENTO POR PRODUTO", key="btn_menu_cruzamento_produto", use_container_width=True):
+        st.session_state["pagina_ativa"] = "cruzamento_produto"
         st.rerun()
 
 
@@ -1755,3 +1876,18 @@ def render_pagina_cruzamento_valor() -> None:
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     render_cruzamento_valor()
+
+
+def render_pagina_cruzamento_produto() -> None:
+    """Painel '7.2.1: CRUZAMENTO POR PRODUTO' (Estágio 7.2.1 —
+    condensação do Estágio 7.2 por Descrição Relevante, 2026-07-19,
+    Solicitação Técnica), botão de 8º nível no Menu Principal: ver
+    loader.gerar_cruzamento_produto()/render_cruzamento_produto(). Exige
+    dados_carregados (mesmo padrão das outras páginas); depende também
+    de cruzamento_valor (Estágio 7.2) já gerada, checado dentro de
+    render_cruzamento_produto()."""
+    _botao_voltar_menu()
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        return
+    render_cruzamento_produto()
