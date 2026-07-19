@@ -670,6 +670,42 @@ em escopo de exclusão.
 bolacha 2022 piorou levemente (confirma outro fator de resíduo
 independente, ainda não identificado, pra esse produto específico).
 
+## Indicadores de risco: Divergência absoluta, Infração, % Diverg (2026-07-19)
+
+Solicitação Técnica de evolução do 7.2, pra priorizar auditoria pelos
+maiores "rombos" financeiros:
+
+- **`DIVERGENCIA`**: virou `|TD-TC|` (sempre positiva — antes podia ser
+  negativa).
+- **`INFRACAO`**: rótulo condicional — `TD < TC` → "Entradas sem NF";
+  `TD ≥ TC` → "Saídas sem NF". **Achado antes de implementar**: a
+  primeira redação da Solicitação Técnica pedia o mapeamento
+  INVERTIDO (`TD<TC`='Saídas sem NF'). Conferido contra `regra de
+  negócios unificadas/regra negocio_pu_rn1_ei+c=v+ef_1.txt` (já no
+  repositório): condição 1 (`EI+C < V+EF`) = "compras de mercadorias
+  sem notas" (= entradas sem NF); condição 2 (`EI+C > V+EF`) = "vendas
+  de mercadorias sem notas" (= saídas sem NF) — exatamente o oposto do
+  texto novo. Raciocínio independente confirma: `TC` (Vendas+EF) maior
+  que `TD` (EI+Compras) só é possível se houve COMPRA sem nota de
+  entrada alimentando esse saldo. Sinalizado ao usuário antes de
+  codificar — confirmado seguir a RN1 já documentada.
+- **`PCT_DIVERGENCIA`**: `|TD-TC| / min(TD,TC) × 100`. `min(TD,TC)=0`
+  sem divergência (`TD=TC=0`) vira `0.0`; `min(TD,TC)=0` COM
+  divergência (um lado zerado) vira `NaN` (proporção indefinida,
+  exibida como "N/A" na UI — achado real: comum na cometa, itens com
+  `TD=0` e `TC` grande).
+- **Ordenação**: por `DIVERGENCIA` decrescente (antes era `ANO`+
+  `COD_ITEM`) — maiores divergências no topo, já saem assim da
+  persistência, sem precisar reordenar na UI.
+- **Interface**: `_COLUNAS_PREVIEW_CRUZAMENTO_VALOR` ganhou `INFRACAO`/
+  `PCT_DIVERGENCIA` na ordem pedida; `%` formatado como string
+  (`"142.79%"`/`"N/A"`) só na exibição, mantendo a coluna persistida
+  numérica. 2 entradas novas em `DICIONARIO DE CAMPOS.txt`.
+- Validado nas 3 operações reais: ordenação decrescente confirmada
+  (`is_monotonic_decreasing`), `INFRACAO` com os 2 rótulos esperados,
+  `NaN` em `PCT_DIVERGENCIA` presente e tratado corretamente (203
+  linhas na geraldo, 187 na PB2, 3.062 na cometa).
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —

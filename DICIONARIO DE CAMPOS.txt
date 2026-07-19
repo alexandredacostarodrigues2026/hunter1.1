@@ -110,3 +110,7 @@ VENDAS;Vendas (R$)
 EF;EF (R$)
 TOTAL_CREDITO;Total Credito (R$)
 DIVERGENCIA;Divergencia (R$)
+
+# Novos campos - 2026-07-19 (Estagio 7.2 - indicadores de risco: Infracao, % Diverg)
+INFRACAO;Infracao
+PCT_DIVERGENCIA;% Diverg

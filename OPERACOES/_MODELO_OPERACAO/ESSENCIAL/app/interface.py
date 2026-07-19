@@ -976,25 +976,32 @@ def render_descricao_relevante() -> None:
 
 
 _COLUNAS_PREVIEW_CRUZAMENTO_VALOR = [
-    "ANO", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO", "DIVERGENCIA",
+    "ANO", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
+    "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
 
 
 def render_cruzamento_valor() -> None:
     """Estágio 7.2 — Cruzamento por Valor (2026-07-18, Solicitação
-    Técnica): aplica EI+Compras=Vendas+EF por (ANO, COD_ITEM), em R$ — ver
-    loader.gerar_cruzamento_valor(). Identidade pela DESCR_ALVO do
-    Estágio 7.1 (produto_alvo); exige essa tabela já gerada. Mesmo padrão
+    Técnica; indicadores de risco adicionados em 2026-07-19): aplica
+    EI+Compras=Vendas+EF por (ANO, COD_ITEM), em R$ — ver loader.
+    gerar_cruzamento_valor(). Identidade pela DESCR_ALVO do Estágio 7.1
+    (produto_alvo); exige essa tabela já gerada. Mesmo padrão
     "Gerar/Regerar" + prévia de render_descricao_relevante(), com filtros
     de Ano (multiselect) e busca textual por Descrição — aplicados só na
     exibição (client-side sobre a prévia carregada), não refazem o
-    cálculo."""
+    cálculo. Prévia já vem ordenada por Divergência decrescente (feito no
+    loader) — os filtros preservam essa ordem. `PCT_DIVERGENCIA` (`NaN`
+    quando `min(TD,TC)=0` com divergência — proporção indefinida)
+    formatado como "N/A" na exibição, não como número."""
     st.subheader("Estágio 7.2 — Cruzamento por Valor")
     st.caption(
         "Aplica EI + Compras = Vendas + EF por (Ano, Produto), em R$ — Compras (entradas) e "
         "Estoque pela visão declarada/vinculada da auditada, Vendas (saídas) pela visão física "
         "do XML. Identidade pela Descrição Relevante (Estágio 7.1); itens sem descrição eleita "
-        "ficam de fora."
+        "ficam de fora. Ordenado por Divergência decrescente — maiores 'rombos' financeiros no "
+        "topo. Infração: 'Entradas sem NF' quando Total Débito < Total Crédito (compra sem nota); "
+        "'Saídas sem NF' quando Total Débito ≥ Total Crédito (venda sem nota)."
     )
 
     if "cruzamento_valor_gerado" not in st.session_state:
@@ -1028,8 +1035,12 @@ def render_cruzamento_valor() -> None:
                 ]
 
             st.markdown(f"**{len(filtrado):,} linha(s)** após filtro.".replace(",", "."))
+            amostra = filtrado.head(200).copy()
+            amostra["PCT_DIVERGENCIA"] = amostra["PCT_DIVERGENCIA"].apply(
+                lambda v: "N/A" if pd.isna(v) else f"{v:.2f}%"
+            )
             st.dataframe(
-                _preparar_preview(filtrado.head(200), _COLUNAS_PREVIEW_CRUZAMENTO_VALOR),
+                _preparar_preview(amostra, _COLUNAS_PREVIEW_CRUZAMENTO_VALOR),
                 use_container_width=True,
             )
 

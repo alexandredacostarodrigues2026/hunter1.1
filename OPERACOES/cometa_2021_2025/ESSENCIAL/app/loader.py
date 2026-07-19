@@ -2466,8 +2466,22 @@ def consultar_produto_alvo(limite: "int | None" = 200) -> "tuple[pd.DataFrame, i
 # reservado pro Estágio 15).
 _COLUNAS_CRUZAMENTO_VALOR = [
     "ANO", "COD_ITEM", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO",
-    "VENDAS", "EF", "TOTAL_CREDITO", "DIVERGENCIA",
+    "VENDAS", "EF", "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
+
+# Rótulos de INFRACAO (2026-07-19, Solicitação Técnica de evolução do 7.2)
+# — direção confirmada com o usuário contra a RN1 já documentada em `regra
+# de negócios unificadas/regra negocio_pu_rn1_ei+c=v+ef_1.txt` (condição 1:
+# EI+C < V+EF = "compras de mercadorias sem notas"; condição 2: EI+C > V+EF
+# = "vendas de mercadorias sem notas"). A primeira redação da Solicitação
+# Técnica pedia o mapeamento INVERTIDO (TD<TC='Saídas sem NF') — sinalizado
+# ao usuário antes de implementar; confirmado seguir a RN1 já documentada.
+# Raciocínio: TC (Vendas+EF) > TD (EI+Compras) significa que saiu/sobrou
+# mais mercadoria do que jamais foi registrada como comprada — só possível
+# se houve COMPRA sem nota de entrada. O inverso (TD > TC) significa que
+# entrou mais do que foi contabilizado saindo — VENDA sem nota de saída.
+_INFRACAO_ENTRADAS_SEM_NF = "Entradas sem NF"
+_INFRACAO_SAIDAS_SEM_NF = "Saídas sem NF"
 
 
 def _valores_estoque_hunter() -> pd.DataFrame:
@@ -2615,7 +2629,23 @@ def _normalizar_agrupar_valor(df: pd.DataFrame, colunas_valor: list) -> pd.DataF
 def gerar_cruzamento_valor() -> dict:
     """Estágio 7.2 — monta o Cruzamento por Valor: uma linha por (ANO,
     COD_ITEM) com EI, Compras, Total Débito (EI+Compras), Vendas, EF,
-    Total Crédito (Vendas+EF) e Divergência (Débito−Crédito), em R$.
+    Total Crédito (Vendas+EF), Divergência, Infração e % Diverg, em R$.
+
+    Indicadores de risco (2026-07-19, Solicitação Técnica de evolução):
+    - `DIVERGENCIA`: `|TD-TC|` — sempre positiva (antes era `TD-TC`,
+      podia ser negativa).
+    - `INFRACAO`: rótulo condicional — ver `_INFRACAO_ENTRADAS_SEM_NF`/
+      `_INFRACAO_SAIDAS_SEM_NF` acima pro raciocínio completo e a
+      confirmação com o usuário contra a RN1 já documentada (a primeira
+      redação da Solicitação Técnica pedia o mapeamento invertido).
+      `TD < TC` → "Entradas sem NF" (compras sem nota, RN1 condição 1);
+      `TD ≥ TC` → "Saídas sem NF" (vendas sem nota, RN1 condição 2).
+    - `PCT_DIVERGENCIA`: `|TD-TC| / min(TD,TC) × 100` — magnitude
+      relativa ao menor dos dois lados. `min(TD,TC)=0` sem divergência
+      (`TD=TC=0`) vira `0.0`; `min(TD,TC)=0` COM divergência (um lado
+      zerado, outro não) vira `NaN` (proporção indefinida — "N/A" na UI).
+    - Ordenação: por `DIVERGENCIA` decrescente (antes era `ANO`+`COD_
+      ITEM`) — prioriza os maiores "rombos" financeiros no topo.
 
     Fonte de Vendas corrigida (2026-07-18, achado real ao investigar
     divergência apontada pelo usuário pro produto "BOLACHA MANTEGA DO
@@ -2709,18 +2739,33 @@ def gerar_cruzamento_valor() -> dict:
 
     base["TOTAL_DEBITO"] = (base["EI"] + base["COMPRAS"]).round(2)
     base["TOTAL_CREDITO"] = (base["VENDAS"] + base["EF"]).round(2)
-    base["DIVERGENCIA"] = (base["TOTAL_DEBITO"] - base["TOTAL_CREDITO"]).round(2)
+    diferenca = base["TOTAL_DEBITO"] - base["TOTAL_CREDITO"]
+    base["DIVERGENCIA"] = diferenca.abs().round(2)
+    base["INFRACAO"] = np.where(diferenca < 0, _INFRACAO_ENTRADAS_SEM_NF, _INFRACAO_SAIDAS_SEM_NF)
+
+    # % Diverg = |TD-TC| / min(TD,TC) × 100 — magnitude relativa ao menor dos
+    # dois lados (pedido do usuário: distinguir divergência irrelevante num
+    # giro grande de divergência crítica num produto de baixo giro).
+    # min(TD,TC)=0 é indefinido (divisão por zero) — só é 0% de verdade
+    # quando TAMBÉM não há divergência (TD=TC=0); caso contrário (um lado
+    # zerado, outro não) fica NaN — sem base pra medir proporção, exibido
+    # como "N/A" na UI (ver interface.render_cruzamento_valor()).
+    minimo = base[["TOTAL_DEBITO", "TOTAL_CREDITO"]].min(axis=1)
+    minimo_seguro = minimo.where(minimo != 0, np.nan)
+    pct_divergencia = (base["DIVERGENCIA"] / minimo_seguro * 100)
+    pct_divergencia = pct_divergencia.where(~((minimo == 0) & (base["DIVERGENCIA"] == 0)), 0.0)
+    base["PCT_DIVERGENCIA"] = pct_divergencia.round(2)
 
     cruzamento = (
         _forcar_colunas_string(base, ["ANO", "COD_ITEM"])[_COLUNAS_CRUZAMENTO_VALOR]
-        .sort_values(["ANO", "COD_ITEM"])
+        .sort_values("DIVERGENCIA", ascending=False)
         .reset_index(drop=True)
     )
 
     resumo = {
         "total_linhas": len(cruzamento),
         "total_produtos": int(cruzamento["COD_ITEM"].nunique()),
-        "total_divergencia_absoluta": float(cruzamento["DIVERGENCIA"].abs().sum()),
+        "total_divergencia_absoluta": float(cruzamento["DIVERGENCIA"].sum()),
         "periodo": periodo,
     }
     return {"resumo": resumo, "cruzamento": cruzamento, "erros": []}
