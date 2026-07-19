@@ -1000,8 +1000,15 @@ def _formatar_pct_br(v: float) -> str:
     valor(), caso de omissão total onde um lado da equação é zero); a
     ordenação por Divergência (não por % Diverg) preserva esses casos no
     topo mesmo com o valor "achatado" na exibição. Abaixo de 1000%,
-    formata com vírgula decimal (padrão BR, 2026-07-19)."""
-    if abs(v) > 1000:
+    formata com vírgula decimal (padrão BR, 2026-07-19). `NaN` também
+    vira '>1000%' (2026-07-19, correção): tabelas `cruzamento_valor`
+    persistidas ANTES da correção do denominador em gerar_cruzamento_
+    valor() ainda guardam `NaN` de verdade — sem este caso, `f"{nan:.2f}
+    %"` vira literalmente a string "nan%" na tela (Python formata NaN
+    como "nan", não dá erro). Regerar a tabela ("Regerar Cruzamento por
+    Valor" na UI) elimina o NaN armazenado; este tratamento cobre a
+    exibição enquanto isso não acontece."""
+    if pd.isna(v) or abs(v) > 1000:
         return ">1000%"
     return f"{v:.2f}%".replace(".", ",")
 
