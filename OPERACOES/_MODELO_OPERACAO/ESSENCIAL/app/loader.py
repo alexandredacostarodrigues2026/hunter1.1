@@ -2664,7 +2664,9 @@ def gerar_cruzamento_valor() -> dict:
     - `PCT_DIVERGENCIA`: `|TD-TC| / min(TD,TC) × 100` — magnitude
       relativa ao menor dos dois lados. `min(TD,TC)=0` sem divergência
       (`TD=TC=0`) vira `0.0`; `min(TD,TC)=0` COM divergência (um lado
-      zerado, outro não) vira `NaN` (proporção indefinida — "N/A" na UI).
+      zerado, outro não) usa `0.00001` no denominador em vez de `NaN`
+      (2026-07-19, refinamento) — dá um percentual gigante em vez de
+      "N/A", subindo a omissão total pro topo do ranking.
     - Ordenação: por `DIVERGENCIA` decrescente (antes era `ANO`+`COD_
       ITEM`) — prioriza os maiores "rombos" financeiros no topo.
 
@@ -2766,15 +2768,17 @@ def gerar_cruzamento_valor() -> dict:
     # % Diverg = |TD-TC| / min(TD,TC) × 100 — magnitude relativa ao menor dos
     # dois lados (pedido do usuário: distinguir divergência irrelevante num
     # giro grande de divergência crítica num produto de baixo giro).
-    # min(TD,TC)=0 é indefinido (divisão por zero) — só é 0% de verdade
-    # quando TAMBÉM não há divergência (TD=TC=0); caso contrário (um lado
-    # zerado, outro não) fica NaN — sem base pra medir proporção, exibido
-    # como "N/A" na UI (ver interface.render_cruzamento_valor()).
+    # min(TD,TC)=0 é indefinido (divisão por zero) — antes virava NaN
+    # ("N/A" na UI) quando um lado zerava e o outro não, escondendo do
+    # ranking justamente os casos de omissão total (2026-07-19, Solicitação
+    # Técnica de refinamento: "N/A prejudica o ranqueamento de infrações
+    # graves por omissão total"). Denominador zero agora vira 0.00001 em vez
+    # de NaN — TD=TC=0 (sem divergência) continua dando 0%, mas um lado
+    # zerado com o outro não dá um % gigante, subindo a omissão total pro
+    # topo do alerta em vez de sumir como "N/A".
     minimo = base[["TOTAL_DEBITO", "TOTAL_CREDITO"]].min(axis=1)
-    minimo_seguro = minimo.where(minimo != 0, np.nan)
-    pct_divergencia = (base["DIVERGENCIA"] / minimo_seguro * 100)
-    pct_divergencia = pct_divergencia.where(~((minimo == 0) & (base["DIVERGENCIA"] == 0)), 0.0)
-    base["PCT_DIVERGENCIA"] = pct_divergencia.round(2)
+    minimo_seguro = minimo.where(minimo != 0, 0.00001)
+    base["PCT_DIVERGENCIA"] = (base["DIVERGENCIA"] / minimo_seguro * 100).round(2)
 
     cruzamento = (
         _forcar_colunas_string(base, ["ANO", "COD_ITEM"])[_COLUNAS_CRUZAMENTO_VALOR]

@@ -979,6 +979,15 @@ _COLUNAS_PREVIEW_CRUZAMENTO_VALOR = [
     "ANO", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
     "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
+# Colunas monetárias do painel 7.2 (2026-07-19, refinamento de UX) — chaves
+# são os nomes AMIGÁVEIS (pós-rename de _preparar_preview() via DICIONARIO
+# DE CAMPOS.txt), não os nomes técnicos, pois column_config casa pelo nome
+# final exibido no st.dataframe.
+_COLUNAS_CONFIG_CRUZAMENTO_VALOR = {
+    nome: st.column_config.NumberColumn(format="%,.2f")
+    for nome in ("EI (R$)", "Compras (R$)", "Total Debito (R$)", "Vendas (R$)",
+                 "EF (R$)", "Total Credito (R$)", "Divergencia (R$)")
+}
 
 
 def render_cruzamento_valor() -> None:
@@ -991,9 +1000,11 @@ def render_cruzamento_valor() -> None:
     de Ano (multiselect) e busca textual por Descrição — aplicados só na
     exibição (client-side sobre a prévia carregada), não refazem o
     cálculo. Prévia já vem ordenada por Divergência decrescente (feito no
-    loader) — os filtros preservam essa ordem. `PCT_DIVERGENCIA` (`NaN`
-    quando `min(TD,TC)=0` com divergência — proporção indefinida)
-    formatado como "N/A" na exibição, não como número."""
+    loader) — os filtros preservam essa ordem. Tabela em formato "alta
+    densidade" (2026-07-19, refinamento de UX): sem coluna de índice,
+    fonte reduzida (CSS escopado só a esta tabela via st.container(key=
+    ...)) e colunas monetárias com separador de milhar via st.column_
+    config.NumberColumn."""
     st.subheader("Estágio 7.2 — Cruzamento por Valor")
     st.caption(
         "Aplica EI + Compras = Vendas + EF por (Ano, Produto), em R$ — Compras (entradas) e "
@@ -1036,13 +1047,19 @@ def render_cruzamento_valor() -> None:
 
             st.markdown(f"**{len(filtrado):,} linha(s)** após filtro.".replace(",", "."))
             amostra = filtrado.head(200).copy()
-            amostra["PCT_DIVERGENCIA"] = amostra["PCT_DIVERGENCIA"].apply(
-                lambda v: "N/A" if pd.isna(v) else f"{v:.2f}%"
-            )
-            st.dataframe(
-                _preparar_preview(amostra, _COLUNAS_PREVIEW_CRUZAMENTO_VALOR),
-                use_container_width=True,
-            )
+            amostra["PCT_DIVERGENCIA"] = amostra["PCT_DIVERGENCIA"].apply(lambda v: f"{v:.2f}%")
+            with st.container(key="cruzamento_valor_tabela"):
+                st.markdown(
+                    "<style>.st-key-cruzamento_valor_tabela [data-testid='stDataFrame'] "
+                    "* { font-size: 12px; }</style>",
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(
+                    _preparar_preview(amostra, _COLUNAS_PREVIEW_CRUZAMENTO_VALOR),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=_COLUNAS_CONFIG_CRUZAMENTO_VALOR,
+                )
 
         clicou = st.button(
             "Regerar Cruzamento por Valor",
