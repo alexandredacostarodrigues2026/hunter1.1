@@ -2348,6 +2348,21 @@ def montar_produto_alvo() -> pd.DataFrame:
     pela descrição em ordem alfabética (A-Z) — determinístico, não
     depende da ordem de leitura das tabelas fonte.
 
+    Normalização de código ANTES da moda (2026-07-19, achado real —
+    usuário reportou `COD_ITEM=000003` elegendo "DIAFRAGMA 8" na cometa,
+    com só 1 ocorrência, enquanto o mesmo código sem padding tinha
+    "FEIJAO GRAO" com 8): sem normalizar, `"000003"`, `"003"`, `"03"` e
+    `"3"` contavam como 4 códigos DIFERENTES (cada um com sua própria
+    moda fraca, baseada em pouquíssimas ocorrências); a normalização
+    (`_normalizar_cod_item_flexivel()`, remove zeros à esquerda só de
+    código puramente numérico, preserva alfanumérico) agora roda ANTES
+    do cálculo de moda, com reagrupamento de FREQUENCIA por (COD_ITEM
+    normalizado, DESCR) — confirmado com o usuário: "são o mesmo código,
+    a descrição relevante é pela maior frequência nas entradas, saídas e
+    estoques" combinados. Isso também elimina a necessidade de normalizar
+    de novo em `gerar_cruzamento_valor()` (Estágio 7.2) — `produto_alvo`
+    já sai com `COD_ITEM` normalizado e único.
+
     Regra R07: `COD_ITEM` sempre string. Devolve colunas ['COD_ITEM',
     'DESCR_ALVO']. Vazia se nenhuma das 3 tabelas fonte existir ainda
     (nenhum erro — pré-requisitos ainda não gerados, ver 'TABELAS
@@ -2376,6 +2391,12 @@ def montar_produto_alvo() -> pd.DataFrame:
 
     if contagem.empty:
         return pd.DataFrame(columns=_COLUNAS_PRODUTO_ALVO)
+
+    # Normaliza ANTES de somar frequência — ver docstring acima (achado
+    # real: "000003"/"003"/"03"/"3" são o mesmo item, mas só contavam
+    # certo depois de unificados num único COD_ITEM).
+    contagem["COD_ITEM"] = _normalizar_cod_item_flexivel(contagem["COD_ITEM"])
+    contagem = contagem.groupby(["COD_ITEM", "DESCR"], as_index=False)["FREQUENCIA"].sum()
 
     # Moda por COD_ITEM: maior FREQUENCIA primeiro; empate pela DESCR em
     # ordem alfabética (A-Z) — sort_values + groupby(...).first() preserva
@@ -2728,14 +2749,13 @@ def gerar_cruzamento_valor() -> dict:
         base[col] = base[col].fillna(0.0)
     base = base.rename(columns={"VALOR_INICIAL": "EI", "VALOR_FINAL": "EF"})
 
-    produto_alvo_idx = produto_alvo.rename(columns={"COD_ITEM": "COD_ITEM_ALVO"}).copy()
-    produto_alvo_idx["COD_ITEM"] = _normalizar_cod_item_flexivel(produto_alvo_idx["COD_ITEM_ALVO"])
-    produto_alvo_idx = produto_alvo_idx.drop_duplicates("COD_ITEM", keep="first")
-
-    base = base.merge(produto_alvo_idx, on="COD_ITEM", how="inner")
+    # produto_alvo já sai de montar_produto_alvo() com COD_ITEM normalizado
+    # e único (2026-07-19) — não precisa normalizar/deduplicar de novo aqui,
+    # só casar direto (base["COD_ITEM"] também já normalizado, ver
+    # _normalizar_agrupar_valor()).
+    base = base.merge(produto_alvo, on="COD_ITEM", how="inner")
     if base.empty:
         return {"resumo": {}, "cruzamento": pd.DataFrame(), "erros": []}
-    base = base.drop(columns="COD_ITEM").rename(columns={"COD_ITEM_ALVO": "COD_ITEM"})
 
     base["TOTAL_DEBITO"] = (base["EI"] + base["COMPRAS"]).round(2)
     base["TOTAL_CREDITO"] = (base["VENDAS"] + base["EF"]).round(2)

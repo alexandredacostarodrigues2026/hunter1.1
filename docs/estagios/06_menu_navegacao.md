@@ -706,6 +706,28 @@ maiores "rombos" financeiros:
   `NaN` em `PCT_DIVERGENCIA` presente e tratado corretamente (203
   linhas na geraldo, 187 na PB2, 3.062 na cometa).
 
+## Bug de moda no 7.1: normalizar código ANTES de contar frequência (2026-07-19)
+
+Usuário reportou que, na cometa, `COD_ITEM=000003` elegia "DIAFRAGMA 8"
+como Descrição Relevante — só 1 ocorrência, enquanto o mesmo código sem
+padding (`"3"`) tinha "FEIJAO GRAO" com 8 ocorrências. Causa:
+`montar_produto_alvo()` calculava a moda por `COD_ITEM` BRUTO — `"3"`,
+`"03"`, `"003"`, `"000003"` contavam como 4 códigos diferentes, cada um
+com moda fraca própria; a normalização só rodava depois, em
+`gerar_cruzamento_valor()` (Estágio 7.2), com um desempate arbitrário
+(`drop_duplicates(keep="first")` pela ordem alfabética do código bruto,
+não pela frequência).
+
+Confirmado com o usuário (`AskUserQuestion`) que as variantes são o
+MESMO item físico e a escolha deve ser por maior frequência combinada
+das 3 fontes. `_normalizar_cod_item_flexivel()` agora roda ANTES da
+contagem em `montar_produto_alvo()`, com reagrupamento de `FREQUENCIA`
+por `(COD_ITEM normalizado, DESCR)`. `gerar_cruzamento_valor()`
+simplificada — não precisa mais normalizar/deduplicar `produto_alvo` de
+novo, já sai único da fonte. Revalidado: geraldo/PB2 inalterados
+(códigos já bem formados), cometa recontou pra 2.513 produtos (era
+2.617 — unificação de variantes antes fragmentadas).
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —
