@@ -979,15 +979,31 @@ _COLUNAS_PREVIEW_CRUZAMENTO_VALOR = [
     "ANO", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
     "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
-# Colunas monetárias do painel 7.2 (2026-07-19, refinamento de UX) — chaves
-# são os nomes AMIGÁVEIS (pós-rename de _preparar_preview() via DICIONARIO
-# DE CAMPOS.txt), não os nomes técnicos, pois column_config casa pelo nome
-# final exibido no st.dataframe.
-_COLUNAS_CONFIG_CRUZAMENTO_VALOR = {
-    nome: st.column_config.NumberColumn(format="%,.2f")
-    for nome in ("EI (R$)", "Compras (R$)", "Total Debito (R$)", "Vendas (R$)",
-                 "EF (R$)", "Total Credito (R$)", "Divergencia (R$)")
-}
+_COLUNAS_MONETARIAS_CRUZAMENTO_VALOR = (
+    "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO", "DIVERGENCIA",
+)
+_TRANS_MILHAR_BR = str.maketrans({",": ".", ".": ","})
+
+
+def _formatar_moeda_br(v: float) -> str:
+    """Formata valor monetário como "1.234,56" (padrão BR: milhar '.',
+    decimal ',') — column_config.NumberColumn só formata no padrão
+    sprintf-js/en-US (milhar ',', decimal '.'), sem opção de trocar pro
+    padrão BR, por isso as colunas monetárias do painel 7.2 viram texto
+    pré-formatado antes do st.dataframe (2026-07-19, refinamento de UX)."""
+    return f"{v:,.2f}".translate(_TRANS_MILHAR_BR)
+
+
+def _formatar_pct_br(v: float) -> str:
+    """% Diverg do painel 7.2: acima de 1000% vira '>1000%' — evita número
+    gigante na tela quando o denominador é ~0 (ver gerar_cruzamento_
+    valor(), caso de omissão total onde um lado da equação é zero); a
+    ordenação por Divergência (não por % Diverg) preserva esses casos no
+    topo mesmo com o valor "achatado" na exibição. Abaixo de 1000%,
+    formata com vírgula decimal (padrão BR, 2026-07-19)."""
+    if abs(v) > 1000:
+        return ">1000%"
+    return f"{v:.2f}%".replace(".", ",")
 
 
 def render_cruzamento_valor() -> None:
@@ -1003,8 +1019,9 @@ def render_cruzamento_valor() -> None:
     loader) — os filtros preservam essa ordem. Tabela em formato "alta
     densidade" (2026-07-19, refinamento de UX): sem coluna de índice,
     fonte reduzida (CSS escopado só a esta tabela via st.container(key=
-    ...)) e colunas monetárias com separador de milhar via st.column_
-    config.NumberColumn."""
+    ...)), colunas monetárias formatadas em padrão BR ("1.234,56" — ver
+    _formatar_moeda_br()) e % Diverg capado em ">1000%" com vírgula
+    decimal (ver _formatar_pct_br())."""
     st.subheader("Estágio 7.2 — Cruzamento por Valor")
     st.caption(
         "Aplica EI + Compras = Vendas + EF por (Ano, Produto), em R$ — Compras (entradas) e "
@@ -1047,7 +1064,9 @@ def render_cruzamento_valor() -> None:
 
             st.markdown(f"**{len(filtrado):,} linha(s)** após filtro.".replace(",", "."))
             amostra = filtrado.head(200).copy()
-            amostra["PCT_DIVERGENCIA"] = amostra["PCT_DIVERGENCIA"].apply(lambda v: f"{v:.2f}%")
+            amostra["PCT_DIVERGENCIA"] = amostra["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+            for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
+                amostra[_col] = amostra[_col].apply(_formatar_moeda_br)
             with st.container(key="cruzamento_valor_tabela"):
                 st.markdown(
                     "<style>.st-key-cruzamento_valor_tabela [data-testid='stDataFrame'] "
@@ -1058,7 +1077,6 @@ def render_cruzamento_valor() -> None:
                     _preparar_preview(amostra, _COLUNAS_PREVIEW_CRUZAMENTO_VALOR),
                     use_container_width=True,
                     hide_index=True,
-                    column_config=_COLUNAS_CONFIG_CRUZAMENTO_VALOR,
                 )
 
         clicou = st.button(
