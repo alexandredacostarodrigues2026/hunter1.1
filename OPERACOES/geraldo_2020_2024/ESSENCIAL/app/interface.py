@@ -1245,24 +1245,31 @@ def _preparar_preview_rn1_fisica(df: pd.DataFrame) -> pd.DataFrame:
 def render_rn1_fisica() -> None:
     """Estágio 7.3 — RN1 Movimentação Física (2026-07-20, Solicitação
     Técnica): aplica EI+Compras=Vendas+EF por (ANO, Descrição Relevante),
-    em R$ — ver loader.gerar_rn1_fisica(). Mesma fórmula do Estágio 7.2
-    (Compras/Vendas do XML, Estágio 4; EI/EF da declaração, Estágio 5),
-    mas agregada por Descrição Relevante (Estágio 7.1) em vez de por
-    código — várias COD_ITEM que compartilham a mesma DESCR_ALVO somam
-    juntas numa única linha por ano, revelando o passivo de "notas na
-    gaveta" (compras via XML nunca escrituradas) ou vendas omitidas.
-    Exige `cruzamento_valor` (Estágio 7.2) já gerada. Mesmo padrão
-    "Gerar/Regerar" + prévia de alta densidade das outras páginas
-    (hide_index, fonte 12px, formatação BR), com filtro de Ano
-    (multiselect) e busca textual por Descrição, igual ao Estágio 7.2."""
+    em R$ — ver loader.gerar_rn1_fisica(). Diferente do Estágio 7.2:
+    Compras soma TODO o valor de `estoque_entradas` (XML puro), inclusive
+    itens sem match no BC3 (esclarecido pelo usuário 2026-07-20: "dados de
+    entradas do xml podem ser diferentes dos dados de entradas de
+    declaração" — o 7.2 só soma itens COM match); itens sem vínculo nenhum
+    aparecem numa linha sentinela (`loader.LABEL_RN1_SEM_VINCULO`), em vez
+    de somem do relatório. Vendas/EI/EF continuam vindo de `cruzamento_
+    valor` (Estágio 7.2) já persistida — não têm o mesmo problema de
+    cobertura. Agregado por Descrição Relevante (Estágio 7.1) — várias
+    COD_ITEM que compartilham a mesma DESCR_ALVO somam juntas numa única
+    linha por ano. Exige `produto_alvo` (7.1) e `cruzamento_valor` (7.2)
+    já gerados. Mesmo padrão "Gerar/Regerar" + prévia de alta densidade
+    das outras páginas (hide_index, fonte 12px, formatação BR), com
+    filtro de Ano (multiselect) e busca textual por Descrição, igual ao
+    Estágio 7.2."""
     st.subheader("Estágio 7.3 — RN1: Movimentação Física (XML)")
     st.caption(
-        "Aplica EI + Compras = Vendas + EF por (Ano, Descrição Relevante), em R$ — Compras e "
-        "Vendas pela visão física do XML (Estágio 4), Estoque (EI/EF) pela declaração (Estágio "
-        "5). Identidade pela Descrição Relevante (Estágio 7.1) — soma todo código que compartilhe "
-        "a mesma descrição. Ordenado por Divergência decrescente. Infração: 'Entradas sem NF' "
-        "quando Total Débito < Total Crédito (compra sem nota); 'Saídas sem NF' quando Total "
-        "Débito ≥ Total Crédito (venda sem nota)."
+        "Aplica EI + Compras = Vendas + EF por (Ano, Descrição Relevante), em R$ — Compras soma "
+        "TODO o valor do XML de entradas (Estágio 4), inclusive itens sem match no Matching/BC3 "
+        "('notas na gaveta', agrupadas na linha \"(SEM VÍNCULO NO MATCHING)\"); Vendas pela visão "
+        "física do XML, Estoque (EI/EF) pela declaração (Estágio 5). Identidade pela Descrição "
+        "Relevante (Estágio 7.1) — soma todo código que compartilhe a mesma descrição. Ordenado "
+        "por Divergência decrescente. Infração: 'Entradas sem NF' quando Total Débito < Total "
+        "Crédito (compra sem nota); 'Saídas sem NF' quando Total Débito ≥ Total Crédito (venda "
+        "sem nota)."
     )
 
     if "rn1_fisica_gerado" not in st.session_state:
@@ -1273,8 +1280,17 @@ def render_rn1_fisica() -> None:
         st.success(f"✅ {total:,} linha(s) em `rn1_fisica`.".replace(",", "."))
 
         if df_preview.empty:
-            st.info('Nenhuma linha gerada — gere "Cruzamento por Valor" (Estágio 7.2) primeiro.')
+            st.info('Nenhuma linha gerada — gere "Descrições Relevantes" (Estágio 7.1) e '
+                    '"Cruzamento por Valor" (Estágio 7.2) primeiro.')
         else:
+            sem_vinculo = df_preview.loc[df_preview["DESCR_ALVO"] == loader.LABEL_RN1_SEM_VINCULO, "COMPRAS"].sum()
+            if sem_vinculo > 0:
+                st.warning(
+                    f"⚠️ R$ {_formatar_moeda_br(sem_vinculo)} em Compras sem vínculo nenhum no "
+                    "Matching (BC3) — itens que entraram fisicamente (XML) mas nunca foram "
+                    "vinculados/lançados, agrupados na linha \"(SEM VÍNCULO NO MATCHING)\"."
+                )
+
             col_ano, col_busca = st.columns(2)
             anos_disponiveis = sorted(df_preview["ANO"].unique())
             anos_selecionados = col_ano.multiselect(
@@ -1310,8 +1326,9 @@ def render_rn1_fisica() -> None:
         clicou = st.button(
             "Regerar RN1 — Movimentação Física",
             key="btn_regerar_rn1_fisica",
-            help="Reprocessa a partir de cruzamento_valor (Estágio 7.2) e recalcula os totais "
-                 "por (Ano, Descrição Relevante).",
+            help="Reprocessa Compras a partir do XML de entradas (Estágio 4) e Vendas/EI/EF a "
+                 "partir de cruzamento_valor (Estágio 7.2), recalculando os totais por (Ano, "
+                 "Descrição Relevante).",
         )
     else:
         clicou = st.button("Gerar RN1 — Movimentação Física", key="btn_gerar_rn1_fisica")
@@ -1319,7 +1336,7 @@ def render_rn1_fisica() -> None:
     if not clicou:
         return
 
-    with st.spinner("Consolidando por ano e Descrição Relevante..."):
+    with st.spinner("Consolidando Compras (XML completo) e Vendas/EI/EF por ano e Descrição Relevante..."):
         resultado = loader.persistir_rn1_fisica()
 
     if "erro" in resultado:

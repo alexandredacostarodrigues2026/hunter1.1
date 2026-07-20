@@ -827,28 +827,36 @@ as 11 colunas pedidas (`Ano | Descrição Relevante | EI | Compras (XML) |
 TD | Vendas (XML) | EF | TC | Divergência | Infração | % Diverg`) **não
 têm `COD_ITEM`**, diferente do 7.2.
 
-- **Achado antes de implementar**: a fonte de Compras/Vendas do 7.2
-  (`estoque_entradas`/`estoque_saidas`, Estágio 4) **já é** o valor do
-  XML — a Solicitação Técnica descrevia isso como uma "novidade" do 7.3,
-  mas tecnicamente o 7.2 já usa exatamente essas duas tabelas (ver seção
-  "7º botão" acima). A mudança real e implementável, dado o schema atual
-  (`DESCR_ITEM_DECLARACAO`/`COD_ITEM_DECLARACAO` de `estoque_entradas`
-  vêm do MESMO `LEFT JOIN` com a bc3 — ver `montar_estoque_entradas()` —
-  então uma linha sem match no BC3 não tem descrição alguma pra casar com
-  `produto_alvo`) é o GRÃO da agregação: por `(Ano, Descrição Relevante)`
-  em vez de `(Ano, COD_ITEM)`, igual ao 7.2.1 mas mantendo o Ano separado
-  em vez de somar todos os anos numa linha só. Itens de entrada sem match
-  no BC3 continuam fora de Compras (mesma limitação herdada de
-  `produto_alvo`/7.2 — "notas na gaveta" sem NENHUM match não aparecem
-  atribuídas a um produto específico neste painel).
-- **`loader.gerar_rn1_fisica()`**: lê `cruzamento_valor` (7.2) JÁ
-  PERSISTIDA (mesma técnica de `gerar_cruzamento_produto()`, evita
-  duplicar a lógica de dedup ET/EP e exclusão de autoemissão já resolvida
-  em `_valores_por_ano_item()`), agrupa por `(ANO, DESCR_ALVO)` — soma
-  EI/Compras/Total Débito/Vendas/EF/Total Crédito/Divergência,
-  `INFRACAO`/`PCT_DIVERGENCIA` RECALCULADOS sobre os totais agrupados
-  (mesmo motivo do 7.2.1: o rótulo não pode depender de qual `COD_ITEM`
-  "pesa mais" na soma). Ordenado por `DIVERGENCIA` decrescente.
+- **Primeira versão (código idêntico ao 7.2)**: a primeira leitura
+  assumiu que Compras/Vendas do 7.2 já eram "a visão do XML" (tecnicamente
+  vêm de `estoque_entradas`/`estoque_saidas`, Estágio 4) e que a única
+  mudança pedida era o GRÃO da agregação — por `(Ano, Descrição
+  Relevante)` em vez de `(Ano, COD_ITEM)`. **Corrigido pelo usuário**:
+  "dados de entradas do xml podem ser diferentes dos dados de entradas de
+  declaração" — o Compras do 7.2 (`_valores_por_ano_item()`, `WHERE
+  COD_ITEM_DECLARACAO IS NOT NULL`) só soma itens de `estoque_entradas`
+  que TÊM match no BC3; item de XML sem match nenhum fica de fora do
+  Compras do 7.2 inteiramente, não só sem `produto_alvo`. O 7.3 de
+  verdade precisa somar o valor TOTAL do XML (com ou sem match) — essa É
+  a diferença real de dado entre 7.2 e 7.3, não só agregação.
+- **`loader._compras_entradas_sem_filtro_bc3()`** (nova): soma TODO
+  `estoque_entradas` (mesma dedup ET/EP de `_valores_por_ano_item()`, sem
+  filtro de autoemissão — Compras mantém autoemissão, mesma decisão de
+  2026-07-18), sem o `WHERE COD_ITEM_DECLARACAO IS NOT NULL`. `COD_ITEM`
+  pode vir nulo.
+- **`loader.gerar_rn1_fisica()`** (reescrita): Compras vem dessa nova
+  função — itens COM match são normalizados e vinculados a `produto_alvo`
+  (mesma técnica do 7.2), somados por `(ANO, DESCR_ALVO)`; itens SEM
+  match nenhum (não têm `DESCR_ITEM_DECLARACAO` — vem do MESMO `LEFT
+  JOIN` que preenche `COD_ITEM_DECLARACAO`, ambos nulos juntos, então não
+  há descrição pra casar com `produto_alvo`) somam numa linha sentinela
+  por ano, `DESCR_ALVO=loader.LABEL_RN1_SEM_VINCULO` ("(SEM VÍNCULO NO
+  MATCHING)") — preserva o valor no relatório em vez de escondê-lo, como
+  o 7.2 faz. Vendas/EI/EF continuam vindo de `cruzamento_valor` (7.2) JÁ
+  PERSISTIDA, reagrupada por `(ANO, DESCR_ALVO)` — não têm o mesmo
+  problema de cobertura (Vendas via `cprod`, sem depender do BC3; EI/EF
+  do Bloco H). `INFRACAO`/`PCT_DIVERGENCIA` recalculados sobre os totais
+  agrupados. Ordenado por `DIVERGENCIA` decrescente.
 - **`interface.render_rn1_fisica()`**: mesmo padrão "Gerar/Regerar" +
   prévia de alta densidade do 7.2/7.2.1 (hide_index, fonte 12px,
   `_formatar_moeda_br()`/`_formatar_pct_br()` reaproveitados), com filtro
@@ -857,7 +865,8 @@ têm `COD_ITEM`**, diferente do 7.2.
   do Dicionário de Campos, que é genérico/compartilhado por todos os
   painéis) aplicados só neste painel, via `_preparar_preview_rn1_fisica()`
   — rename pós-`_preparar_preview()`, sem tocar `DICIONARIO DE
-  CAMPOS.txt`.
+  CAMPOS.txt`. `st.warning()` no topo mostra o total de Compras sem
+  vínculo no Matching quando > 0.
 - **Navegação**: 9º botão em `render_menu_principal()` ("🔥 7.3: RN1 —
   MOVIMENTAÇÃO FÍSICA (XML)", `pagina_ativa="rn1_fisica"`,
   `st.columns(9)`) + roteamento em `main.py` + `render_pagina_
@@ -865,16 +874,26 @@ têm `COD_ITEM`**, diferente do 7.2.
   páginas).
 - **Não é o Estágio 15**: continua reservado pra lógica de PU (preço
   unitário)/omissão do texto original da RN1 (`regra de negócios
-  unificadas/regra negocio_pu_rn1_ei+c=v+ef_1.txt`) — o 7.3 só muda o
-  grão da agregação da MESMA identidade `EI+C=V+EF` já montada no 7.2,
-  não introduz PU nem condições `c>0`/`c=0`.
+  unificadas/regra negocio_pu_rn1_ei+c=v+ef_1.txt`) — o 7.3 não introduz
+  PU nem condições `c>0`/`c=0`.
 - Regra R07: `ANO`/`DESCR_ALVO` sempre string.
+- **Validado com dado sintético** (2 `COD_ITEM` com a mesma `DESCR_ALVO`,
+  1 item sem match nenhum): Compras do produto veio do XML puro (não do
+  `COMPRAS` já persistido em `cruzamento_valor`, que ficaria menor por
+  causa do filtro do 7.2); o item sem match formou a linha sentinela com
+  o valor certo, sem desaparecer.
 - **Validado nas 3 operações reais** (script direto, sem persistir —
   fica pro usuário clicar "Gerar" na UI quando quiser materializar):
-  geraldo 5.721 linhas (Ano×Descrição)/R$1.228.880,31 de divergência
-  acumulada, PB2 347/R$5.072.425,40, cometa 2.807/R$397.552.932,21 — sem
-  erro nas 3, números plausíveis e consistentes com os totais já
-  validados do 7.2/7.2.1 pras mesmas bases.
+  geraldo 5.722 linhas/R$1.230.187,38 de divergência acumulada (+R$1.307,07
+  vs. a 1ª versão)/R$1.307,07 sem vínculo no Matching; PB2 250/
+  R$5.412.013,80 (+R$339.588,40)/R$339.992,00 sem vínculo (bem mais
+  expressivo — uma linha sentinela de 2024 sozinha soma R$243.860,00);
+  cometa 2.005/R$323.652.947,55 (**-R$73,9M** vs. a 1ª versão)/
+  R$2.252.713,86 sem vínculo — sem erro nas 3. A queda em cometa não é
+  bug: `DIVERGENCIA=|TD-TC|` não é monótona em Compras — produtos que já
+  tinham `TD<TC` ("Entradas sem NF", maioria em cometa) ficam com o gap
+  MENOR ao incluir a compra que faltava, não maior; só sobe quando o
+  produto já tinha `TD>TC`.
 
 ## Ver também
 

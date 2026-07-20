@@ -3007,72 +3007,166 @@ def consultar_cruzamento_produto(limite: "int | None" = 200) -> "tuple[pd.DataFr
 
 # ── Estágio 7.3 — RN1 Movimentação Física ────────────────────────────────
 # Solicitação Técnica (2026-07-20): mesma identidade contábil EI+Compras=
-# Vendas+EF do Estágio 7.2 (ver gerar_cruzamento_valor()) — Compras/Vendas já
-# vêm de estoque_entradas/estoque_saidas (Estágio 4, XML) e EI/EF já vêm de
-# estoque/Bloco H (Estágio 5, declaração); a mudança pedida pro 7.3 é o grão
-# da agregação: por (ANO, DESCR_ALVO) em vez de (ANO, COD_ITEM) — a
-# Descrição Relevante (Estágio 7.1) vira o elo direto entre movimentação e
+# Vendas+EF do Estágio 7.2 — mas com uma diferença real de dado, não só de
+# agregação (esclarecido pelo usuário 2026-07-20: "dados de entradas do xml
+# podem ser diferentes dos dados de entradas de declaração"): o Compras do
+# 7.2 (`_valores_por_ano_item()`, `WHERE COD_ITEM_DECLARACAO IS NOT NULL`)
+# só soma itens de `estoque_entradas` que TÊM match no BC3 — item de XML sem
+# match nenhum (BC3 não achou correspondência no cadastro da auditada) fica
+# de fora do Compras do 7.2 inteiramente, não só sem produto_alvo. O 7.3
+# soma o valor TOTAL de `estoque_entradas` (todo o XML, com ou sem match),
+# revelando o passivo de itens que entraram fisicamente mas nunca foram
+# vinculados/lançados ("notas na gaveta") — ver `_compras_entradas_sem_
+# filtro_bc3()`. Vendas (`estoque_saidas`, via `cprod`) e EI/EF (Bloco H)
+# não têm esse problema — já são 100%/quase 100% cobertos sem depender do
+# BC3 (ver `gerar_cruzamento_valor()`) — reaproveitados de `cruzamento_
+# valor` (Estágio 7.2) já persistida, sem reprocessar.
+#
+# Grão da agregação: por (ANO, DESCR_ALVO) em vez de (ANO, COD_ITEM) — a
+# Descrição Relevante (Estágio 7.1) vira o elo entre movimentação e
 # inventário, somando todo COD_ITEM que compartilhe a mesma DESCR_ALVO numa
 # única linha por ano (mesmo raciocínio de gerar_cruzamento_produto(),
 # Estágio 7.2.1, mas mantendo ANO separado em vez de somar todos os anos
 # numa linha só).
 #
-# Reaproveita cruzamento_valor (Estágio 7.2) já persistida em vez de
-# reprocessar entradas/saídas/estoque do zero (mesma decisão de
-# gerar_cruzamento_produto()) — evita duplicar a lógica de dedup ET/EP e
-# exclusão de autoemissão já resolvida em _valores_por_ano_item().
-#
-# Limitação conhecida (herdada de produto_alvo/cruzamento_valor): itens de
-# entrada SEM match no BC3 (COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO nulos
-# — ver montar_estoque_entradas(), ambas as colunas vêm do MESMO LEFT JOIN
-# com a bc3) não têm como ser vinculados a uma DESCR_ALVO — produto_alvo é
-# construído a partir dessas mesmas colunas, então não existe descrição
-# alguma pra casar. "Notas na gaveta" sem NENHUM match no BC3 não aparecem
-# atribuídas a um produto específico neste painel; o que ele revela é a
-# divergência acumulada nos itens QUE JÁ têm produto_alvo reconhecido.
+# Itens de entrada SEM NENHUM match no BC3 não têm como ser atribuídos a um
+# produto específico (não têm DESCR_ITEM_DECLARACAO — vem do MESMO LEFT
+# JOIN que preenche COD_ITEM_DECLARACAO, ambos nulos juntos) — em vez de
+# excluí-los (como o 7.2 faz), somam numa linha sentinela por ano,
+# DESCR_ALVO=`_LABEL_RN1_SEM_VINCULO` ("(SEM VÍNCULO NO MATCHING)"),
+# preservando o valor total no relatório em vez de escondê-lo.
 _COLUNAS_RN1_FISICA = [
     "ANO", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
     "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
 
+LABEL_RN1_SEM_VINCULO = "(SEM VÍNCULO NO MATCHING)"
+# Sem underscore (diferente da convenção `_privado` do módulo) porque
+# interface.py precisa comparar contra este rótulo pra destacar a linha na
+# UI — ver interface.render_rn1_fisica().
+
+
+def _compras_entradas_sem_filtro_bc3() -> pd.DataFrame:
+    """Todo o valor de Compras em `estoque_entradas` (XML puro, Estágio 4),
+    SEM o filtro `COD_ITEM_DECLARACAO IS NOT NULL` que `_valores_por_ano_
+    item()` aplica (usada pelo Estágio 7.2) — usada só pelo Estágio 7.3
+    (RN1 física), que precisa do valor TOTAL comprado via XML, inclusive
+    itens que NUNCA foram vinculados/lançados no BC3 ("notas na gaveta").
+    Mesma dedup ET/EP de `_valores_por_ano_item()` (`ROW_NUMBER() OVER
+    (PARTITION BY CHV_NFE, NITEM ORDER BY PASTA_ORIGEM)`, restrita a esta
+    consulta) — sem filtro de autoemissão (Compras mantém autoemissão,
+    mesma decisão de 2026-07-18 documentada em `_valores_por_ano_item()`).
+    `COD_ITEM` pode vir `None`/`NaN` quando o item não tem match algum no
+    BC3. Devolve `ANO`, `COD_ITEM`, `VALOR`. Vazia se `estoque_entradas`
+    não existir ainda (Estágio 4 não gerado)."""
+    colunas = ["ANO", "COD_ITEM", "VALOR"]
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas)
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estoque_entradas" not in tabelas:
+                return pd.DataFrame(columns=colunas)
+            df = con.execute(
+                "WITH dedup_et_ep AS ("
+                "  SELECT ANO_ELEITO AS ANO, COD_ITEM_DECLARACAO AS COD_ITEM, "
+                "         fatoitemnfe_infnfe_det_prod_vprod AS VPROD, "
+                "         ROW_NUMBER() OVER ("
+                "           PARTITION BY fatoitemnfe_infprot_chnfe, fatoitemnfe_infnfe_det_nitem "
+                "           ORDER BY PASTA_ORIGEM"
+                "         ) AS rn "
+                "  FROM estoque_entradas"
+                ") "
+                "SELECT ANO, COD_ITEM, SUM(TRY_CAST(VPROD AS DOUBLE)) AS VALOR "
+                "FROM dedup_et_ep WHERE rn = 1 GROUP BY ANO, COD_ITEM"
+            ).df()
+        return df
+    except Exception:
+        logger.exception("Erro ao somar Compras sem filtro de BC3 em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas)
+
 
 def gerar_rn1_fisica() -> dict:
     """Estágio 7.3 — RN1 Movimentação Física: ver comentário da seção
-    acima. Lê cruzamento_valor (Estágio 7.2) JÁ PERSISTIDA e reagrupa por
-    (ANO, DESCR_ALVO) — soma EI/Compras/Total Débito/Vendas/EF/Total
-    Crédito/Divergência. INFRACAO/PCT_DIVERGENCIA SÃO recalculados sobre
-    os totais agrupados (mesmo motivo de gerar_cruzamento_produto(): o
-    rótulo não pode depender de qual COD_ITEM "pesa mais" na soma).
-    Ordenação: por DIVERGENCIA decrescente. Regra R07: ANO/DESCR_ALVO
-    sempre string.
+    acima pro raciocínio completo. Compras vem de `_compras_entradas_sem_
+    filtro_bc3()` (TODO o XML de `estoque_entradas`, com ou sem match no
+    BC3) — itens com match são vinculados a `produto_alvo` (mesma
+    normalização de código do 7.2) e somados por (ANO, DESCR_ALVO); itens
+    sem match nenhum somam numa linha sentinela por ano (`LABEL_RN1_SEM_
+    VINCULO`). Vendas/EI/EF vêm de `cruzamento_valor` (Estágio 7.2) JÁ
+    PERSISTIDA, reagrupada por (ANO, DESCR_ALVO) — não reprocessados
+    (Vendas via `cprod`/EI-EF via Bloco H já têm cobertura completa, sem o
+    problema de exclusão por falta de match do Compras). `INFRACAO`/
+    `PCT_DIVERGENCIA` calculados sobre os totais já agrupados. Ordenação:
+    por DIVERGENCIA decrescente. Regra R07: ANO/DESCR_ALVO sempre string.
 
     Devolve {'resumo': dict, 'cruzamento': DataFrame, 'erros': list} —
-    erros não-vazio quando cruzamento_valor (Estágio 7.2) ainda não foi
-    gerada."""
-    base, _ = consultar_cruzamento_valor(limite=None)
-    if base.empty:
+    erros não-vazio quando produto_alvo (7.1) ou cruzamento_valor (7.2)
+    ainda não foram gerados."""
+    produto_alvo, _ = consultar_produto_alvo(limite=None)
+    if produto_alvo.empty:
+        return {
+            "resumo": {}, "cruzamento": pd.DataFrame(),
+            "erros": ["Tabela produto_alvo (Estágio 7.1) ainda não foi gerada."],
+        }
+
+    base_cv, _ = consultar_cruzamento_valor(limite=None)
+    if base_cv.empty:
         return {
             "resumo": {}, "cruzamento": pd.DataFrame(),
             "erros": ["Tabela cruzamento_valor (Estágio 7.2) ainda não foi gerada."],
         }
 
-    for col in _COLUNAS_SOMA_CRUZAMENTO_PRODUTO:
-        base[col] = pd.to_numeric(base[col], errors="coerce").fillna(0.0)
+    for col in ("VENDAS", "EI", "EF"):
+        base_cv[col] = pd.to_numeric(base_cv[col], errors="coerce").fillna(0.0)
+    vendas_ei_ef = base_cv.groupby(["ANO", "DESCR_ALVO"], as_index=False)[["VENDAS", "EI", "EF"]].sum()
 
-    agrupado = base.groupby(["ANO", "DESCR_ALVO"], as_index=False)[_COLUNAS_SOMA_CRUZAMENTO_PRODUTO].sum()
+    compras_bruto = _compras_entradas_sem_filtro_bc3()
+    periodo = obter_periodo_auditoria()
+    if periodo and not compras_bruto.empty:
+        ano_ini, ano_fim = int(periodo["ano_inicial"]), int(periodo["ano_final"])
+        compras_bruto = compras_bruto[compras_bruto["ANO"].astype(int).between(ano_ini, ano_fim)]
 
-    diferenca = agrupado["TOTAL_DEBITO"] - agrupado["TOTAL_CREDITO"]
-    agrupado["INFRACAO"] = np.where(diferenca < 0, _INFRACAO_ENTRADAS_SEM_NF, _INFRACAO_SAIDAS_SEM_NF)
+    tem_match = compras_bruto["COD_ITEM"].notna()
+    compras_matched = compras_bruto[tem_match].copy()
+    compras_sem_vinculo = compras_bruto[~tem_match].copy()
 
-    minimo = agrupado[["TOTAL_DEBITO", "TOTAL_CREDITO"]].min(axis=1)
+    if not compras_matched.empty:
+        compras_matched["COD_ITEM"] = _normalizar_cod_item_flexivel(compras_matched["COD_ITEM"])
+        compras_matched = compras_matched.groupby(["ANO", "COD_ITEM"], as_index=False)["VALOR"].sum()
+        compras_matched = compras_matched.merge(produto_alvo, on="COD_ITEM", how="inner")
+        compras_matched = compras_matched.groupby(["ANO", "DESCR_ALVO"], as_index=False)["VALOR"].sum()
+    else:
+        compras_matched = pd.DataFrame(columns=["ANO", "DESCR_ALVO", "VALOR"])
+
+    if not compras_sem_vinculo.empty:
+        compras_sem_vinculo = compras_sem_vinculo.groupby("ANO", as_index=False)["VALOR"].sum()
+        compras_sem_vinculo["DESCR_ALVO"] = LABEL_RN1_SEM_VINCULO
+        compras_sem_vinculo = compras_sem_vinculo[["ANO", "DESCR_ALVO", "VALOR"]]
+    else:
+        compras_sem_vinculo = pd.DataFrame(columns=["ANO", "DESCR_ALVO", "VALOR"])
+
+    compras = pd.concat([compras_matched, compras_sem_vinculo], ignore_index=True)
+    compras = compras.rename(columns={"VALOR": "COMPRAS"})
+
+    base = vendas_ei_ef.merge(compras, on=["ANO", "DESCR_ALVO"], how="outer")
+    if base.empty:
+        return {"resumo": {}, "cruzamento": pd.DataFrame(), "erros": []}
+    for col in ("VENDAS", "EI", "EF", "COMPRAS"):
+        base[col] = base[col].fillna(0.0)
+
+    base["TOTAL_DEBITO"] = (base["EI"] + base["COMPRAS"]).round(2)
+    base["TOTAL_CREDITO"] = (base["VENDAS"] + base["EF"]).round(2)
+    diferenca = base["TOTAL_DEBITO"] - base["TOTAL_CREDITO"]
+    base["DIVERGENCIA"] = diferenca.abs().round(2)
+    base["INFRACAO"] = np.where(diferenca < 0, _INFRACAO_ENTRADAS_SEM_NF, _INFRACAO_SAIDAS_SEM_NF)
+
+    minimo = base[["TOTAL_DEBITO", "TOTAL_CREDITO"]].min(axis=1)
     minimo_seguro = minimo.where(minimo != 0, 0.00001)
-    agrupado["PCT_DIVERGENCIA"] = (agrupado["DIVERGENCIA"] / minimo_seguro * 100).round(2)
-
-    for col in _COLUNAS_SOMA_CRUZAMENTO_PRODUTO:
-        agrupado[col] = agrupado[col].round(2)
+    base["PCT_DIVERGENCIA"] = (base["DIVERGENCIA"] / minimo_seguro * 100).round(2)
 
     cruzamento = (
-        _forcar_colunas_string(agrupado, ["ANO", "DESCR_ALVO"])[_COLUNAS_RN1_FISICA]
+        _forcar_colunas_string(base, ["ANO", "DESCR_ALVO"])[_COLUNAS_RN1_FISICA]
         .sort_values("DIVERGENCIA", ascending=False)
         .reset_index(drop=True)
     )
@@ -3081,6 +3175,10 @@ def gerar_rn1_fisica() -> dict:
         "total_linhas": len(cruzamento),
         "total_produtos": int(cruzamento["DESCR_ALVO"].nunique()),
         "total_divergencia_absoluta": float(cruzamento["DIVERGENCIA"].sum()),
+        "total_compras_sem_vinculo": float(
+            cruzamento.loc[cruzamento["DESCR_ALVO"] == LABEL_RN1_SEM_VINCULO, "COMPRAS"].sum()
+        ),
+        "periodo": periodo,
     }
     return {"resumo": resumo, "cruzamento": cruzamento, "erros": []}
 
