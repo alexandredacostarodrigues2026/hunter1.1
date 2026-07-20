@@ -3005,6 +3005,148 @@ def consultar_cruzamento_produto(limite: "int | None" = 200) -> "tuple[pd.DataFr
         return pd.DataFrame(), 0
 
 
+# ── Estágio 7.3 — RN1 Movimentação Física ────────────────────────────────
+# Solicitação Técnica (2026-07-20): mesma identidade contábil EI+Compras=
+# Vendas+EF do Estágio 7.2 (ver gerar_cruzamento_valor()) — Compras/Vendas já
+# vêm de estoque_entradas/estoque_saidas (Estágio 4, XML) e EI/EF já vêm de
+# estoque/Bloco H (Estágio 5, declaração); a mudança pedida pro 7.3 é o grão
+# da agregação: por (ANO, DESCR_ALVO) em vez de (ANO, COD_ITEM) — a
+# Descrição Relevante (Estágio 7.1) vira o elo direto entre movimentação e
+# inventário, somando todo COD_ITEM que compartilhe a mesma DESCR_ALVO numa
+# única linha por ano (mesmo raciocínio de gerar_cruzamento_produto(),
+# Estágio 7.2.1, mas mantendo ANO separado em vez de somar todos os anos
+# numa linha só).
+#
+# Reaproveita cruzamento_valor (Estágio 7.2) já persistida em vez de
+# reprocessar entradas/saídas/estoque do zero (mesma decisão de
+# gerar_cruzamento_produto()) — evita duplicar a lógica de dedup ET/EP e
+# exclusão de autoemissão já resolvida em _valores_por_ano_item().
+#
+# Limitação conhecida (herdada de produto_alvo/cruzamento_valor): itens de
+# entrada SEM match no BC3 (COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO nulos
+# — ver montar_estoque_entradas(), ambas as colunas vêm do MESMO LEFT JOIN
+# com a bc3) não têm como ser vinculados a uma DESCR_ALVO — produto_alvo é
+# construído a partir dessas mesmas colunas, então não existe descrição
+# alguma pra casar. "Notas na gaveta" sem NENHUM match no BC3 não aparecem
+# atribuídas a um produto específico neste painel; o que ele revela é a
+# divergência acumulada nos itens QUE JÁ têm produto_alvo reconhecido.
+_COLUNAS_RN1_FISICA = [
+    "ANO", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
+    "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
+]
+
+
+def gerar_rn1_fisica() -> dict:
+    """Estágio 7.3 — RN1 Movimentação Física: ver comentário da seção
+    acima. Lê cruzamento_valor (Estágio 7.2) JÁ PERSISTIDA e reagrupa por
+    (ANO, DESCR_ALVO) — soma EI/Compras/Total Débito/Vendas/EF/Total
+    Crédito/Divergência. INFRACAO/PCT_DIVERGENCIA SÃO recalculados sobre
+    os totais agrupados (mesmo motivo de gerar_cruzamento_produto(): o
+    rótulo não pode depender de qual COD_ITEM "pesa mais" na soma).
+    Ordenação: por DIVERGENCIA decrescente. Regra R07: ANO/DESCR_ALVO
+    sempre string.
+
+    Devolve {'resumo': dict, 'cruzamento': DataFrame, 'erros': list} —
+    erros não-vazio quando cruzamento_valor (Estágio 7.2) ainda não foi
+    gerada."""
+    base, _ = consultar_cruzamento_valor(limite=None)
+    if base.empty:
+        return {
+            "resumo": {}, "cruzamento": pd.DataFrame(),
+            "erros": ["Tabela cruzamento_valor (Estágio 7.2) ainda não foi gerada."],
+        }
+
+    for col in _COLUNAS_SOMA_CRUZAMENTO_PRODUTO:
+        base[col] = pd.to_numeric(base[col], errors="coerce").fillna(0.0)
+
+    agrupado = base.groupby(["ANO", "DESCR_ALVO"], as_index=False)[_COLUNAS_SOMA_CRUZAMENTO_PRODUTO].sum()
+
+    diferenca = agrupado["TOTAL_DEBITO"] - agrupado["TOTAL_CREDITO"]
+    agrupado["INFRACAO"] = np.where(diferenca < 0, _INFRACAO_ENTRADAS_SEM_NF, _INFRACAO_SAIDAS_SEM_NF)
+
+    minimo = agrupado[["TOTAL_DEBITO", "TOTAL_CREDITO"]].min(axis=1)
+    minimo_seguro = minimo.where(minimo != 0, 0.00001)
+    agrupado["PCT_DIVERGENCIA"] = (agrupado["DIVERGENCIA"] / minimo_seguro * 100).round(2)
+
+    for col in _COLUNAS_SOMA_CRUZAMENTO_PRODUTO:
+        agrupado[col] = agrupado[col].round(2)
+
+    cruzamento = (
+        _forcar_colunas_string(agrupado, ["ANO", "DESCR_ALVO"])[_COLUNAS_RN1_FISICA]
+        .sort_values("DIVERGENCIA", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    resumo = {
+        "total_linhas": len(cruzamento),
+        "total_produtos": int(cruzamento["DESCR_ALVO"].nunique()),
+        "total_divergencia_absoluta": float(cruzamento["DIVERGENCIA"].sum()),
+    }
+    return {"resumo": resumo, "cruzamento": cruzamento, "erros": []}
+
+
+def persistir_rn1_fisica(callback=None) -> dict:
+    """Estágio 7.3: persiste rn1_fisica no DuckDB, ver gerar_rn1_fisica().
+    callback(etapa, n) chamado ao final."""
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    resultado = {}
+    try:
+        r = gerar_rn1_fisica()
+        if r["erros"]:
+            resultado["erro"] = " | ".join(r["erros"])
+            return resultado
+        df = r["cruzamento"]
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            if not df.empty:
+                con.register("_df_rn1_fisica", df)
+                con.execute("CREATE OR REPLACE TABLE rn1_fisica AS SELECT * FROM _df_rn1_fisica")
+                con.unregister("_df_rn1_fisica")
+        resultado["rn1_fisica"] = len(df)
+        if callback:
+            callback("rn1_fisica", resultado["rn1_fisica"])
+    except Exception as exc:
+        logger.exception("Erro ao persistir rn1_fisica: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def rn1_fisica_ja_gerado() -> bool:
+    """True se a tabela rn1_fisica (Estágio 7.3) já existe no DuckDB da
+    operação."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            return "rn1_fisica" in tabelas
+    except Exception:
+        logger.exception("Erro ao verificar rn1_fisica existente em %s", _BANCO_PATH)
+        return False
+
+
+def consultar_rn1_fisica(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê rn1_fisica já persistida (sem reprocessar), devolvendo uma
+    amostra (até 'limite' linhas) e o total real de linhas. limite=None
+    devolve a tabela inteira."""
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "rn1_fisica" not in tabelas:
+                return pd.DataFrame(), 0
+            total = con.execute("SELECT COUNT(*) FROM rn1_fisica").fetchone()[0]
+            query = (
+                "SELECT * FROM rn1_fisica" if limite is None
+                else f"SELECT * FROM rn1_fisica LIMIT {limite}"
+            )
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar rn1_fisica em %s", _BANCO_PATH)
+        return pd.DataFrame(), 0
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio

@@ -1,12 +1,12 @@
 """Ponto de entrada Streamlit do Hunter 1.1.
 
 Despacha pro Menu Principal (Estágio 6 — VAMOS ORGANIZAR, ver
-docs/estagios/06_menu_navegacao.md) e os 8 grupos de painéis navegáveis
+docs/estagios/06_menu_navegacao.md) e os 9 grupos de painéis navegáveis
 (Extração, Matching (BC3), Segregados, Tabelas Entradas/Saídas/Estoques,
 Auditoria1, Descrição Relevante, Cruzamento por Valor, Cruzamento por
-Produto). Arquivo idêntico entre operações — a operação ativa é
-resolvida em runtime por loader.nome_operacao() (pasta-pai de
-ESSENCIAL/, ou HUNTER_OPERACAO_DIR).
+Produto, RN1 — Movimentação Física). Arquivo idêntico entre operações — a
+operação ativa é resolvida em runtime por loader.nome_operacao() (pasta-pai
+de ESSENCIAL/, ou HUNTER_OPERACAO_DIR).
 """
 import sys
 from pathlib import Path
@@ -38,8 +38,8 @@ def main() -> None:
     if "pagina_ativa" not in st.session_state:
         # None = Menu Principal (Estágio 6); "extracao"/"matching"/
         # "segregados"/"construcao"/"auditoria1"/"descricao_relevante"/
-        # "cruzamento_valor"/"cruzamento_produto" = os 8 grupos de
-        # painéis navegáveis, ver interface.render_menu_principal().
+        # "cruzamento_valor"/"cruzamento_produto"/"rn1_fisica" = os 9
+        # grupos de painéis navegáveis, ver interface.render_menu_principal().
         st.session_state["pagina_ativa"] = None
 
     st.title("Hunter 1.1")
@@ -62,6 +62,8 @@ def main() -> None:
         interface.render_pagina_cruzamento_valor()
     elif pagina == "cruzamento_produto":
         interface.render_pagina_cruzamento_produto()
+    elif pagina == "rn1_fisica":
+        interface.render_pagina_rn1_fisica()
     else:
         interface.render_menu_principal()
 

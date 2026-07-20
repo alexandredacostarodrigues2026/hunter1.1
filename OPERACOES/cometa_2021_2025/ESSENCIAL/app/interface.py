@@ -1226,6 +1226,110 @@ def render_cruzamento_produto() -> None:
     st.rerun()
 
 
+_COLUNAS_PREVIEW_RN1_FISICA = [
+    "ANO", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
+    "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
+]
+
+
+def _preparar_preview_rn1_fisica(df: pd.DataFrame) -> pd.DataFrame:
+    """Mesma preparação de _preparar_preview(), mas com "Compras (XML)"/
+    "Vendas (XML)" no lugar de "Compras (R$)"/"Vendas (R$)" (Dicionário de
+    Campos é genérico, compartilhado por todos os painéis — ver `feedback_
+    dicionario_campos_convencao` — por isso o rótulo específico deste
+    painel é aplicado aqui, não no dicionário)."""
+    preview = _preparar_preview(df, _COLUNAS_PREVIEW_RN1_FISICA)
+    return preview.rename(columns={"Compras (R$)": "Compras (XML)", "Vendas (R$)": "Vendas (XML)"})
+
+
+def render_rn1_fisica() -> None:
+    """Estágio 7.3 — RN1 Movimentação Física (2026-07-20, Solicitação
+    Técnica): aplica EI+Compras=Vendas+EF por (ANO, Descrição Relevante),
+    em R$ — ver loader.gerar_rn1_fisica(). Mesma fórmula do Estágio 7.2
+    (Compras/Vendas do XML, Estágio 4; EI/EF da declaração, Estágio 5),
+    mas agregada por Descrição Relevante (Estágio 7.1) em vez de por
+    código — várias COD_ITEM que compartilham a mesma DESCR_ALVO somam
+    juntas numa única linha por ano, revelando o passivo de "notas na
+    gaveta" (compras via XML nunca escrituradas) ou vendas omitidas.
+    Exige `cruzamento_valor` (Estágio 7.2) já gerada. Mesmo padrão
+    "Gerar/Regerar" + prévia de alta densidade das outras páginas
+    (hide_index, fonte 12px, formatação BR), com filtro de Ano
+    (multiselect) e busca textual por Descrição, igual ao Estágio 7.2."""
+    st.subheader("Estágio 7.3 — RN1: Movimentação Física (XML)")
+    st.caption(
+        "Aplica EI + Compras = Vendas + EF por (Ano, Descrição Relevante), em R$ — Compras e "
+        "Vendas pela visão física do XML (Estágio 4), Estoque (EI/EF) pela declaração (Estágio "
+        "5). Identidade pela Descrição Relevante (Estágio 7.1) — soma todo código que compartilhe "
+        "a mesma descrição. Ordenado por Divergência decrescente. Infração: 'Entradas sem NF' "
+        "quando Total Débito < Total Crédito (compra sem nota); 'Saídas sem NF' quando Total "
+        "Débito ≥ Total Crédito (venda sem nota)."
+    )
+
+    if "rn1_fisica_gerado" not in st.session_state:
+        st.session_state["rn1_fisica_gerado"] = loader.rn1_fisica_ja_gerado()
+
+    if st.session_state["rn1_fisica_gerado"]:
+        df_preview, total = loader.consultar_rn1_fisica(limite=None)
+        st.success(f"✅ {total:,} linha(s) em `rn1_fisica`.".replace(",", "."))
+
+        if df_preview.empty:
+            st.info('Nenhuma linha gerada — gere "Cruzamento por Valor" (Estágio 7.2) primeiro.')
+        else:
+            col_ano, col_busca = st.columns(2)
+            anos_disponiveis = sorted(df_preview["ANO"].unique())
+            anos_selecionados = col_ano.multiselect(
+                "Filtrar por Ano", anos_disponiveis, default=anos_disponiveis, key="filtro_ano_rn1_fisica",
+            )
+            busca_descricao = col_busca.text_input(
+                "Buscar por Descrição", key="filtro_descricao_rn1_fisica",
+            )
+
+            filtrado = df_preview[df_preview["ANO"].isin(anos_selecionados)]
+            if busca_descricao.strip():
+                filtrado = filtrado[
+                    filtrado["DESCR_ALVO"].str.contains(busca_descricao.strip(), case=False, na=False)
+                ]
+
+            st.markdown(f"**{len(filtrado):,} linha(s)** após filtro.".replace(",", "."))
+            amostra = filtrado.head(200).copy()
+            amostra["PCT_DIVERGENCIA"] = amostra["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+            for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
+                amostra[_col] = amostra[_col].apply(_formatar_moeda_br)
+            with st.container(key="rn1_fisica_tabela"):
+                st.markdown(
+                    "<style>.st-key-rn1_fisica_tabela [data-testid='stDataFrame'] "
+                    "* { font-size: 12px; }</style>",
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(
+                    _preparar_preview_rn1_fisica(amostra),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        clicou = st.button(
+            "Regerar RN1 — Movimentação Física",
+            key="btn_regerar_rn1_fisica",
+            help="Reprocessa a partir de cruzamento_valor (Estágio 7.2) e recalcula os totais "
+                 "por (Ano, Descrição Relevante).",
+        )
+    else:
+        clicou = st.button("Gerar RN1 — Movimentação Física", key="btn_gerar_rn1_fisica")
+
+    if not clicou:
+        return
+
+    with st.spinner("Consolidando por ano e Descrição Relevante..."):
+        resultado = loader.persistir_rn1_fisica()
+
+    if "erro" in resultado:
+        st.error(f"Erro: {resultado['erro']}")
+        return
+
+    st.session_state["rn1_fisica_gerado"] = True
+    st.rerun()
+
+
 _COLUNAS_PREVIEW_DIVERGENCIA = [
     "CHV_NFE", "EXCEL_QTD_ITENS", "HUNTER_ENTRADAS_QTD", "ITENS_ENTRADAS_REAIS",
     "ITENS_SAIDAS_REAIS", "ITENS_SITUACAO", "ITENS_ANALISE_CFOP",
@@ -1638,9 +1742,11 @@ def render_menu_principal() -> None:
     render_pagina_auditoria1()/render_pagina_descricao_relevante()
     (Estágio 7.1)/render_pagina_cruzamento_valor() (Estágio 7.2,
     2026-07-18)/render_pagina_cruzamento_produto() (Estágio 7.2.1,
-    2026-07-19 — condensação do 7.2 por Descrição Relevante)."""
+    2026-07-19 — condensação do 7.2 por Descrição Relevante)/
+    render_pagina_rn1_fisica() (Estágio 7.3, 2026-07-20 — mesma fórmula
+    do 7.2 agregada por Descrição Relevante, mantendo o Ano)."""
     st.subheader("Menu Principal")
-    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
+    col1, col2, col3, col4, col5, col6, col7, col8, col9 = st.columns(9)
     if col1.button("📥 EXTRAÇÃO", key="btn_menu_extracao", use_container_width=True):
         st.session_state["pagina_ativa"] = "extracao"
         st.rerun()
@@ -1667,6 +1773,9 @@ def render_menu_principal() -> None:
         st.rerun()
     if col8.button("📊 7.2.1: CRUZAMENTO POR PRODUTO", key="btn_menu_cruzamento_produto", use_container_width=True):
         st.session_state["pagina_ativa"] = "cruzamento_produto"
+        st.rerun()
+    if col9.button("🔥 7.3: RN1 — MOVIMENTAÇÃO FÍSICA (XML)", key="btn_menu_rn1_fisica", use_container_width=True):
+        st.session_state["pagina_ativa"] = "rn1_fisica"
         st.rerun()
 
 
@@ -1891,3 +2000,17 @@ def render_pagina_cruzamento_produto() -> None:
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     render_cruzamento_produto()
+
+
+def render_pagina_rn1_fisica() -> None:
+    """Painel '7.3: RN1 — MOVIMENTAÇÃO FÍSICA (XML)' (Estágio 7.3,
+    2026-07-20, Solicitação Técnica), botão de 9º nível no Menu Principal:
+    ver loader.gerar_rn1_fisica()/render_rn1_fisica(). Exige
+    dados_carregados (mesmo padrão das outras páginas); depende também de
+    cruzamento_valor (Estágio 7.2) já gerada, checado dentro de
+    render_rn1_fisica()."""
+    _botao_voltar_menu()
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        return
+    render_rn1_fisica()

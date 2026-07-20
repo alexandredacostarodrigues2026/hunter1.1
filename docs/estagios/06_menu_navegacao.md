@@ -817,6 +817,65 @@ drill-down pro detalhamento anual.
   drill-down testado escolhendo "ABRIDOR DE LATA" → mostrou a linha de
   2021 (única) com os mesmos valores/formatação do 7.2.
 
+## 9º botão — "7.3: RN1 — MOVIMENTAÇÃO FÍSICA (XML)" (Estágio 7.3, 2026-07-20)
+
+Solicitação Técnica seguinte, terceiro sub-passo do Estágio 7: mesma
+identidade contábil `EI+Compras=Vendas+EF` do 7.2, mas com o pedido
+explícito de tratar Compras/Vendas como "a visão física do XML" e usar a
+Descrição Relevante (7.1) como "o elo entre movimentação e inventário" —
+as 11 colunas pedidas (`Ano | Descrição Relevante | EI | Compras (XML) |
+TD | Vendas (XML) | EF | TC | Divergência | Infração | % Diverg`) **não
+têm `COD_ITEM`**, diferente do 7.2.
+
+- **Achado antes de implementar**: a fonte de Compras/Vendas do 7.2
+  (`estoque_entradas`/`estoque_saidas`, Estágio 4) **já é** o valor do
+  XML — a Solicitação Técnica descrevia isso como uma "novidade" do 7.3,
+  mas tecnicamente o 7.2 já usa exatamente essas duas tabelas (ver seção
+  "7º botão" acima). A mudança real e implementável, dado o schema atual
+  (`DESCR_ITEM_DECLARACAO`/`COD_ITEM_DECLARACAO` de `estoque_entradas`
+  vêm do MESMO `LEFT JOIN` com a bc3 — ver `montar_estoque_entradas()` —
+  então uma linha sem match no BC3 não tem descrição alguma pra casar com
+  `produto_alvo`) é o GRÃO da agregação: por `(Ano, Descrição Relevante)`
+  em vez de `(Ano, COD_ITEM)`, igual ao 7.2.1 mas mantendo o Ano separado
+  em vez de somar todos os anos numa linha só. Itens de entrada sem match
+  no BC3 continuam fora de Compras (mesma limitação herdada de
+  `produto_alvo`/7.2 — "notas na gaveta" sem NENHUM match não aparecem
+  atribuídas a um produto específico neste painel).
+- **`loader.gerar_rn1_fisica()`**: lê `cruzamento_valor` (7.2) JÁ
+  PERSISTIDA (mesma técnica de `gerar_cruzamento_produto()`, evita
+  duplicar a lógica de dedup ET/EP e exclusão de autoemissão já resolvida
+  em `_valores_por_ano_item()`), agrupa por `(ANO, DESCR_ALVO)` — soma
+  EI/Compras/Total Débito/Vendas/EF/Total Crédito/Divergência,
+  `INFRACAO`/`PCT_DIVERGENCIA` RECALCULADOS sobre os totais agrupados
+  (mesmo motivo do 7.2.1: o rótulo não pode depender de qual `COD_ITEM`
+  "pesa mais" na soma). Ordenado por `DIVERGENCIA` decrescente.
+- **`interface.render_rn1_fisica()`**: mesmo padrão "Gerar/Regerar" +
+  prévia de alta densidade do 7.2/7.2.1 (hide_index, fonte 12px,
+  `_formatar_moeda_br()`/`_formatar_pct_br()` reaproveitados), com filtro
+  `st.multiselect` por Ano e busca por Descrição, igual ao 7.2. Rótulos
+  "Compras (XML)"/"Vendas (XML)" (em vez de "Compras (R$)"/"Vendas (R$)"
+  do Dicionário de Campos, que é genérico/compartilhado por todos os
+  painéis) aplicados só neste painel, via `_preparar_preview_rn1_fisica()`
+  — rename pós-`_preparar_preview()`, sem tocar `DICIONARIO DE
+  CAMPOS.txt`.
+- **Navegação**: 9º botão em `render_menu_principal()` ("🔥 7.3: RN1 —
+  MOVIMENTAÇÃO FÍSICA (XML)", `pagina_ativa="rn1_fisica"`,
+  `st.columns(9)`) + roteamento em `main.py` + `render_pagina_
+  rn1_fisica()` (mesmo padrão de gate `dados_carregados` das outras
+  páginas).
+- **Não é o Estágio 15**: continua reservado pra lógica de PU (preço
+  unitário)/omissão do texto original da RN1 (`regra de negócios
+  unificadas/regra negocio_pu_rn1_ei+c=v+ef_1.txt`) — o 7.3 só muda o
+  grão da agregação da MESMA identidade `EI+C=V+EF` já montada no 7.2,
+  não introduz PU nem condições `c>0`/`c=0`.
+- Regra R07: `ANO`/`DESCR_ALVO` sempre string.
+- **Validado nas 3 operações reais** (script direto, sem persistir —
+  fica pro usuário clicar "Gerar" na UI quando quiser materializar):
+  geraldo 5.721 linhas (Ano×Descrição)/R$1.228.880,31 de divergência
+  acumulada, PB2 347/R$5.072.425,40, cometa 2.807/R$397.552.932,21 — sem
+  erro nas 3, números plausíveis e consistentes com os totais já
+  validados do 7.2/7.2.1 pras mesmas bases.
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —
