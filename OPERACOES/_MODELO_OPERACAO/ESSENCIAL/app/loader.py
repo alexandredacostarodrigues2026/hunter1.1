@@ -3030,20 +3030,33 @@ def consultar_cruzamento_produto(limite: "int | None" = 200) -> "tuple[pd.DataFr
 # numa linha só).
 #
 # Itens de entrada SEM NENHUM match no BC3 não têm como ser atribuídos a um
-# produto específico (não têm DESCR_ITEM_DECLARACAO — vem do MESMO LEFT
-# JOIN que preenche COD_ITEM_DECLARACAO, ambos nulos juntos) — em vez de
-# excluí-los (como o 7.2 faz), somam numa linha sentinela por ano,
-# DESCR_ALVO=`_LABEL_RN1_SEM_VINCULO` ("(SEM VÍNCULO NO MATCHING)"),
-# preservando o valor total no relatório em vez de escondê-lo.
+# produto_alvo (não têm DESCR_ITEM_DECLARACAO — vem do MESMO LEFT JOIN que
+# preenche COD_ITEM_DECLARACAO, ambos nulos juntos) — mas o usuário alertou
+# (2026-07-20) que "pode ocorrer que vários produtos nas entradas xml não
+# possuam cod das declarações": na prática NÃO é um punhado de itens
+# residuais — achado real ao investigar, cometa tem 762 linhas/52
+# descrições distintas sem match (R$2,25 milhões), incluindo casos que nem
+# são mercadoria (duas notas de "CAMINHÃO..." de R$165 mil cada, ativo
+# imobilizado, não estoque). Em vez de somar tudo numa única linha cega
+# (comportamento anterior, 2026-07-20 mais cedo), cada descrição BRUTA do
+# XML (`fatoitemnfe_infnfe_det_prod_xprod`, sempre preenchida pelo próprio
+# fornecedor, independente de match — diferente de DESCR_ITEM_DECLARACAO)
+# vira sua PRÓPRIA linha, prefixada com `PREFIXO_RN1_SEM_VINCULO` — dá
+# pro auditor investigar produto a produto, em vez de só ver um total
+# agregado sem saber o que compõe.
 _COLUNAS_RN1_FISICA = [
     "ANO", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
     "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
 
-LABEL_RN1_SEM_VINCULO = "(SEM VÍNCULO NO MATCHING)"
+PREFIXO_RN1_SEM_VINCULO = "(SEM VÍNCULO) "
 # Sem underscore (diferente da convenção `_privado` do módulo) porque
-# interface.py precisa comparar contra este rótulo pra destacar a linha na
-# UI — ver interface.render_rn1_fisica().
+# interface.py precisa comparar (str.startswith) contra este prefixo pra
+# destacar as linhas na UI — ver interface.render_rn1_fisica(). Prefixo
+# (não rótulo fixo) porque cada descrição bruta do XML sem match agora
+# vira sua própria linha (ver comentário da seção acima).
+
+_DESCR_XML_SEM_INFORMACAO = "(descrição não informada)"
 
 
 def _compras_entradas_sem_filtro_bc3() -> pd.DataFrame:
@@ -3057,9 +3070,13 @@ def _compras_entradas_sem_filtro_bc3() -> pd.DataFrame:
     consulta) — sem filtro de autoemissão (Compras mantém autoemissão,
     mesma decisão de 2026-07-18 documentada em `_valores_por_ano_item()`).
     `COD_ITEM` pode vir `None`/`NaN` quando o item não tem match algum no
-    BC3. Devolve `ANO`, `COD_ITEM`, `VALOR`. Vazia se `estoque_entradas`
-    não existir ainda (Estágio 4 não gerado)."""
-    colunas = ["ANO", "COD_ITEM", "VALOR"]
+    BC3 — `DESCR_XML` (`fatoitemnfe_infnfe_det_prod_xprod`, a descrição do
+    produto no próprio XML do fornecedor, sempre preenchida independente
+    de match) é usada só nesse caso, pra identificar individualmente cada
+    produto sem vínculo (ver gerar_rn1_fisica()). Devolve `ANO`,
+    `COD_ITEM`, `DESCR_XML`, `VALOR`. Vazia se `estoque_entradas` não
+    existir ainda (Estágio 4 não gerado)."""
+    colunas = ["ANO", "COD_ITEM", "DESCR_XML", "VALOR"]
     if not _BANCO_PATH.exists():
         return pd.DataFrame(columns=colunas)
     try:
@@ -3070,6 +3087,7 @@ def _compras_entradas_sem_filtro_bc3() -> pd.DataFrame:
             df = con.execute(
                 "WITH dedup_et_ep AS ("
                 "  SELECT ANO_ELEITO AS ANO, COD_ITEM_DECLARACAO AS COD_ITEM, "
+                "         fatoitemnfe_infnfe_det_prod_xprod AS DESCR_XML, "
                 "         fatoitemnfe_infnfe_det_prod_vprod AS VPROD, "
                 "         ROW_NUMBER() OVER ("
                 "           PARTITION BY fatoitemnfe_infprot_chnfe, fatoitemnfe_infnfe_det_nitem "
@@ -3077,8 +3095,8 @@ def _compras_entradas_sem_filtro_bc3() -> pd.DataFrame:
                 "         ) AS rn "
                 "  FROM estoque_entradas"
                 ") "
-                "SELECT ANO, COD_ITEM, SUM(TRY_CAST(VPROD AS DOUBLE)) AS VALOR "
-                "FROM dedup_et_ep WHERE rn = 1 GROUP BY ANO, COD_ITEM"
+                "SELECT ANO, COD_ITEM, DESCR_XML, SUM(TRY_CAST(VPROD AS DOUBLE)) AS VALOR "
+                "FROM dedup_et_ep WHERE rn = 1 GROUP BY ANO, COD_ITEM, DESCR_XML"
             ).df()
         return df
     except Exception:
@@ -3092,13 +3110,14 @@ def gerar_rn1_fisica() -> dict:
     filtro_bc3()` (TODO o XML de `estoque_entradas`, com ou sem match no
     BC3) — itens com match são vinculados a `produto_alvo` (mesma
     normalização de código do 7.2) e somados por (ANO, DESCR_ALVO); itens
-    sem match nenhum somam numa linha sentinela por ano (`LABEL_RN1_SEM_
-    VINCULO`). Vendas/EI/EF vêm de `cruzamento_valor` (Estágio 7.2) JÁ
-    PERSISTIDA, reagrupada por (ANO, DESCR_ALVO) — não reprocessados
-    (Vendas via `cprod`/EI-EF via Bloco H já têm cobertura completa, sem o
-    problema de exclusão por falta de match do Compras). `INFRACAO`/
-    `PCT_DIVERGENCIA` calculados sobre os totais já agrupados. Ordenação:
-    por DIVERGENCIA decrescente. Regra R07: ANO/DESCR_ALVO sempre string.
+    sem match nenhum viram uma linha POR (ANO, descrição bruta do XML),
+    prefixada com `PREFIXO_RN1_SEM_VINCULO`. Vendas/EI/EF vêm de
+    `cruzamento_valor` (Estágio 7.2) JÁ PERSISTIDA, reagrupada por (ANO,
+    DESCR_ALVO) — não reprocessados (Vendas via `cprod`/EI-EF via Bloco H
+    já têm cobertura completa, sem o problema de exclusão por falta de
+    match do Compras). `INFRACAO`/`PCT_DIVERGENCIA` calculados sobre os
+    totais já agrupados. Ordenação: por DIVERGENCIA decrescente. Regra
+    R07: ANO/DESCR_ALVO sempre string.
 
     Devolve {'resumo': dict, 'cruzamento': DataFrame, 'erros': list} —
     erros não-vazio quando produto_alvo (7.1) ou cruzamento_valor (7.2)
@@ -3140,9 +3159,10 @@ def gerar_rn1_fisica() -> dict:
         compras_matched = pd.DataFrame(columns=["ANO", "DESCR_ALVO", "VALOR"])
 
     if not compras_sem_vinculo.empty:
-        compras_sem_vinculo = compras_sem_vinculo.groupby("ANO", as_index=False)["VALOR"].sum()
-        compras_sem_vinculo["DESCR_ALVO"] = LABEL_RN1_SEM_VINCULO
-        compras_sem_vinculo = compras_sem_vinculo[["ANO", "DESCR_ALVO", "VALOR"]]
+        descr = compras_sem_vinculo["DESCR_XML"].fillna("").astype(str).str.strip()
+        descr = descr.where(descr != "", _DESCR_XML_SEM_INFORMACAO)
+        compras_sem_vinculo["DESCR_ALVO"] = PREFIXO_RN1_SEM_VINCULO + descr
+        compras_sem_vinculo = compras_sem_vinculo.groupby(["ANO", "DESCR_ALVO"], as_index=False)["VALOR"].sum()
     else:
         compras_sem_vinculo = pd.DataFrame(columns=["ANO", "DESCR_ALVO", "VALOR"])
 
@@ -3171,13 +3191,13 @@ def gerar_rn1_fisica() -> dict:
         .reset_index(drop=True)
     )
 
+    mask_sem_vinculo = cruzamento["DESCR_ALVO"].str.startswith(PREFIXO_RN1_SEM_VINCULO)
     resumo = {
         "total_linhas": len(cruzamento),
         "total_produtos": int(cruzamento["DESCR_ALVO"].nunique()),
         "total_divergencia_absoluta": float(cruzamento["DIVERGENCIA"].sum()),
-        "total_compras_sem_vinculo": float(
-            cruzamento.loc[cruzamento["DESCR_ALVO"] == LABEL_RN1_SEM_VINCULO, "COMPRAS"].sum()
-        ),
+        "total_compras_sem_vinculo": float(cruzamento.loc[mask_sem_vinculo, "COMPRAS"].sum()),
+        "total_produtos_sem_vinculo": int(cruzamento.loc[mask_sem_vinculo, "DESCR_ALVO"].nunique()),
         "periodo": periodo,
     }
     return {"resumo": resumo, "cruzamento": cruzamento, "erros": []}

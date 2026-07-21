@@ -882,18 +882,28 @@ têm `COD_ITEM`**, diferente do 7.2.
   `COMPRAS` já persistido em `cruzamento_valor`, que ficaria menor por
   causa do filtro do 7.2); o item sem match formou a linha sentinela com
   o valor certo, sem desaparecer.
+- **Refinamento seguinte, mesmo dia**: usuário alertou que "pode ocorrer
+  que vários produtos nas entradas xml não possuam cod das declarações" —
+  confirmado (cometa: 762 linhas/52 descrições distintas sem match,
+  incluindo 2 notas de "CAMINHÃO..." que nem são mercadoria de estoque).
+  Uma única linha sentinela por ano era cega demais pra esse volume —
+  trocado por uma linha POR (ANO, descrição bruta do XML,
+  `fatoitemnfe_infnfe_det_prod_xprod`), prefixada com `PREFIXO_RN1_SEM_
+  VINCULO` ("(SEM VÍNCULO) "). Os totais agregados não mudam (mesma soma,
+  só quebrada em mais linhas) — só dá pro auditor investigar produto a
+  produto em vez de um total cego.
 - **Validado nas 3 operações reais** (script direto, sem persistir —
   fica pro usuário clicar "Gerar" na UI quando quiser materializar):
-  geraldo 5.722 linhas/R$1.230.187,38 de divergência acumulada (+R$1.307,07
-  vs. a 1ª versão)/R$1.307,07 sem vínculo no Matching; PB2 250/
-  R$5.412.013,80 (+R$339.588,40)/R$339.992,00 sem vínculo (bem mais
-  expressivo — uma linha sentinela de 2024 sozinha soma R$243.860,00);
-  cometa 2.005/R$323.652.947,55 (**-R$73,9M** vs. a 1ª versão)/
-  R$2.252.713,86 sem vínculo — sem erro nas 3. A queda em cometa não é
-  bug: `DIVERGENCIA=|TD-TC|` não é monótona em Compras — produtos que já
-  tinham `TD<TC` ("Entradas sem NF", maioria em cometa) ficam com o gap
-  MENOR ao incluir a compra que faltava, não maior; só sobe quando o
-  produto já tinha `TD>TC`.
+  geraldo 5.730 produtos/R$1.230.187,38 de divergência acumulada/9
+  descrições distintas sem vínculo (R$1.307,07); PB2 261/R$5.412.013,80/12
+  descrições (R$339.992,00 — ex.: "FT MEDALHA DE OURO 25KG" sozinha soma
+  R$88.532,00 em 10 notas); cometa 2.054/R$323.652.947,55/50 descrições
+  (R$2.252.713,86 — "FEIJÃO PRETO COMETA FD 30X1KG" sozinha soma
+  R$233.111,00 em 101 notas) — sem erro nas 3. A divergência total de
+  cometa caiu ~R$73,9M em relação à 1ª versão do 7.3 (antes da inclusão de
+  Compras sem match): não é bug — `DIVERGENCIA=|TD-TC|` não é monótona em
+  Compras, produtos que já tinham `TD<TC` ("Entradas sem NF", maioria em
+  cometa) ficam com o gap MENOR ao incluir a compra que faltava.
 
 ## Ver também
 

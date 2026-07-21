@@ -1250,8 +1250,11 @@ def render_rn1_fisica() -> None:
     itens sem match no BC3 (esclarecido pelo usuário 2026-07-20: "dados de
     entradas do xml podem ser diferentes dos dados de entradas de
     declaração" — o 7.2 só soma itens COM match); itens sem vínculo nenhum
-    aparecem numa linha sentinela (`loader.LABEL_RN1_SEM_VINCULO`), em vez
-    de somem do relatório. Vendas/EI/EF continuam vindo de `cruzamento_
+    viram uma linha POR descrição bruta do XML (prefixo `loader.PREFIXO_
+    RN1_SEM_VINCULO`, "(SEM VÍNCULO) " — usuário alertou que podem ser
+    "vários produtos", não um caso residual, ver achado real de 52
+    descrições distintas na cometa), em vez de somem do relatório ou
+    virarem um total cego. Vendas/EI/EF continuam vindo de `cruzamento_
     valor` (Estágio 7.2) já persistida — não têm o mesmo problema de
     cobertura. Agregado por Descrição Relevante (Estágio 7.1) — várias
     COD_ITEM que compartilham a mesma DESCR_ALVO somam juntas numa única
@@ -1264,12 +1267,12 @@ def render_rn1_fisica() -> None:
     st.caption(
         "Aplica EI + Compras = Vendas + EF por (Ano, Descrição Relevante), em R$ — Compras soma "
         "TODO o valor do XML de entradas (Estágio 4), inclusive itens sem match no Matching/BC3 "
-        "('notas na gaveta', agrupadas na linha \"(SEM VÍNCULO NO MATCHING)\"); Vendas pela visão "
-        "física do XML, Estoque (EI/EF) pela declaração (Estágio 5). Identidade pela Descrição "
-        "Relevante (Estágio 7.1) — soma todo código que compartilhe a mesma descrição. Ordenado "
-        "por Divergência decrescente. Infração: 'Entradas sem NF' quando Total Débito < Total "
-        "Crédito (compra sem nota); 'Saídas sem NF' quando Total Débito ≥ Total Crédito (venda "
-        "sem nota)."
+        "('notas na gaveta' — cada descrição bruta do XML sem vínculo vira sua própria linha, "
+        "prefixada com \"(SEM VÍNCULO) \"); Vendas pela visão física do XML, Estoque (EI/EF) pela "
+        "declaração (Estágio 5). Identidade pela Descrição Relevante (Estágio 7.1) — soma todo "
+        "código que compartilhe a mesma descrição. Ordenado por Divergência decrescente. Infração: "
+        "'Entradas sem NF' quando Total Débito < Total Crédito (compra sem nota); 'Saídas sem NF' "
+        "quando Total Débito ≥ Total Crédito (venda sem nota)."
     )
 
     if "rn1_fisica_gerado" not in st.session_state:
@@ -1283,12 +1286,15 @@ def render_rn1_fisica() -> None:
             st.info('Nenhuma linha gerada — gere "Descrições Relevantes" (Estágio 7.1) e '
                     '"Cruzamento por Valor" (Estágio 7.2) primeiro.')
         else:
-            sem_vinculo = df_preview.loc[df_preview["DESCR_ALVO"] == loader.LABEL_RN1_SEM_VINCULO, "COMPRAS"].sum()
+            mask_sem_vinculo = df_preview["DESCR_ALVO"].str.startswith(loader.PREFIXO_RN1_SEM_VINCULO)
+            sem_vinculo = df_preview.loc[mask_sem_vinculo, "COMPRAS"].sum()
             if sem_vinculo > 0:
+                n_produtos_sem_vinculo = df_preview.loc[mask_sem_vinculo, "DESCR_ALVO"].nunique()
                 st.warning(
                     f"⚠️ R$ {_formatar_moeda_br(sem_vinculo)} em Compras sem vínculo nenhum no "
-                    "Matching (BC3) — itens que entraram fisicamente (XML) mas nunca foram "
-                    "vinculados/lançados, agrupados na linha \"(SEM VÍNCULO NO MATCHING)\"."
+                    f"Matching (BC3), em {n_produtos_sem_vinculo} descrição(ões) distinta(s) do XML "
+                    "— itens que entraram fisicamente mas nunca foram vinculados/lançados. Linhas "
+                    "prefixadas com \"(SEM VÍNCULO) \" na tabela abaixo."
                 )
 
             col_ano, col_busca = st.columns(2)
