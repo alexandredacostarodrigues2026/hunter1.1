@@ -2868,40 +2868,51 @@ _COLUNAS_CRUZAMENTO_PRODUTO = [
     "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
 _COLUNAS_SOMA_CRUZAMENTO_PRODUTO = [
-    "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO", "DIVERGENCIA",
+    "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
 ]
+# DIVERGENCIA saiu desta lista em 2026-07-20 — não é mais somada direto,
+# ver comentário em gerar_cruzamento_produto().
 
 
 def gerar_cruzamento_produto() -> dict:
     """Estágio 7.2.1 — Cruzamento por Produto: condensa `cruzamento_valor`
     (Estágio 7.2, uma linha por ANO+COD_ITEM) numa linha por DESCR_ALVO,
-    somando EI/Compras/Total Débito/Vendas/EF/Total Crédito/Divergência
-    de todos os anos do produto. Lê de `cruzamento_valor` JÁ PERSISTIDA
-    (não reprocessa entradas/saídas/estoque do zero) — exige essa tabela
-    já gerada.
+    somando EI/Compras/Total Débito/Vendas/EF/Total Crédito de todos os
+    anos do produto. Lê de `cruzamento_valor` JÁ PERSISTIDA (não
+    reprocessa entradas/saídas/estoque do zero) — exige essa tabela já
+    gerada.
 
-    `DIVERGENCIA` aqui é a SOMA das divergências anuais (magnitude total
-    acumulada de irregularidade no período) — DELIBERADAMENTE não é
-    `|∑TOTAL_DEBITO - ∑TOTAL_CREDITO|` (a "divergência do total líquido"),
-    que poderia dar um valor MENOR ou até 0 se anos com direções opostas
-    se cancelassem (ex.: 2021 com entrada sem NF e 2022 com saída sem NF
-    do mesmo produto) — isso esconderia produtos com histórico recorrente
-    de irregularidade atrás de um total líquido enganosamente baixo.
+    `DIVERGENCIA` é `|∑TOTAL_DEBITO - ∑TOTAL_CREDITO|` — a divergência do
+    TOTAL LÍQUIDO acumulado, calculada DEPOIS de agrupar (não é mais soma
+    das divergências anuais individuais). Mudança de 2026-07-20 (usuário,
+    olhando o Estágio 7.3.1 — mesma fórmula deste módulo — apontou um
+    caso real, "CHOC SONHO DE VALSA 1KG" na geraldo: EI/EF encadeados
+    (EF de um ano = EI do seguinte, mesma regra de continuidade do
+    Estágio 5) faziam a soma das divergências anuais chegar a
+    R$44.637,96 enquanto TD/TC totais — mostrados na MESMA linha —
+    diferiam só R$3.378,96, um "% Diverg" de 75% ao lado de totais que na
+    prática quase batem. A versão anterior (soma das divergências
+    anuais, ver `memoria/2026-07-19.md`) evitava que anos de direção
+    oposta se cancelassem escondendo irregularidade recorrente — mas o
+    usuário confirmou (`AskUserQuestion`) preferir a linha condensada
+    sempre consistente com TD/TC mostrados, e ver o detalhe ano a ano só
+    no drill-down (`render_cruzamento_produto()`, já mostra `cruzamento_
+    valor` por ano, com a divergência de CADA ano calculada
+    normalmente) — "faça divergência agrupado por nome e quando
+    explodido, por ano".
 
-    `INFRACAO`/`PCT_DIVERGENCIA` SÃO recalculados sobre os totais
-    acumulados (∑TOTAL_DEBITO, ∑TOTAL_CREDITO) — não é uma simples soma
-    das colunas originais, senão o rótulo de Infração de um produto
-    dependeria arbitrariamente de qual ano "pesa mais" na soma. Mesma
-    direção de INFRACAO do Estágio 7.2 (confirmado com o usuário
-    2026-07-19, pra manter consistência entre os dois painéis — o 7.2.1
-    é a versão somada da MESMA equação, não uma regra nova): ∑TD < ∑TC →
-    'Entradas sem NF' (compra sem nota); ∑TD ≥ ∑TC → 'Saídas sem NF'
-    (venda sem nota). `PCT_DIVERGENCIA` usa a mesma fórmula/proteção
+    `INFRACAO`/`PCT_DIVERGENCIA` continuam calculados sobre os totais
+    acumulados (∑TOTAL_DEBITO, ∑TOTAL_CREDITO) — não dependem de qual ano
+    "pesa mais" na soma. Mesma direção de INFRACAO do Estágio 7.2: ∑TD <
+    ∑TC → 'Entradas sem NF' (compra sem nota); ∑TD ≥ ∑TC → 'Saídas sem
+    NF' (venda sem nota). `PCT_DIVERGENCIA` usa a mesma fórmula/proteção
     contra zero do Estágio 7.2 (`DIVERGENCIA / min(∑TD,∑TC) × 100`,
-    denominador 0 vira 0.00001 — ver gerar_cruzamento_valor()).
+    denominador 0 vira 0.00001 — ver gerar_cruzamento_valor()) — agora
+    sempre coerente com TD/TC/DIVERGENCIA da mesma linha, já que todos
+    vêm do mesmo par (∑TD, ∑TC).
 
-    Ordenação: por `DIVERGENCIA` (acumulada) decrescente — maiores
-    "rombos" financeiros totais no topo.
+    Ordenação: por `DIVERGENCIA` (líquida) decrescente — maiores "rombos"
+    financeiros líquidos no topo.
 
     Regra R07: `DESCR_ALVO` sempre string.
 
@@ -2921,6 +2932,7 @@ def gerar_cruzamento_produto() -> dict:
     agrupado = base.groupby("DESCR_ALVO", as_index=False)[_COLUNAS_SOMA_CRUZAMENTO_PRODUTO].sum()
 
     diferenca = agrupado["TOTAL_DEBITO"] - agrupado["TOTAL_CREDITO"]
+    agrupado["DIVERGENCIA"] = diferenca.abs().round(2)
     agrupado["INFRACAO"] = np.where(diferenca < 0, _INFRACAO_ENTRADAS_SEM_NF, _INFRACAO_SAIDAS_SEM_NF)
 
     minimo = agrupado[["TOTAL_DEBITO", "TOTAL_CREDITO"]].min(axis=1)
@@ -3280,22 +3292,31 @@ _COLUNAS_RN1_PRODUTO = [
     "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
 _COLUNAS_SOMA_RN1_PRODUTO = [
-    "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO", "DIVERGENCIA",
+    "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
 ]
+# DIVERGENCIA saiu desta lista em 2026-07-20 — não é mais somada direto,
+# ver comentário em gerar_rn1_produto() (mesma mudança de gerar_
+# cruzamento_produto(), Estágio 7.2.1, mesmo dia).
 
 
 def gerar_rn1_produto() -> dict:
     """Estágio 7.3.1 — RN1 por Produto: condensa rn1_fisica (Estágio 7.3,
     uma linha por ANO+DESCR_ALVO — inclui as linhas "(SEM VÍNCULO) ..."
     dos itens sem match no BC3, ver gerar_rn1_fisica()) numa linha por
-    DESCR_ALVO, somando EI/Compras/Total Débito/Vendas/EF/Total
-    Crédito/Divergência de todos os anos. `INFRACAO`/`PCT_DIVERGENCIA`
-    RECALCULADOS sobre os totais acumulados — mesmo motivo de gerar_
-    cruzamento_produto() (Estágio 7.2.1): o rótulo não pode depender de
-    qual ano "pesa mais" na soma. Lê rn1_fisica JÁ PERSISTIDA — não
-    reprocessa entradas/saídas/estoque do zero, exige essa tabela já
-    gerada. Ordenação: por DIVERGENCIA (acumulada) decrescente. Regra
-    R07: DESCR_ALVO sempre string.
+    DESCR_ALVO, somando EI/Compras/Total Débito/Vendas/EF/Total Crédito
+    de todos os anos. `DIVERGENCIA` é `|∑TOTAL_DEBITO - ∑TOTAL_CREDITO|`
+    — a divergência do total líquido acumulado, calculada DEPOIS de
+    agrupar (mesma mudança de 2026-07-20 em gerar_cruzamento_produto(),
+    Estágio 7.2.1 — não é mais soma das divergências anuais; usuário
+    apontou um caso real deste MESMO painel, "CHOC SONHO DE VALSA 1KG" na
+    geraldo, onde EI/EF encadeados entre anos inflavam a soma bem além do
+    que TD/TC totais mostrados na linha sugeriam — confirmado preferir a
+    linha condensada sempre coerente com TD/TC, detalhe ano a ano só no
+    drill-down). `INFRACAO`/`PCT_DIVERGENCIA` continuam calculados sobre
+    os totais acumulados (∑TOTAL_DEBITO, ∑TOTAL_CREDITO). Lê rn1_fisica
+    JÁ PERSISTIDA — não reprocessa entradas/saídas/estoque do zero, exige
+    essa tabela já gerada. Ordenação: por DIVERGENCIA (líquida)
+    decrescente. Regra R07: DESCR_ALVO sempre string.
 
     Devolve {'resumo': dict, 'cruzamento': DataFrame, 'erros': list} —
     erros não-vazio quando rn1_fisica (Estágio 7.3) ainda não foi
@@ -3313,6 +3334,7 @@ def gerar_rn1_produto() -> dict:
     agrupado = base.groupby("DESCR_ALVO", as_index=False)[_COLUNAS_SOMA_RN1_PRODUTO].sum()
 
     diferenca = agrupado["TOTAL_DEBITO"] - agrupado["TOTAL_CREDITO"]
+    agrupado["DIVERGENCIA"] = diferenca.abs().round(2)
     agrupado["INFRACAO"] = np.where(diferenca < 0, _INFRACAO_ENTRADAS_SEM_NF, _INFRACAO_SAIDAS_SEM_NF)
 
     minimo = agrupado[["TOTAL_DEBITO", "TOTAL_CREDITO"]].min(axis=1)

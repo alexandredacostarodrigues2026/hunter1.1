@@ -944,6 +944,29 @@ painel próprio.
   persistida pelo usuário, detectado e tratado como leitura pura, sem
   sobrescrever nada).
 
+## Correção de Divergência nos painéis "por Produto" — líquida, não soma dos anos (2026-07-20, mesmo dia)
+
+Usuário reportou (print da UI) um caso real no 7.3.1: "CHOC SONHO DE
+VALSA 1KG" mostrava Total Débito e Total Crédito só R$3.378,96 (5,7%)
+diferentes, mas Divergência de R$44.637,96 e % Diverg de 75,63% —
+incoerente com as duas colunas ao lado na mesma linha. Causa: `DIVERGENCIA`
+no 7.2.1/7.2.1 era a soma das divergências ANUAIS (decisão de
+2026-07-19, ver seção "8º botão"), mas neste produto EI/EF encadeiam
+ano a ano com Compras/Vendas quase zeradas — a "divergência anual" é só
+a variação normal do estoque declarado, e somá-la infla bem além da
+diferença real entre os totais.
+
+Confirmado com o usuário (`AskUserQuestion`): "faça divergência agrupado
+por nome e quando explodido, por ano" — a linha condensada por produto
+agora usa `DIVERGENCIA = |∑TOTAL_DEBITO - ∑TOTAL_CREDITO|` (líquida,
+sempre coerente com TD/TC mostrados), calculada nos dois painéis
+(`gerar_cruzamento_produto()` e `gerar_rn1_produto()`) DEPOIS de agrupar
+— o drill-down ano a ano de cada painel continua mostrando a divergência
+de CADA ano normalmente, sem mudança. Tabelas `cruzamento_produto`/
+`rn1_produto` regeneradas nas 3 operações reais; confirmado que "CHOC
+SONHO DE VALSA 1KG" bate exatamente com o caso reportado (Divergência
+R$3.378,96, % Diverg 5,73%).
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —

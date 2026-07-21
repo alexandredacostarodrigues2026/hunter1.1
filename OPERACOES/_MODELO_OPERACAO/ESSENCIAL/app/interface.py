@@ -1119,10 +1119,10 @@ def render_cruzamento_produto() -> None:
     """Estágio 7.2.1 — Cruzamento por Produto (2026-07-19, Solicitação
     Técnica): condensa `cruzamento_valor` (Estágio 7.2, uma linha por
     ANO+COD_ITEM) numa linha por Descrição Relevante, somando os valores
-    financeiros e recalculando Infração/% Diverg sobre os totais
-    acumulados — ver loader.gerar_cruzamento_produto() pro raciocínio
-    completo (inclusive por que DIVERGENCIA é somada, não recalculada
-    como |∑TD-∑TC|). Exige `cruzamento_valor` (Estágio 7.2) já gerada.
+    financeiros e recalculando Infração/% Diverg/Divergência (|∑TD-∑TC|,
+    líquida — mudança de 2026-07-20, ver loader.gerar_cruzamento_
+    produto() pro raciocínio completo) sobre os totais acumulados. Exige
+    `cruzamento_valor` (Estágio 7.2) já gerada.
     Mesmo padrão "Gerar/Regerar" + prévia de alta densidade das outras
     páginas (hide_index, fonte 12px, formatação BR — reaproveita
     _formatar_moeda_br()/_formatar_pct_br() do Estágio 7.2). Drill-down:
@@ -1132,11 +1132,13 @@ def render_cruzamento_produto() -> None:
     st.subheader("Estágio 7.2.1 — Cruzamento por Produto")
     st.caption(
         "Condensa o Cruzamento por Valor (Estágio 7.2) por Descrição Relevante — soma EI, "
-        "Compras, Total Débito, Vendas, EF, Total Crédito e Divergência de todos os anos do "
-        "produto. Infração e % Diverg recalculados sobre os totais acumulados (mesma regra do "
+        "Compras, Total Débito, Vendas, EF e Total Crédito de todos os anos do produto. "
+        "Divergência é o total LÍQUIDO acumulado (|Total Débito − Total Crédito|), sempre "
+        "coerente com as duas colunas ao lado — veja o detalhamento ano a ano no drill-down "
+        "abaixo. Infração e % Diverg recalculados sobre os totais acumulados (mesma regra do "
         "Estágio 7.2: Total Débito < Total Crédito acumulado → 'Entradas sem NF'; caso "
-        "contrário → 'Saídas sem NF'). Ordenado por Divergência acumulada decrescente — "
-        "produtos com maior 'rombo' total no período no topo."
+        "contrário → 'Saídas sem NF'). Ordenado por Divergência líquida decrescente — "
+        "produtos com maior 'rombo' líquido no período no topo."
     )
 
     if "cruzamento_produto_gerado" not in st.session_state:
@@ -1381,10 +1383,12 @@ def render_rn1_produto() -> None:
     st.subheader("Estágio 7.3.1 — RN1 por Produto")
     st.caption(
         "Condensa a RN1 — Movimentação Física (Estágio 7.3) por Descrição Relevante — soma EI, "
-        "Compras (XML completo, inclusive sem vínculo no Matching), Total Débito, Vendas, EF, "
-        "Total Crédito e Divergência de todos os anos do produto. Infração e % Diverg "
-        "recalculados sobre os totais acumulados (mesma regra do Estágio 7.3). Ordenado por "
-        "Divergência acumulada decrescente — produtos com maior 'rombo' total no período no topo."
+        "Compras (XML completo, inclusive sem vínculo no Matching), Total Débito, Vendas, EF e "
+        "Total Crédito de todos os anos do produto. Divergência é o total LÍQUIDO acumulado "
+        "(|Total Débito − Total Crédito|), sempre coerente com as duas colunas ao lado — veja o "
+        "detalhamento ano a ano no drill-down abaixo. Infração e % Diverg recalculados sobre os "
+        "totais acumulados (mesma regra do Estágio 7.3). Ordenado por Divergência líquida "
+        "decrescente — produtos com maior 'rombo' líquido no período no topo."
     )
 
     if "rn1_produto_gerado" not in st.session_state:
