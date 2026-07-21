@@ -905,6 +905,45 @@ têm `COD_ITEM`**, diferente do 7.2.
   Compras, produtos que já tinham `TD<TC` ("Entradas sem NF", maioria em
   cometa) ficam com o gap MENOR ao incluir a compra que faltava.
 
+## 10º botão — "7.3.1: RN1 POR PRODUTO" (Estágio 7.3.1, 2026-07-20, mesmo dia)
+
+Usuário viu os botões "7.2.1: CRUZAMENTO POR PRODUTO" e "7.3: RN1 —
+MOVIMENTAÇÃO FÍSICA (XML)" lado a lado no menu e perguntou "ainda sem
+7.3.1?" — pedindo o mesmo mirror que 7.2→7.2.1 já tem, agora sobre o 7.3.
+Antes rejeitado por engano (ver seção "9º botão" acima): condensar o 7.3
+por produto daria os MESMOS números do 7.2.1, já que na 1ª versão do 7.3
+Compras vinha só de itens com match no BC3 (igual ao 7.2). Depois da
+correção de Compras (soma TODO o XML), essa premissa deixou de valer —
+condensar o 7.3 por produto agora produz números DIFERENTES do 7.2.1
+sempre que houver Compras sem vínculo no Matching, justificando um
+painel próprio.
+
+- **`loader.gerar_rn1_produto()`**: mesma técnica de `gerar_cruzamento_
+  produto()` (7.2.1) — lê `rn1_fisica` (7.3) JÁ PERSISTIDA, agrupa por
+  `DESCR_ALVO` somando todos os anos, `INFRACAO`/`PCT_DIVERGENCIA`
+  recalculados sobre os totais acumulados. As linhas `"(SEM VÍNCULO)
+  ..."` do 7.3 são tratadas como qualquer outra "linha de produto" —
+  condensam normalmente (mesma descrição em anos diferentes soma numa
+  linha só).
+- **`interface.render_rn1_produto()`**: mesmo padrão "Gerar/Regerar" +
+  prévia de alta densidade + drill-down anual do 7.2.1 (drill-down usa
+  `rn1_fisica`, não `cruzamento_valor`), com o mesmo aviso de Compras sem
+  vínculo do 7.3, aqui acumulado no período todo.
+- **Navegação**: 10º botão em `render_menu_principal()` ("📊 7.3.1: RN1
+  POR PRODUTO", `pagina_ativa="rn1_produto"`, `st.columns(10)`) +
+  roteamento em `main.py` + `render_pagina_rn1_produto()`.
+- Regra R07: `DESCR_ALVO` sempre string.
+- **Validado nas 3 operações reais**: checagem cruzada confirma que a
+  soma de `DIVERGENCIA` do 7.3.1 bate EXATAMENTE com a soma do 7.3
+  (mesma base, só condensada por produto) e que `total_compras_sem_
+  vinculo` bate entre os dois níveis — geraldo 5.730 produtos/
+  R$1.230.187,38, PB2 261/R$5.412.013,80, cometa 2.054/R$323.652.947,55.
+  Testes rodados sem deixar tabela nova nos bancos reais (script monta
+  `rn1_fisica` em memória, persiste temporariamente só quando ainda não
+  existia, e remove no final — a geraldo já tinha `rn1_fisica` real
+  persistida pelo usuário, detectado e tratado como leitura pura, sem
+  sobrescrever nada).
+
 ## Ver também
 
 - [Estágio 15 — Cálculo de divergência RN1](../../ESTAGIOS_PROJETO.md) —

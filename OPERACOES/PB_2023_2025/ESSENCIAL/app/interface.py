@@ -1353,6 +1353,137 @@ def render_rn1_fisica() -> None:
     st.rerun()
 
 
+_COLUNAS_PREVIEW_RN1_PRODUTO = [
+    "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
+    "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
+]
+
+
+def _preparar_preview_rn1_produto(df: pd.DataFrame) -> pd.DataFrame:
+    """Mesma preparação de _preparar_preview_rn1_fisica() (rename "Compras
+    (XML)"/"Vendas (XML)"), aplicada às colunas do Estágio 7.3.1."""
+    preview = _preparar_preview(df, _COLUNAS_PREVIEW_RN1_PRODUTO)
+    return preview.rename(columns={"Compras (R$)": "Compras (XML)", "Vendas (R$)": "Vendas (XML)"})
+
+
+def render_rn1_produto() -> None:
+    """Estágio 7.3.1 — RN1 por Produto (2026-07-20, Solicitação Técnica:
+    "o 7.2.1 unifica por produto. consegue fazer o mesmo para o 7.3?"):
+    condensa `rn1_fisica` (Estágio 7.3, uma linha por Ano+Descrição
+    Relevante) numa linha por Descrição Relevante, somando os valores
+    financeiros de todos os anos e recalculando Infração/% Diverg sobre
+    os totais acumulados — ver loader.gerar_rn1_produto() pro raciocínio
+    completo (mesma técnica de render_cruzamento_produto(), Estágio
+    7.2.1, mas sobre rn1_fisica em vez de cruzamento_valor — os números
+    DIVERGEM do 7.2.1 sempre que houver Compras sem vínculo no Matching).
+    Exige `rn1_fisica` (Estágio 7.3) já gerada. Mesmo padrão "Gerar/
+    Regerar" + prévia de alta densidade + drill-down do 7.2.1."""
+    st.subheader("Estágio 7.3.1 — RN1 por Produto")
+    st.caption(
+        "Condensa a RN1 — Movimentação Física (Estágio 7.3) por Descrição Relevante — soma EI, "
+        "Compras (XML completo, inclusive sem vínculo no Matching), Total Débito, Vendas, EF, "
+        "Total Crédito e Divergência de todos os anos do produto. Infração e % Diverg "
+        "recalculados sobre os totais acumulados (mesma regra do Estágio 7.3). Ordenado por "
+        "Divergência acumulada decrescente — produtos com maior 'rombo' total no período no topo."
+    )
+
+    if "rn1_produto_gerado" not in st.session_state:
+        st.session_state["rn1_produto_gerado"] = loader.rn1_produto_ja_gerado()
+
+    if st.session_state["rn1_produto_gerado"]:
+        df_preview, total = loader.consultar_rn1_produto(limite=None)
+        st.success(f"✅ {total:,} produto(s) em `rn1_produto`.".replace(",", "."))
+
+        if df_preview.empty:
+            st.info('Nenhum produto gerado — gere "RN1 — Movimentação Física" (Estágio 7.3) primeiro.')
+        else:
+            mask_sem_vinculo = df_preview["DESCR_ALVO"].str.startswith(loader.PREFIXO_RN1_SEM_VINCULO)
+            sem_vinculo = df_preview.loc[mask_sem_vinculo, "COMPRAS"].sum()
+            if sem_vinculo > 0:
+                n_produtos_sem_vinculo = df_preview.loc[mask_sem_vinculo, "DESCR_ALVO"].nunique()
+                st.warning(
+                    f"⚠️ R$ {_formatar_moeda_br(sem_vinculo)} em Compras sem vínculo nenhum no "
+                    f"Matching (BC3), em {n_produtos_sem_vinculo} descrição(ões) distinta(s) do "
+                    "XML, acumulado no período todo."
+                )
+
+            busca_descricao = st.text_input(
+                "Buscar por Descrição", key="filtro_descricao_rn1_produto",
+            )
+            filtrado = df_preview
+            if busca_descricao.strip():
+                filtrado = filtrado[
+                    filtrado["DESCR_ALVO"].str.contains(busca_descricao.strip(), case=False, na=False)
+                ]
+
+            st.markdown(f"**{len(filtrado):,} produto(s)** após filtro.".replace(",", "."))
+            amostra = filtrado.head(200).copy()
+            amostra["PCT_DIVERGENCIA"] = amostra["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+            for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
+                amostra[_col] = amostra[_col].apply(_formatar_moeda_br)
+            with st.container(key="rn1_produto_tabela"):
+                st.markdown(
+                    "<style>.st-key-rn1_produto_tabela [data-testid='stDataFrame'] "
+                    "* { font-size: 12px; }</style>",
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(
+                    _preparar_preview_rn1_produto(amostra),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            st.divider()
+            st.markdown("**Detalhamento por Ano (drill-down do Estágio 7.3)**")
+            produtos_disponiveis = sorted(df_preview["DESCR_ALVO"].unique())
+            produto_selecionado = st.selectbox(
+                "Selecione um produto para ver o detalhamento anual",
+                options=["Selecione..."] + produtos_disponiveis,
+                key="drilldown_rn1_produto",
+            )
+            if produto_selecionado != "Selecione...":
+                df_fisica, _ = loader.consultar_rn1_fisica(limite=None)
+                detalhe = df_fisica[df_fisica["DESCR_ALVO"] == produto_selecionado].sort_values("ANO").copy()
+                if detalhe.empty:
+                    st.info("Nenhum detalhamento anual encontrado pra este produto.")
+                else:
+                    detalhe["PCT_DIVERGENCIA"] = detalhe["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+                    for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
+                        detalhe[_col] = detalhe[_col].apply(_formatar_moeda_br)
+                    with st.container(key="rn1_produto_drilldown_tabela"):
+                        st.markdown(
+                            "<style>.st-key-rn1_produto_drilldown_tabela "
+                            "[data-testid='stDataFrame'] * { font-size: 12px; }</style>",
+                            unsafe_allow_html=True,
+                        )
+                        st.dataframe(
+                            _preparar_preview_rn1_fisica(detalhe),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+        clicou = st.button(
+            "Regerar RN1 por Produto",
+            key="btn_regerar_rn1_produto",
+            help="Reprocessa a partir de rn1_fisica (Estágio 7.3) e recalcula os totais por produto.",
+        )
+    else:
+        clicou = st.button("Gerar RN1 por Produto", key="btn_gerar_rn1_produto")
+
+    if not clicou:
+        return
+
+    with st.spinner("Consolidando por produto..."):
+        resultado = loader.persistir_rn1_produto()
+
+    if "erro" in resultado:
+        st.error(f"Erro: {resultado['erro']}")
+        return
+
+    st.session_state["rn1_produto_gerado"] = True
+    st.rerun()
+
+
 _COLUNAS_PREVIEW_DIVERGENCIA = [
     "CHV_NFE", "EXCEL_QTD_ITENS", "HUNTER_ENTRADAS_QTD", "ITENS_ENTRADAS_REAIS",
     "ITENS_SAIDAS_REAIS", "ITENS_SITUACAO", "ITENS_ANALISE_CFOP",
@@ -1767,9 +1898,11 @@ def render_menu_principal() -> None:
     2026-07-18)/render_pagina_cruzamento_produto() (Estágio 7.2.1,
     2026-07-19 — condensação do 7.2 por Descrição Relevante)/
     render_pagina_rn1_fisica() (Estágio 7.3, 2026-07-20 — mesma fórmula
-    do 7.2 agregada por Descrição Relevante, mantendo o Ano)."""
+    do 7.2 agregada por Descrição Relevante, mantendo o Ano)/
+    render_pagina_rn1_produto() (Estágio 7.3.1, 2026-07-20 — condensação
+    do 7.3 por Descrição Relevante, somando todos os anos)."""
     st.subheader("Menu Principal")
-    col1, col2, col3, col4, col5, col6, col7, col8, col9 = st.columns(9)
+    col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns(10)
     if col1.button("📥 EXTRAÇÃO", key="btn_menu_extracao", use_container_width=True):
         st.session_state["pagina_ativa"] = "extracao"
         st.rerun()
@@ -1799,6 +1932,9 @@ def render_menu_principal() -> None:
         st.rerun()
     if col9.button("🔥 7.3: RN1 — MOVIMENTAÇÃO FÍSICA (XML)", key="btn_menu_rn1_fisica", use_container_width=True):
         st.session_state["pagina_ativa"] = "rn1_fisica"
+        st.rerun()
+    if col10.button("📊 7.3.1: RN1 POR PRODUTO", key="btn_menu_rn1_produto", use_container_width=True):
+        st.session_state["pagina_ativa"] = "rn1_produto"
         st.rerun()
 
 
@@ -2037,3 +2173,17 @@ def render_pagina_rn1_fisica() -> None:
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     render_rn1_fisica()
+
+
+def render_pagina_rn1_produto() -> None:
+    """Painel '7.3.1: RN1 POR PRODUTO' (Estágio 7.3.1, 2026-07-20,
+    Solicitação Técnica), botão de 10º nível no Menu Principal: ver
+    loader.gerar_rn1_produto()/render_rn1_produto(). Exige
+    dados_carregados (mesmo padrão das outras páginas); depende também de
+    rn1_fisica (Estágio 7.3) já gerada, checado dentro de
+    render_rn1_produto()."""
+    _botao_voltar_menu()
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        return
+    render_rn1_produto()

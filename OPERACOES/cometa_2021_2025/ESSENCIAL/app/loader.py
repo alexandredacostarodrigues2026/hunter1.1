@@ -3265,6 +3265,141 @@ def consultar_rn1_fisica(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int
         return pd.DataFrame(), 0
 
 
+# ── Estágio 7.3.1 — RN1 por Produto ──────────────────────────────────────
+# Solicitação Técnica (2026-07-20, mesmo dia): "o 7.2.1 unifica por
+# produto. consegue fazer o mesmo para o 7.3?" — condensa rn1_fisica
+# (Estágio 7.3, uma linha por ANO+DESCR_ALVO) numa linha por DESCR_ALVO,
+# somando todos os anos — mesma técnica de gerar_cruzamento_produto()
+# (Estágio 7.2.1), mas sobre rn1_fisica em vez de cruzamento_valor. Só
+# faz sentido como painel PRÓPRIO (não uma cópia dos números do 7.2.1)
+# porque, desde a correção de Compras do 7.3 (soma TODO o XML, não só
+# itens com match no BC3 — ver seção anterior), os valores de Compras
+# DIVERGEM do 7.2/7.2.1 sempre que houver item sem vínculo no Matching.
+_COLUNAS_RN1_PRODUTO = [
+    "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
+    "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
+]
+_COLUNAS_SOMA_RN1_PRODUTO = [
+    "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO", "DIVERGENCIA",
+]
+
+
+def gerar_rn1_produto() -> dict:
+    """Estágio 7.3.1 — RN1 por Produto: condensa rn1_fisica (Estágio 7.3,
+    uma linha por ANO+DESCR_ALVO — inclui as linhas "(SEM VÍNCULO) ..."
+    dos itens sem match no BC3, ver gerar_rn1_fisica()) numa linha por
+    DESCR_ALVO, somando EI/Compras/Total Débito/Vendas/EF/Total
+    Crédito/Divergência de todos os anos. `INFRACAO`/`PCT_DIVERGENCIA`
+    RECALCULADOS sobre os totais acumulados — mesmo motivo de gerar_
+    cruzamento_produto() (Estágio 7.2.1): o rótulo não pode depender de
+    qual ano "pesa mais" na soma. Lê rn1_fisica JÁ PERSISTIDA — não
+    reprocessa entradas/saídas/estoque do zero, exige essa tabela já
+    gerada. Ordenação: por DIVERGENCIA (acumulada) decrescente. Regra
+    R07: DESCR_ALVO sempre string.
+
+    Devolve {'resumo': dict, 'cruzamento': DataFrame, 'erros': list} —
+    erros não-vazio quando rn1_fisica (Estágio 7.3) ainda não foi
+    gerada."""
+    base, _ = consultar_rn1_fisica(limite=None)
+    if base.empty:
+        return {
+            "resumo": {}, "cruzamento": pd.DataFrame(),
+            "erros": ["Tabela rn1_fisica (Estágio 7.3) ainda não foi gerada."],
+        }
+
+    for col in _COLUNAS_SOMA_RN1_PRODUTO:
+        base[col] = pd.to_numeric(base[col], errors="coerce").fillna(0.0)
+
+    agrupado = base.groupby("DESCR_ALVO", as_index=False)[_COLUNAS_SOMA_RN1_PRODUTO].sum()
+
+    diferenca = agrupado["TOTAL_DEBITO"] - agrupado["TOTAL_CREDITO"]
+    agrupado["INFRACAO"] = np.where(diferenca < 0, _INFRACAO_ENTRADAS_SEM_NF, _INFRACAO_SAIDAS_SEM_NF)
+
+    minimo = agrupado[["TOTAL_DEBITO", "TOTAL_CREDITO"]].min(axis=1)
+    minimo_seguro = minimo.where(minimo != 0, 0.00001)
+    agrupado["PCT_DIVERGENCIA"] = (agrupado["DIVERGENCIA"] / minimo_seguro * 100).round(2)
+
+    for col in _COLUNAS_SOMA_RN1_PRODUTO:
+        agrupado[col] = agrupado[col].round(2)
+
+    cruzamento = (
+        _forcar_colunas_string(agrupado, ["DESCR_ALVO"])[_COLUNAS_RN1_PRODUTO]
+        .sort_values("DIVERGENCIA", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    mask_sem_vinculo = cruzamento["DESCR_ALVO"].str.startswith(PREFIXO_RN1_SEM_VINCULO)
+    resumo = {
+        "total_produtos": len(cruzamento),
+        "total_divergencia_acumulada": float(cruzamento["DIVERGENCIA"].sum()),
+        "total_compras_sem_vinculo": float(cruzamento.loc[mask_sem_vinculo, "COMPRAS"].sum()),
+        "total_produtos_sem_vinculo": int(cruzamento.loc[mask_sem_vinculo, "DESCR_ALVO"].nunique()),
+    }
+    return {"resumo": resumo, "cruzamento": cruzamento, "erros": []}
+
+
+def persistir_rn1_produto(callback=None) -> dict:
+    """Estágio 7.3.1: persiste rn1_produto no DuckDB, ver
+    gerar_rn1_produto(). callback(etapa, n) chamado ao final."""
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    resultado = {}
+    try:
+        r = gerar_rn1_produto()
+        if r["erros"]:
+            resultado["erro"] = " | ".join(r["erros"])
+            return resultado
+        df = r["cruzamento"]
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            if not df.empty:
+                con.register("_df_rn1_produto", df)
+                con.execute("CREATE OR REPLACE TABLE rn1_produto AS SELECT * FROM _df_rn1_produto")
+                con.unregister("_df_rn1_produto")
+        resultado["rn1_produto"] = len(df)
+        if callback:
+            callback("rn1_produto", resultado["rn1_produto"])
+    except Exception as exc:
+        logger.exception("Erro ao persistir rn1_produto: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def rn1_produto_ja_gerado() -> bool:
+    """True se a tabela rn1_produto (Estágio 7.3.1) já existe no DuckDB
+    da operação."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            return "rn1_produto" in tabelas
+    except Exception:
+        logger.exception("Erro ao verificar rn1_produto existente em %s", _BANCO_PATH)
+        return False
+
+
+def consultar_rn1_produto(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê rn1_produto já persistida (sem reprocessar), devolvendo uma
+    amostra (até 'limite' linhas) e o total real de linhas. limite=None
+    devolve a tabela inteira."""
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "rn1_produto" not in tabelas:
+                return pd.DataFrame(), 0
+            total = con.execute("SELECT COUNT(*) FROM rn1_produto").fetchone()[0]
+            query = (
+                "SELECT * FROM rn1_produto" if limite is None
+                else f"SELECT * FROM rn1_produto LIMIT {limite}"
+            )
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar rn1_produto em %s", _BANCO_PATH)
+        return pd.DataFrame(), 0
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio
