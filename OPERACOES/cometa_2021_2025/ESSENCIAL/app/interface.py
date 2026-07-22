@@ -1489,13 +1489,13 @@ def render_rn1_produto() -> None:
 
 
 _COLUNAS_PREVIEW_RN1_SIMULADA_30 = [
-    "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
+    "DESCR_ALVO", "COD_ITEM", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
     "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
 
 
 _COLUNAS_PREVIEW_RN1_FISICA_SIMULADA_30 = [
-    "ANO", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
+    "ANO", "DESCR_ALVO", "COD_ITEM", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
     "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
 
@@ -1544,7 +1544,7 @@ def _destacar_vermelho_rn1(df: pd.DataFrame) -> "pd.io.formats.style.Styler":
 
 
 _COLUNAS_BASE_GRUPO_PRODUTO_ALVO = [
-    "DESCR_ALVO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO",
+    "DESCR_ALVO", "COD_ITEM", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO",
 ]
 _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO = "Selecionar p/ Fiscalização"
 
@@ -1574,7 +1574,7 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
 
     editor_base = amostra_raw[_COLUNAS_BASE_GRUPO_PRODUTO_ALVO].copy()
     editor_base.insert(
-        1, _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, editor_base["DESCR_ALVO"].isin(descricoes_ja_selecionadas),
+        2, _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, editor_base["DESCR_ALVO"].isin(descricoes_ja_selecionadas),
     )
     if not ja_selecionados.empty:
         obs_por_produto = ja_selecionados.set_index("DESCR_ALVO")["OBSERVACAO"]

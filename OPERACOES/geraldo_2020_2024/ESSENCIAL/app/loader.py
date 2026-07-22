@@ -3435,10 +3435,32 @@ def consultar_rn1_produto(limite: "int | None" = 200) -> "tuple[pd.DataFrame, in
 # estágio): diferenca = TOTAL_DEBITO - TOTAL_CREDITO; diferenca < 0 →
 # "Entradas sem NF", senão "Saídas sem NF".
 _FATOR_SIMULACAO_30 = 1.30
-_COLUNAS_RN1_FISICA_SIMULADA_30 = [
-    "ANO", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
+_COLUNAS_RN1_SIMULADA_30 = [
+    "DESCR_ALVO", "COD_ITEM", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
     "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
+_COLUNAS_RN1_FISICA_SIMULADA_30 = [
+    "ANO", "DESCR_ALVO", "COD_ITEM", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
+    "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
+]
+
+
+def _mapa_cod_item_por_descr_alvo() -> pd.DataFrame:
+    """Devolve DESCR_ALVO -> COD_ITEM (1 linha por DESCR_ALVO), a partir de
+    produto_alvo (Estágio 7.1) — Solicitação Técnica 2026-07-22: "no 7.3.2
+    preciso enxergar o cod do produto da declaração". Na prática é quase
+    sempre 1:1 (confirmado na geraldo: só 1 de 6.137 Descrições Relevantes
+    tem mais de um COD_ITEM associado), mas concatena com ", " no raro
+    caso de mais de um código, pra nunca duplicar linha ao mesclar em
+    rn1_simulada_30/rn1_fisica (agrupados por DESCR_ALVO, não por
+    código)."""
+    produto_alvo, _ = consultar_produto_alvo(limite=None)
+    if produto_alvo.empty:
+        return pd.DataFrame(columns=["DESCR_ALVO", "COD_ITEM"])
+    return (
+        produto_alvo.groupby("DESCR_ALVO", as_index=False)["COD_ITEM"]
+        .agg(lambda s: ", ".join(sorted(set(s))))
+    )
 
 
 def _aplicar_simulacao_30(df: pd.DataFrame) -> pd.DataFrame:
@@ -3487,9 +3509,11 @@ def gerar_rn1_simulada_30() -> dict:
         }
 
     simulado = _aplicar_simulacao_30(base[["DESCR_ALVO", "EI", "COMPRAS", "EF", "VENDAS"]])
+    simulado = simulado.merge(_mapa_cod_item_por_descr_alvo(), on="DESCR_ALVO", how="left")
+    simulado["COD_ITEM"] = simulado["COD_ITEM"].fillna("")
 
     cruzamento = (
-        _forcar_colunas_string(simulado, ["DESCR_ALVO"])[_COLUNAS_RN1_PRODUTO]
+        _forcar_colunas_string(simulado, ["DESCR_ALVO", "COD_ITEM"])[_COLUNAS_RN1_SIMULADA_30]
         .sort_values("DIVERGENCIA", ascending=False)
         .reset_index(drop=True)
     )
@@ -3519,8 +3543,10 @@ def simular_rn1_fisica_30(descr_alvo: str) -> pd.DataFrame:
         return pd.DataFrame(columns=_COLUNAS_RN1_FISICA_SIMULADA_30)
 
     simulado = _aplicar_simulacao_30(detalhe)
+    simulado = simulado.merge(_mapa_cod_item_por_descr_alvo(), on="DESCR_ALVO", how="left")
+    simulado["COD_ITEM"] = simulado["COD_ITEM"].fillna("")
     return (
-        _forcar_colunas_string(simulado, ["ANO", "DESCR_ALVO"])[_COLUNAS_RN1_FISICA_SIMULADA_30]
+        _forcar_colunas_string(simulado, ["ANO", "DESCR_ALVO", "COD_ITEM"])[_COLUNAS_RN1_FISICA_SIMULADA_30]
         .sort_values("ANO")
         .reset_index(drop=True)
     )
@@ -3600,7 +3626,7 @@ def consultar_rn1_simulada_30(limite: "int | None" = 200) -> "tuple[pd.DataFrame
 # própria — não confundir com `produto_alvo` (Estágio 7.1: equalização de
 # nomenclatura por Descrição Relevante, propósito e schema diferentes).
 _COLUNAS_PRODUTO_ALVO_FISCALIZACAO = [
-    "DESCR_ALVO", "TS", "STATUS", "DIVERGENCIA", "INFRACAO",
+    "DESCR_ALVO", "COD_ITEM", "TS", "STATUS", "DIVERGENCIA", "INFRACAO",
     "PCT_DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO", "OBSERVACAO",
 ]
 STATUS_PRODUTO_ALVO_ATIVO = "ativo"
@@ -3610,9 +3636,9 @@ STATUS_PRODUTO_ALVO_CANCELADO = "cancelado"
 def salvar_grupo_produto_alvo_fiscalizacao(selecoes: pd.DataFrame) -> dict:
     """Persiste o grupo de Produto Alvo pra fiscalização (painel 7.3.2).
     `selecoes` é um DataFrame com uma linha por produto EXIBIDO na tela no
-    momento do clique em "Salvar" — colunas DESCR_ALVO, SELECIONADO (bool),
-    DIVERGENCIA, INFRACAO, PCT_DIVERGENCIA, TOTAL_DEBITO, TOTAL_CREDITO,
-    OBSERVACAO. Upsert por DESCR_ALVO (um produto só existe uma vez na
+    momento do clique em "Salvar" — colunas DESCR_ALVO, COD_ITEM,
+    SELECIONADO (bool), DIVERGENCIA, INFRACAO, PCT_DIVERGENCIA,
+    TOTAL_DEBITO, TOTAL_CREDITO, OBSERVACAO. Upsert por DESCR_ALVO (um produto só existe uma vez na
     tabela): produtos com SELECIONADO=True viram/permanecem STATUS=
     'ativo' (valores atualizados nesta rodada); produtos que estavam
     'ativo' e vieram desmarcados nesta tela viram STATUS='cancelado'
@@ -3637,7 +3663,9 @@ def salvar_grupo_produto_alvo_fiscalizacao(selecoes: pd.DataFrame) -> dict:
         else:
             combinado = novo
 
-        combinado = _forcar_colunas_string(combinado, ["DESCR_ALVO", "STATUS", "INFRACAO", "OBSERVACAO"])
+        combinado = _forcar_colunas_string(
+            combinado, ["DESCR_ALVO", "COD_ITEM", "STATUS", "INFRACAO", "OBSERVACAO"],
+        )
         combinado = (
             combinado[_COLUNAS_PRODUTO_ALVO_FISCALIZACAO]
             .sort_values("DIVERGENCIA", ascending=False)
