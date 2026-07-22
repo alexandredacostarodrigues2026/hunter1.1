@@ -1519,7 +1519,7 @@ _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO = "Selecionar p/ Fiscalização"
 _COLUNA_CHECKBOX_VER_ANOS = "📅 Ver Anos"
 _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO = ("TOTAL_DEBITO", "TOTAL_CREDITO", "DIVERGENCIA")
 _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO_LABEL = (
-    "Total Debito (R$)", "Total Credito (R$)", "Divergencia (R$)",
+    "Total Debito (R$)", "Total Credito (R$)", "Divergencia (R$)", "% Diverg",
 )
 _COLUNAS_OCULTAS_EDITOR_GRUPO_ALVO = ("Total Debito (R$)", "Total Credito (R$)", "Observacao")
 _MARCADOR_CABECALHO_VERMELHO_EDITOR_GRUPO_ALVO = {
