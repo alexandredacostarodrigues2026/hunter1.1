@@ -1581,17 +1581,38 @@ def render_rn1_simulada_30() -> None:
                     "* { font-size: 12px; }</style>",
                     unsafe_allow_html=True,
                 )
-                st.dataframe(
+                evento_tabela = st.dataframe(
                     _preparar_preview_rn1_simulada_30(amostra),
                     use_container_width=True,
                     hide_index=True,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key="rn1_simulada_30_selecao_linha",
                 )
+
+            # Clique na linha da tabela alimenta o selectbox do drill-down
+            # abaixo (st.dataframe não expõe clique nenhum sem on_select/
+            # selection_mode — sem isso, a linha só fica destacada/
+            # copiável, sem nenhum efeito real, que era o bug reportado
+            # pelo usuário). Só força o valor do selectbox quando a linha
+            # clicada MUDA (compara com "_ultimo" salvo), pra não sobrescrever
+            # uma escolha manual feita depois no próprio selectbox enquanto a
+            # seleção da tabela permanece a mesma.
+            linhas_selecionadas = evento_tabela["selection"]["rows"] if evento_tabela else []
+            produto_clicado = (
+                amostra.iloc[linhas_selecionadas[0]]["DESCR_ALVO"] if linhas_selecionadas else None
+            )
+            if produto_clicado != st.session_state.get("rn1_simulada_30_ultimo_clicado"):
+                st.session_state["rn1_simulada_30_ultimo_clicado"] = produto_clicado
+                if produto_clicado is not None:
+                    st.session_state["drilldown_rn1_simulada_30"] = produto_clicado
 
             st.divider()
             st.markdown("**Detalhamento por Ano — simulação +30% (drill-down)**")
             produtos_disponiveis = sorted(df_preview["DESCR_ALVO"].unique())
             produto_selecionado = st.selectbox(
-                "Selecione um produto para ver o detalhamento anual",
+                "Selecione um produto para ver o detalhamento anual (ou clique numa linha da "
+                "tabela acima)",
                 options=["Selecione..."] + produtos_disponiveis,
                 key="drilldown_rn1_simulada_30",
             )
