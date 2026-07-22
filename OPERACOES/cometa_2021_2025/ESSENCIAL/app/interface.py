@@ -1489,7 +1489,7 @@ def render_rn1_produto() -> None:
 
 
 _COLUNAS_PREVIEW_RN1_FISICA_SIMULADA_30 = [
-    "ANO", "DESCR_ALVO", "COD_ITEM", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
+    "ANO", "COD_ITEM", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
     "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
 
@@ -1499,7 +1499,10 @@ def _preparar_preview_rn1_fisica_simulada_30(df: pd.DataFrame) -> pd.DataFrame:
     "(+30%)" no cabeçalho, pra evitar confusão com os valores reais do
     Estágio 7.3.1. Vendas permanece "Vendas (XML)" — âncora real, sem
     acréscimo. Usada no drill-down por ano dentro de
-    _render_grupo_produto_alvo_fiscalizacao()."""
+    _render_grupo_produto_alvo_fiscalizacao() — sem DESCR_ALVO
+    (2026-07-22, pedido do usuário: "retire o campo descrição relevante,
+    pois já traz no título" — o produto já aparece no `st.markdown` do
+    cabeçalho da seção, repetir em toda linha da tabela é redundante)."""
     preview = _preparar_preview(df, _COLUNAS_PREVIEW_RN1_FISICA_SIMULADA_30)
     return preview.rename(columns={
         "EI (R$)": "EI (+30%)",
@@ -1519,13 +1522,33 @@ _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO = ("TOTAL_DEBITO", "TOTAL_CREDITO", "DIVER
 
 def _formatar_moeda_br_vermelho(v: float) -> str:
     """Mesmo formato de _formatar_moeda_br(), com marcador 🔴 na frente —
-    destaque de Total Débito/Total Crédito/Divergência pedido pelo
-    usuário (2026-07-22) nas tabelas do Grupo de Produto Alvo. st.data_
-    editor (usado na tabela principal, por causa dos checkboxes) não
-    aceita pandas.Styler — só st.dataframe aceita cor de texto de
-    verdade — então o marcador emoji é o destaque possível numa grade
-    editável (confirmado com o usuário; ver memoria/2026-07-22.md)."""
+    tentativa de destaque de Total Débito/Total Crédito/Divergência na
+    tabela EDITÁVEL do Grupo de Produto Alvo (st.data_editor não aceita
+    pandas.Styler). Achado 2026-07-22: o emoji não renderiza no grid
+    canvas do Streamlit (glide-data-grid) — usuário reportou "não está em
+    vermelho" na tabela de drill-down, que já foi corrigida pra usar
+    Styler de verdade (_destacar_vermelho_grupo_alvo()) por ser
+    st.dataframe comum. Esta função ficou só pra tabela editável
+    (st.data_editor), onde Styler continua indisponível — mesmo sabendo
+    que o emoji pode não aparecer ali também, não há alternativa melhor
+    sem reintroduzir uma segunda tabela (rejeitado pelo usuário)."""
     return f"🔴 {_formatar_moeda_br(v)}"
+
+
+_COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO_LABEL = (
+    "Total Debito (R$)", "Total Credito (R$)", "Divergencia (R$)",
+)
+
+
+def _destacar_vermelho_grupo_alvo(df: pd.DataFrame) -> "pd.io.formats.style.Styler":
+    """Pinta de vermelho (cor de texto de verdade, via pandas.Styler) as
+    colunas de Total Débito/Total Crédito/Divergência — usada nas
+    tabelas SOMENTE LEITURA do Grupo de Produto Alvo (drill-down por ano
+    e "Ver grupo completo já salvo"), que são st.dataframe comum e por
+    isso aceitam Styler (diferente da tabela principal, que é
+    st.data_editor — ver _formatar_moeda_br_vermelho())."""
+    colunas = [c for c in _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO_LABEL if c in df.columns]
+    return df.style.map(lambda _: "color: red", subset=colunas)
 
 
 def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
@@ -1623,9 +1646,9 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
         else:
             detalhe["PCT_DIVERGENCIA"] = detalhe["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
             for _col in _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO:
-                detalhe[_col] = detalhe[_col].apply(_formatar_moeda_br_vermelho)
+                detalhe[_col] = detalhe[_col].apply(_formatar_moeda_br)
             st.dataframe(
-                _preparar_preview_rn1_fisica_simulada_30(detalhe),
+                _destacar_vermelho_grupo_alvo(_preparar_preview_rn1_fisica_simulada_30(detalhe)),
                 use_container_width=True,
                 hide_index=True,
             )
@@ -1636,12 +1659,12 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
             grupo_preview = grupo_atual.copy()
             grupo_preview["PCT_DIVERGENCIA"] = grupo_preview["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
             for _col in _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO:
-                grupo_preview[_col] = grupo_preview[_col].apply(_formatar_moeda_br_vermelho)
+                grupo_preview[_col] = grupo_preview[_col].apply(_formatar_moeda_br)
             st.dataframe(
-                _preparar_preview(
+                _destacar_vermelho_grupo_alvo(_preparar_preview(
                     grupo_preview,
                     _COLUNAS_BASE_GRUPO_PRODUTO_ALVO + ["TS", "OBSERVACAO"],
-                ),
+                )),
                 use_container_width=True,
                 hide_index=True,
             )
