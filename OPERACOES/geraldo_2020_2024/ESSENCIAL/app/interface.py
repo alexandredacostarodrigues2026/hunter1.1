@@ -1494,12 +1494,31 @@ _COLUNAS_PREVIEW_RN1_SIMULADA_30 = [
 ]
 
 
+_COLUNAS_PREVIEW_RN1_FISICA_SIMULADA_30 = [
+    "ANO", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
+    "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
+]
+
+
 def _preparar_preview_rn1_simulada_30(df: pd.DataFrame) -> pd.DataFrame:
     """Mesma preparação de _preparar_preview_rn1_produto(), mas identifica
     as colunas majoradas (EI/Compras/EF) com o sufixo "(+30%)" no
     cabeçalho, pra evitar confusão com os valores reais do Estágio 7.3.1.
     Vendas permanece "Vendas (XML)" — âncora real, sem acréscimo."""
     preview = _preparar_preview(df, _COLUNAS_PREVIEW_RN1_SIMULADA_30)
+    return preview.rename(columns={
+        "EI (R$)": "EI (+30%)",
+        "Compras (R$)": "Compras (+30%)",
+        "EF (R$)": "EF (+30%)",
+        "Vendas (R$)": "Vendas (XML)",
+    })
+
+
+def _preparar_preview_rn1_fisica_simulada_30(df: pd.DataFrame) -> pd.DataFrame:
+    """Mesma renomeação de _preparar_preview_rn1_simulada_30(), aplicada ao
+    detalhamento por ANO (drill-down) — usa _COLUNAS_PREVIEW_RN1_FISICA_
+    SIMULADA_30, que inclui a coluna ANO."""
+    preview = _preparar_preview(df, _COLUNAS_PREVIEW_RN1_FISICA_SIMULADA_30)
     return preview.rename(columns={
         "EI (R$)": "EI (+30%)",
         "Compras (R$)": "Compras (+30%)",
@@ -1518,8 +1537,10 @@ def render_rn1_simulada_30() -> None:
     do XML, sem acréscimo, servindo de âncora de confronto — ver
     loader.gerar_rn1_simulada_30() pro raciocínio completo. Exige
     `rn1_produto` (Estágio 7.3.1) já gerada. Mesmo padrão "Gerar/Regerar" +
-    prévia de alta densidade do 7.3.1, sem drill-down (a simulação já
-    parte do total acumulado por produto, não tem detalhe por ano)."""
+    prévia de alta densidade do 7.3.1, com o mesmo drill-down "explode os
+    anos" ao clicar num produto — aqui a simulação +30% é recalculada
+    linha a linha por ANO (loader.simular_rn1_fisica_30()), não só
+    mostrando o detalhe real do 7.3 sem simular."""
     st.subheader("Estágio 7.3.2 — Simulação RN1 (+30%)")
     st.caption(
         "Simula uma subvaloração de 30% em Estoque Inicial, Compras e Estoque Final (colunas "
@@ -1565,6 +1586,34 @@ def render_rn1_simulada_30() -> None:
                     use_container_width=True,
                     hide_index=True,
                 )
+
+            st.divider()
+            st.markdown("**Detalhamento por Ano — simulação +30% (drill-down)**")
+            produtos_disponiveis = sorted(df_preview["DESCR_ALVO"].unique())
+            produto_selecionado = st.selectbox(
+                "Selecione um produto para ver o detalhamento anual",
+                options=["Selecione..."] + produtos_disponiveis,
+                key="drilldown_rn1_simulada_30",
+            )
+            if produto_selecionado != "Selecione...":
+                detalhe = loader.simular_rn1_fisica_30(produto_selecionado)
+                if detalhe.empty:
+                    st.info("Nenhum detalhamento anual encontrado pra este produto.")
+                else:
+                    detalhe["PCT_DIVERGENCIA"] = detalhe["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+                    for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
+                        detalhe[_col] = detalhe[_col].apply(_formatar_moeda_br)
+                    with st.container(key="rn1_simulada_30_drilldown_tabela"):
+                        st.markdown(
+                            "<style>.st-key-rn1_simulada_30_drilldown_tabela "
+                            "[data-testid='stDataFrame'] * { font-size: 12px; }</style>",
+                            unsafe_allow_html=True,
+                        )
+                        st.dataframe(
+                            _preparar_preview_rn1_fisica_simulada_30(detalhe),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
 
         clicou = st.button(
             "Regerar Simulação RN1 (+30%)",

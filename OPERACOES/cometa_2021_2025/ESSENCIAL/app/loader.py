@@ -3435,17 +3435,46 @@ def consultar_rn1_produto(limite: "int | None" = 200) -> "tuple[pd.DataFrame, in
 # estágio): diferenca = TOTAL_DEBITO - TOTAL_CREDITO; diferenca < 0 →
 # "Entradas sem NF", senão "Saídas sem NF".
 _FATOR_SIMULACAO_30 = 1.30
+_COLUNAS_RN1_FISICA_SIMULADA_30 = [
+    "ANO", "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
+    "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
+]
+
+
+def _aplicar_simulacao_30(df: pd.DataFrame) -> pd.DataFrame:
+    """Aplica o fator de simulação (+30%) em EI/Compras/EF de um DataFrame
+    no formato RN1 (linha por DESCR_ALVO em rn1_produto, ou linha por
+    ANO+DESCR_ALVO em rn1_fisica) e recalcula Total Débito (EI_sim +
+    Compras_sim), Total Crédito (Vendas + EF_sim — Vendas permanece o
+    valor físico real do XML, sem acréscimo, âncora de confronto),
+    Divergência, Infração e % Diverg sobre os novos totais. Usado tanto
+    por gerar_rn1_simulada_30() (nível produto, todos os anos somados)
+    quanto por simular_rn1_fisica_30() (drill-down por ano, uma linha por
+    ANO do produto clicado) — mesma fórmula, granularidade diferente."""
+    saida = df.copy()
+    for col in ("EI", "COMPRAS", "EF"):
+        valor = pd.to_numeric(saida[col], errors="coerce").fillna(0.0)
+        saida[col] = (valor * _FATOR_SIMULACAO_30).round(2)
+    saida["VENDAS"] = pd.to_numeric(saida["VENDAS"], errors="coerce").fillna(0.0).round(2)
+
+    saida["TOTAL_DEBITO"] = (saida["EI"] + saida["COMPRAS"]).round(2)
+    saida["TOTAL_CREDITO"] = (saida["VENDAS"] + saida["EF"]).round(2)
+    diferenca = saida["TOTAL_DEBITO"] - saida["TOTAL_CREDITO"]
+    saida["DIVERGENCIA"] = diferenca.abs().round(2)
+    saida["INFRACAO"] = np.where(diferenca < 0, _INFRACAO_ENTRADAS_SEM_NF, _INFRACAO_SAIDAS_SEM_NF)
+
+    minimo = saida[["TOTAL_DEBITO", "TOTAL_CREDITO"]].min(axis=1)
+    minimo_seguro = minimo.where(minimo != 0, 0.00001)
+    saida["PCT_DIVERGENCIA"] = (saida["DIVERGENCIA"] / minimo_seguro * 100).round(2)
+    return saida
 
 
 def gerar_rn1_simulada_30() -> dict:
     """Estágio 7.3.2 — Simulação RN1 (+30%): parte de rn1_produto (Estágio
-    7.3.1) e multiplica EI/Compras/EF por 1.3, recalculando Total Débito
-    (EI_sim + Compras_sim), Total Crédito (Vendas + EF_sim — Vendas
-    permanece o valor físico real do XML, sem acréscimo, servindo de
-    âncora de confronto), Divergência, Infração e % Diverg sobre os novos
-    totais. Não reprocessa entradas/saídas do zero — exige rn1_produto já
-    persistida. Ordenação: por DIVERGENCIA decrescente. Regra R07:
-    DESCR_ALVO sempre string.
+    7.3.1) e aplica _aplicar_simulacao_30() sobre os totais já acumulados
+    por produto (todos os anos somados). Não reprocessa entradas/saídas
+    do zero — exige rn1_produto já persistida. Ordenação: por DIVERGENCIA
+    decrescente. Regra R07: DESCR_ALVO sempre string.
 
     Devolve {'resumo': dict, 'cruzamento': DataFrame, 'erros': list} —
     erros não-vazio quando rn1_produto (Estágio 7.3.1) ainda não foi
@@ -3457,21 +3486,7 @@ def gerar_rn1_simulada_30() -> dict:
             "erros": ["Tabela rn1_produto (Estágio 7.3.1) ainda não foi gerada."],
         }
 
-    simulado = base[["DESCR_ALVO"]].copy()
-    for col in ("EI", "COMPRAS", "EF"):
-        valor = pd.to_numeric(base[col], errors="coerce").fillna(0.0)
-        simulado[col] = (valor * _FATOR_SIMULACAO_30).round(2)
-    simulado["VENDAS"] = pd.to_numeric(base["VENDAS"], errors="coerce").fillna(0.0).round(2)
-
-    simulado["TOTAL_DEBITO"] = (simulado["EI"] + simulado["COMPRAS"]).round(2)
-    simulado["TOTAL_CREDITO"] = (simulado["VENDAS"] + simulado["EF"]).round(2)
-    diferenca = simulado["TOTAL_DEBITO"] - simulado["TOTAL_CREDITO"]
-    simulado["DIVERGENCIA"] = diferenca.abs().round(2)
-    simulado["INFRACAO"] = np.where(diferenca < 0, _INFRACAO_ENTRADAS_SEM_NF, _INFRACAO_SAIDAS_SEM_NF)
-
-    minimo = simulado[["TOTAL_DEBITO", "TOTAL_CREDITO"]].min(axis=1)
-    minimo_seguro = minimo.where(minimo != 0, 0.00001)
-    simulado["PCT_DIVERGENCIA"] = (simulado["DIVERGENCIA"] / minimo_seguro * 100).round(2)
+    simulado = _aplicar_simulacao_30(base[["DESCR_ALVO", "EI", "COMPRAS", "EF", "VENDAS"]])
 
     cruzamento = (
         _forcar_colunas_string(simulado, ["DESCR_ALVO"])[_COLUNAS_RN1_PRODUTO]
@@ -3484,6 +3499,31 @@ def gerar_rn1_simulada_30() -> dict:
         "total_divergencia_acumulada": float(cruzamento["DIVERGENCIA"].sum()),
     }
     return {"resumo": resumo, "cruzamento": cruzamento, "erros": []}
+
+
+def simular_rn1_fisica_30(descr_alvo: str) -> pd.DataFrame:
+    """Estágio 7.3.2 — drill-down por ano: filtra rn1_fisica (Estágio 7.3,
+    uma linha por ANO+DESCR_ALVO) pelo produto clicado e aplica a mesma
+    simulação +30% de gerar_rn1_simulada_30() (_aplicar_simulacao_30()),
+    linha a linha por ANO — sem condensar. Usado pelo painel do 7.3.2 pra
+    "explodir" os anos de um produto (mesmo drill-down do 7.3.1, mas com
+    EI/Compras/EF majorados). Devolve DataFrame vazio se rn1_fisica ainda
+    não foi gerada ou o produto não tiver nenhuma linha. Ordenação: por
+    ANO crescente."""
+    base, _ = consultar_rn1_fisica(limite=None)
+    if base.empty:
+        return pd.DataFrame(columns=_COLUNAS_RN1_FISICA_SIMULADA_30)
+
+    detalhe = base[base["DESCR_ALVO"] == descr_alvo].copy()
+    if detalhe.empty:
+        return pd.DataFrame(columns=_COLUNAS_RN1_FISICA_SIMULADA_30)
+
+    simulado = _aplicar_simulacao_30(detalhe)
+    return (
+        _forcar_colunas_string(simulado, ["ANO", "DESCR_ALVO"])[_COLUNAS_RN1_FISICA_SIMULADA_30]
+        .sort_values("ANO")
+        .reset_index(drop=True)
+    )
 
 
 def persistir_rn1_simulada_30(callback=None) -> dict:
