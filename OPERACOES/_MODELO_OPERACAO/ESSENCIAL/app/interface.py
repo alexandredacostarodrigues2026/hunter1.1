@@ -1543,6 +1543,98 @@ def _destacar_vermelho_rn1(df: pd.DataFrame) -> "pd.io.formats.style.Styler":
     return df.style.map(lambda _: "color: red", subset=colunas)
 
 
+_COLUNAS_BASE_GRUPO_PRODUTO_ALVO = [
+    "DESCR_ALVO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO",
+]
+_COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO = "Selecionar p/ Fiscalização"
+
+
+def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
+    """Solicitação Técnica (2026-07-22): "o 7.3.2 produto será o painel
+    para escolha do produto alvo" — mesma mecânica do `ranking.py` do app
+    antigo (ANTIGO_geraldo_2020_2024_5: checkbox "Escolher" + botão
+    "Salvar Produto Alvo" + `registrar_produto_eleito()`), agora sobre os
+    produtos já filtrados/exibidos no 7.3.2 (Divergência, Infração, %
+    Diverg) em vez da tabela de ranking bruta (Origem/Produto/QT/Valor)
+    do app antigo. `amostra_raw` é a mesma fatia (até 200 linhas, já
+    filtrada por Descrição) da tabela principal do 7.3.2, ANTES da
+    formatação de moeda/percentual — os valores crus são o que
+    efetivamente vai pra loader.salvar_grupo_produto_alvo_fiscalizacao();
+    a formatação aqui é só cosmética (mesmo padrão do resto do painel).
+    Marcar/desmarcar e salvar sob um filtro de busca não apaga seleções
+    feitas sob outro filtro (merge por DESCR_ALVO em loader.py)."""
+    st.markdown("**🎯 Grupo de Produto Alvo (Fiscalização)**")
+    st.caption(
+        "Marque, entre os produtos listados acima, quais entram no grupo que será efetivamente "
+        "fiscalizado. Produtos marcados ficam salvos mesmo trocando o filtro de busca depois."
+    )
+
+    ja_selecionados, _ = loader.consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=True)
+    descricoes_ja_selecionadas = set(ja_selecionados["DESCR_ALVO"]) if not ja_selecionados.empty else set()
+
+    editor_base = amostra_raw[_COLUNAS_BASE_GRUPO_PRODUTO_ALVO].copy()
+    editor_base.insert(
+        1, _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, editor_base["DESCR_ALVO"].isin(descricoes_ja_selecionadas),
+    )
+    if not ja_selecionados.empty:
+        obs_por_produto = ja_selecionados.set_index("DESCR_ALVO")["OBSERVACAO"]
+        editor_base["OBSERVACAO"] = editor_base["DESCR_ALVO"].map(obs_por_produto).fillna("")
+    else:
+        editor_base["OBSERVACAO"] = ""
+
+    editor_exibicao = editor_base.copy()
+    editor_exibicao["PCT_DIVERGENCIA"] = editor_exibicao["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+    for _col in ("DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO"):
+        editor_exibicao[_col] = editor_exibicao[_col].apply(_formatar_moeda_br)
+    editor_exibicao = editor_exibicao.rename(columns=loader.carregar_dicionario_campos())
+    editor_exibicao = editor_exibicao.rename(columns={"OBSERVACAO": "Observacao"})
+
+    colunas_travadas = [
+        c for c in editor_exibicao.columns
+        if c not in (_COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, "Observacao")
+    ]
+    with st.container(key="rn1_simulada_30_editor_grupo_alvo"):
+        st.markdown(
+            "<style>.st-key-rn1_simulada_30_editor_grupo_alvo [data-testid='stDataFrame'] "
+            "* { font-size: 12px; }</style>",
+            unsafe_allow_html=True,
+        )
+        editado = st.data_editor(
+            editor_exibicao,
+            use_container_width=True,
+            hide_index=True,
+            disabled=colunas_travadas,
+            key="editor_grupo_produto_alvo_fiscalizacao",
+        )
+
+    if st.button("💾 Salvar Grupo de Produto Alvo", key="btn_salvar_grupo_produto_alvo"):
+        selecoes = editor_base[_COLUNAS_BASE_GRUPO_PRODUTO_ALVO].copy()
+        selecoes["SELECIONADO"] = editado[_COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO].to_numpy()
+        selecoes["OBSERVACAO"] = editado["Observacao"].to_numpy()
+        resultado = loader.salvar_grupo_produto_alvo_fiscalizacao(selecoes)
+        if "erro" in resultado:
+            st.error(f"Erro: {resultado['erro']}")
+        else:
+            st.success(f"✅ Grupo salvo — {resultado['total_ativos']} produto(s) ativo(s) no total.")
+            st.rerun()
+
+    grupo_atual, total_grupo = loader.consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=True)
+    if not grupo_atual.empty:
+        with st.expander(f"Ver grupo completo já salvo ({total_grupo} produto(s))"):
+            grupo_preview = grupo_atual.copy()
+            grupo_preview["PCT_DIVERGENCIA"] = grupo_preview["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+            for _col in ("DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO"):
+                grupo_preview[_col] = grupo_preview[_col].apply(_formatar_moeda_br)
+            st.dataframe(
+                _preparar_preview(
+                    grupo_preview,
+                    _COLUNAS_BASE_GRUPO_PRODUTO_ALVO + ["TS", "OBSERVACAO"],
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
 def render_rn1_simulada_30() -> None:
     """Estágio 7.3.2 — Simulação RN1 (+30%) (2026-07-22, Solicitação
     Técnica): parte de rn1_produto (Estágio 7.3.1, já condensado por
@@ -1556,7 +1648,11 @@ def render_rn1_simulada_30() -> None:
     prévia de alta densidade do 7.3.1, com o mesmo drill-down "explode os
     anos" ao clicar num produto — aqui a simulação +30% é recalculada
     linha a linha por ANO (loader.simular_rn1_fisica_30()), não só
-    mostrando o detalhe real do 7.3 sem simular."""
+    mostrando o detalhe real do 7.3 sem simular. Termina com a seção
+    "Grupo de Produto Alvo (Fiscalização)" (2026-07-22,
+    _render_grupo_produto_alvo_fiscalizacao()) — este painel também é a
+    tela de escolha de quais produtos entram no grupo fiscalizado, mesma
+    mecânica do `ranking.py` do app antigo."""
     st.subheader("Estágio 7.3.2 — Simulação RN1 (+30%)")
     st.caption(
         "Simula uma subvaloração de 30% em Estoque Inicial, Compras e Estoque Final (colunas "
@@ -1587,7 +1683,8 @@ def render_rn1_simulada_30() -> None:
                 ]
 
             st.markdown(f"**{len(filtrado):,} produto(s)** após filtro.".replace(",", "."))
-            amostra = filtrado.head(200).copy()
+            amostra_raw = filtrado.head(200).copy()
+            amostra = amostra_raw.copy()
             amostra["PCT_DIVERGENCIA"] = amostra["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
             for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
                 amostra[_col] = amostra[_col].apply(_formatar_moeda_br)
@@ -1651,6 +1748,9 @@ def render_rn1_simulada_30() -> None:
                             use_container_width=True,
                             hide_index=True,
                         )
+
+            st.divider()
+            _render_grupo_produto_alvo_fiscalizacao(amostra_raw)
 
         clicou = st.button(
             "Regerar Simulação RN1 (+30%)",

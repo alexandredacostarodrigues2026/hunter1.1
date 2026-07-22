@@ -3588,6 +3588,105 @@ def consultar_rn1_simulada_30(limite: "int | None" = 200) -> "tuple[pd.DataFrame
         return pd.DataFrame(), 0
 
 
+# ── Grupo de Produto Alvo (Fiscalização) ─────────────────────────────────
+# Solicitação Técnica (2026-07-22): "o 7.3.2 produto será o painel para
+# escolha do produto alvo" — o auditor marca, na própria tabela do 7.3.2
+# (já ordenada por Divergência líquida), quais produtos entram no grupo
+# que será efetivamente fiscalizado. Mesmo mecanismo do `ranking.py`/
+# `registrar_produto_eleito()` do app antigo (ANTIGO_geraldo_2020_2024_5
+# — tabela com checkbox "Escolher" + botão "Salvar Produto Alvo"), agora
+# em cima dos dados do 7.3.2 (Divergência, Infração, % Diverg) em vez da
+# tabela de ranking bruta (Origem/Produto/QT/Valor) do app antigo. Tabela
+# própria — não confundir com `produto_alvo` (Estágio 7.1: equalização de
+# nomenclatura por Descrição Relevante, propósito e schema diferentes).
+_COLUNAS_PRODUTO_ALVO_FISCALIZACAO = [
+    "DESCR_ALVO", "TS", "STATUS", "DIVERGENCIA", "INFRACAO",
+    "PCT_DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO", "OBSERVACAO",
+]
+STATUS_PRODUTO_ALVO_ATIVO = "ativo"
+STATUS_PRODUTO_ALVO_CANCELADO = "cancelado"
+
+
+def salvar_grupo_produto_alvo_fiscalizacao(selecoes: pd.DataFrame) -> dict:
+    """Persiste o grupo de Produto Alvo pra fiscalização (painel 7.3.2).
+    `selecoes` é um DataFrame com uma linha por produto EXIBIDO na tela no
+    momento do clique em "Salvar" — colunas DESCR_ALVO, SELECIONADO (bool),
+    DIVERGENCIA, INFRACAO, PCT_DIVERGENCIA, TOTAL_DEBITO, TOTAL_CREDITO,
+    OBSERVACAO. Upsert por DESCR_ALVO (um produto só existe uma vez na
+    tabela): produtos com SELECIONADO=True viram/permanecem STATUS=
+    'ativo' (valores atualizados nesta rodada); produtos que estavam
+    'ativo' e vieram desmarcados nesta tela viram STATUS='cancelado'
+    (histórico preservado — não é deletado); produtos que nunca apareceram
+    nesta tela (fora do filtro/página atual) ficam como já estavam —
+    salvar um filtro não apaga a seleção feita sob outro filtro. Devolve
+    {'total_ativos': int} ou {'erro': str} se falhar."""
+    resultado = {}
+    try:
+        existente, _ = consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=False)
+
+        novo = selecoes.copy()
+        novo["STATUS"] = np.where(
+            novo["SELECIONADO"], STATUS_PRODUTO_ALVO_ATIVO, STATUS_PRODUTO_ALVO_CANCELADO,
+        )
+        novo["TS"] = datetime.now().isoformat(timespec="seconds")
+        novo = novo.drop(columns=["SELECIONADO"])
+
+        if not existente.empty:
+            preservar = existente[~existente["DESCR_ALVO"].isin(novo["DESCR_ALVO"])]
+            combinado = pd.concat([preservar, novo], ignore_index=True)
+        else:
+            combinado = novo
+
+        combinado = _forcar_colunas_string(combinado, ["DESCR_ALVO", "STATUS", "INFRACAO", "OBSERVACAO"])
+        combinado = (
+            combinado[_COLUNAS_PRODUTO_ALVO_FISCALIZACAO]
+            .sort_values("DIVERGENCIA", ascending=False)
+            .reset_index(drop=True)
+        )
+
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            con.register("_df_produto_alvo_fiscalizacao", combinado)
+            con.execute(
+                "CREATE OR REPLACE TABLE produto_alvo_fiscalizacao AS "
+                "SELECT * FROM _df_produto_alvo_fiscalizacao"
+            )
+            con.unregister("_df_produto_alvo_fiscalizacao")
+
+        resultado["total_ativos"] = int((combinado["STATUS"] == STATUS_PRODUTO_ALVO_ATIVO).sum())
+    except Exception as exc:
+        logger.exception("Erro ao salvar grupo de Produto Alvo (fiscalização): %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def consultar_grupo_produto_alvo_fiscalizacao(
+    limite: "int | None" = 200, apenas_ativos: bool = True,
+) -> "tuple[pd.DataFrame, int]":
+    """Lê produto_alvo_fiscalizacao já persistida (sem reprocessar).
+    apenas_ativos=True (padrão) só devolve STATUS='ativo' — histórico de
+    cancelados fica de fora da leitura normal, mas continua na tabela.
+    limite=None devolve tudo."""
+    colunas = _COLUNAS_PRODUTO_ALVO_FISCALIZACAO
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "produto_alvo_fiscalizacao" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            filtro = f"WHERE STATUS = '{STATUS_PRODUTO_ALVO_ATIVO}'" if apenas_ativos else ""
+            total = con.execute(f"SELECT COUNT(*) FROM produto_alvo_fiscalizacao {filtro}").fetchone()[0]
+            query = f"SELECT * FROM produto_alvo_fiscalizacao {filtro}"
+            if limite is not None:
+                query += f" LIMIT {limite}"
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar produto_alvo_fiscalizacao em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio

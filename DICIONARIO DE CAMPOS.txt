@@ -114,3 +114,8 @@ DIVERGENCIA;Divergencia (R$)
 # Novos campos - 2026-07-19 (Estagio 7.2 - indicadores de risco: Infracao, % Diverg)
 INFRACAO;Infracao
 PCT_DIVERGENCIA;% Diverg
+
+# Novos campos - 2026-07-22 (painel 7.3.2 - Grupo de Produto Alvo/Fiscalizacao)
+STATUS;Status
+TS;Data da Selecao
+OBSERVACAO;Observacao
