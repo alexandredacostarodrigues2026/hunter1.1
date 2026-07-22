@@ -1518,23 +1518,6 @@ _COLUNAS_BASE_GRUPO_PRODUTO_ALVO = [
 _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO = "Selecionar p/ Fiscalização"
 _COLUNA_CHECKBOX_VER_ANOS = "📅 Ver Anos"
 _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO = ("TOTAL_DEBITO", "TOTAL_CREDITO", "DIVERGENCIA")
-
-
-def _formatar_moeda_br_vermelho(v: float) -> str:
-    """Mesmo formato de _formatar_moeda_br(), com marcador 🔴 na frente —
-    tentativa de destaque de Total Débito/Total Crédito/Divergência na
-    tabela EDITÁVEL do Grupo de Produto Alvo (st.data_editor não aceita
-    pandas.Styler). Achado 2026-07-22: o emoji não renderiza no grid
-    canvas do Streamlit (glide-data-grid) — usuário reportou "não está em
-    vermelho" na tabela de drill-down, que já foi corrigida pra usar
-    Styler de verdade (_destacar_vermelho_grupo_alvo()) por ser
-    st.dataframe comum. Esta função ficou só pra tabela editável
-    (st.data_editor), onde Styler continua indisponível — mesmo sabendo
-    que o emoji pode não aparecer ali também, não há alternativa melhor
-    sem reintroduzir uma segunda tabela (rejeitado pelo usuário)."""
-    return f"🔴 {_formatar_moeda_br(v)}"
-
-
 _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO_LABEL = (
     "Total Debito (R$)", "Total Credito (R$)", "Divergencia (R$)",
 )
@@ -1545,8 +1528,13 @@ def _destacar_vermelho_grupo_alvo(df: pd.DataFrame) -> "pd.io.formats.style.Styl
     colunas de Total Débito/Total Crédito/Divergência — usada nas
     tabelas SOMENTE LEITURA do Grupo de Produto Alvo (drill-down por ano
     e "Ver grupo completo já salvo"), que são st.dataframe comum e por
-    isso aceitam Styler (diferente da tabela principal, que é
-    st.data_editor — ver _formatar_moeda_br_vermelho())."""
+    isso aceitam Styler. A tabela principal (st.data_editor, com os
+    checkboxes) NÃO tem esse destaque — confirmado com o usuário
+    2026-07-22 que `st.data_editor` não aceita `pandas.Styler` (limitação
+    da própria API do Streamlit, não do desenho/canvas: o emoji 🔴 testado
+    antes renderiza normalmente, mas é só texto, não cor de fonte de
+    verdade — usuário preferiu número simples, sem marcador, a essa
+    tabela ficar com "bolinha" em vez do número colorido)."""
     colunas = [c for c in _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO_LABEL if c in df.columns]
     return df.style.map(lambda _: "color: red", subset=colunas)
 
@@ -1600,7 +1588,7 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
     editor_exibicao = editor_base.copy()
     editor_exibicao["PCT_DIVERGENCIA"] = editor_exibicao["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
     for _col in _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO:
-        editor_exibicao[_col] = editor_exibicao[_col].apply(_formatar_moeda_br_vermelho)
+        editor_exibicao[_col] = editor_exibicao[_col].apply(_formatar_moeda_br)
     editor_exibicao = editor_exibicao.rename(columns=loader.carregar_dicionario_campos())
     editor_exibicao = editor_exibicao.rename(columns={"OBSERVACAO": "Observacao"})
 
