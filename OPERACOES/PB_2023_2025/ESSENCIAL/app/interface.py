@@ -1527,6 +1527,22 @@ def _preparar_preview_rn1_fisica_simulada_30(df: pd.DataFrame) -> pd.DataFrame:
     })
 
 
+_COLUNAS_DESTAQUE_VERMELHO_RN1 = [
+    "Total Debito (R$)", "Total Credito (R$)", "Divergencia (R$)", "% Diverg",
+]
+
+
+def _destacar_vermelho_rn1(df: pd.DataFrame) -> "pd.io.formats.style.Styler":
+    """Pinta de vermelho o texto de Total Débito, Total Crédito,
+    Divergência e % Diverg (pedido do usuário, Estágio 7.3.2) — as 4
+    colunas que resumem o risco fiscal calculado, destacadas pra saltarem
+    aos olhos no meio das outras colunas monetárias. st.dataframe aceita
+    um pandas.Styler diretamente no lugar do DataFrame (ver
+    streamlit.elements.arrow.marshall_styler)."""
+    colunas = [c for c in _COLUNAS_DESTAQUE_VERMELHO_RN1 if c in df.columns]
+    return df.style.map(lambda _: "color: red", subset=colunas)
+
+
 def render_rn1_simulada_30() -> None:
     """Estágio 7.3.2 — Simulação RN1 (+30%) (2026-07-22, Solicitação
     Técnica): parte de rn1_produto (Estágio 7.3.1, já condensado por
@@ -1582,7 +1598,7 @@ def render_rn1_simulada_30() -> None:
                     unsafe_allow_html=True,
                 )
                 evento_tabela = st.dataframe(
-                    _preparar_preview_rn1_simulada_30(amostra),
+                    _destacar_vermelho_rn1(_preparar_preview_rn1_simulada_30(amostra)),
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",
@@ -1631,7 +1647,7 @@ def render_rn1_simulada_30() -> None:
                             unsafe_allow_html=True,
                         )
                         st.dataframe(
-                            _preparar_preview_rn1_fisica_simulada_30(detalhe),
+                            _destacar_vermelho_rn1(_preparar_preview_rn1_fisica_simulada_30(detalhe)),
                             use_container_width=True,
                             hide_index=True,
                         )
