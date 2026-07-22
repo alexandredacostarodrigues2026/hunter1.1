@@ -1529,20 +1529,30 @@ _MARCADOR_CABECALHO_VERMELHO_EDITOR_GRUPO_ALVO = {
 }
 
 
-def _destacar_vermelho_grupo_alvo(df: pd.DataFrame) -> "pd.io.formats.style.Styler":
+_LIMIAR_DESTAQUE_VERMELHO_PCT_DIVERG = 30
+
+
+def _destacar_vermelho_grupo_alvo(df: pd.DataFrame, acima_do_limiar: pd.Series) -> "pd.io.formats.style.Styler":
     """Pinta de vermelho (cor de texto de verdade, via pandas.Styler) as
-    colunas de Total Débito/Total Crédito/Divergência — usada nas
+    colunas de Total Débito/Total Crédito/Divergência/% Diverg — só nas
+    LINHAS em que % Diverg > 30% (2026-07-22, pedido do usuário: "só
+    pinte de vermelho se > 30%" — antes pintava a coluna inteira, sem
+    condição). `acima_do_limiar` é uma Series booleana (índice igual ao
+    de `df`) calculada ANTES de % Diverg virar string formatada
+    ("313,36%") — precisa ser o valor numérico cru pra comparar com 30,
+    por isso é passada separada em vez de recalculada aqui. Usada nas
     tabelas SOMENTE LEITURA do Grupo de Produto Alvo (drill-down por ano
     e "Ver grupo completo já salvo"), que são st.dataframe comum e por
     isso aceitam Styler. A tabela principal (st.data_editor, com os
     checkboxes) NÃO tem esse destaque — confirmado com o usuário
-    2026-07-22 que `st.data_editor` não aceita `pandas.Styler` (limitação
-    da própria API do Streamlit, não do desenho/canvas: o emoji 🔴 testado
-    antes renderiza normalmente, mas é só texto, não cor de fonte de
-    verdade — usuário preferiu número simples, sem marcador, a essa
-    tabela ficar com "bolinha" em vez do número colorido)."""
+    2026-07-22 que `st.data_editor` não aceita `pandas.Styler`."""
     colunas = [c for c in _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO_LABEL if c in df.columns]
-    return df.style.map(lambda _: "color: red", subset=colunas)
+
+    def _estilo_linha(linha: pd.Series) -> list:
+        vermelho = "color: red" if acima_do_limiar.get(linha.name, False) else ""
+        return [vermelho if col in colunas else "" for col in df.columns]
+
+    return df.style.apply(_estilo_linha, axis=1)
 
 
 def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
@@ -1649,11 +1659,12 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
         if detalhe.empty:
             st.info("Nenhum detalhamento anual encontrado pra este produto.")
         else:
+            acima_30 = detalhe["PCT_DIVERGENCIA"] > _LIMIAR_DESTAQUE_VERMELHO_PCT_DIVERG
             detalhe["PCT_DIVERGENCIA"] = detalhe["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
             for _col in _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO:
                 detalhe[_col] = detalhe[_col].apply(_formatar_moeda_br)
             st.dataframe(
-                _destacar_vermelho_grupo_alvo(_preparar_preview_rn1_fisica_simulada_30(detalhe)),
+                _destacar_vermelho_grupo_alvo(_preparar_preview_rn1_fisica_simulada_30(detalhe), acima_30),
                 use_container_width=True,
                 hide_index=True,
             )
@@ -1662,6 +1673,7 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
     if not grupo_atual.empty:
         with st.expander(f"Ver grupo completo já salvo ({total_grupo} produto(s))"):
             grupo_preview = grupo_atual.copy()
+            acima_30 = grupo_preview["PCT_DIVERGENCIA"] > _LIMIAR_DESTAQUE_VERMELHO_PCT_DIVERG
             grupo_preview["PCT_DIVERGENCIA"] = grupo_preview["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
             for _col in _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO:
                 grupo_preview[_col] = grupo_preview[_col].apply(_formatar_moeda_br)
@@ -1669,7 +1681,7 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
                 _destacar_vermelho_grupo_alvo(_preparar_preview(
                     grupo_preview,
                     _COLUNAS_BASE_GRUPO_PRODUTO_ALVO + ["TS", "OBSERVACAO"],
-                )),
+                ), acima_30),
                 use_container_width=True,
                 hide_index=True,
             )
