@@ -1521,6 +1521,12 @@ _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO = ("TOTAL_DEBITO", "TOTAL_CREDITO", "DIVER
 _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO_LABEL = (
     "Total Debito (R$)", "Total Credito (R$)", "Divergencia (R$)",
 )
+_COLUNAS_OCULTAS_EDITOR_GRUPO_ALVO = ("Total Debito (R$)", "Total Credito (R$)", "Observacao")
+_MARCADOR_CABECALHO_VERMELHO_EDITOR_GRUPO_ALVO = {
+    "Divergencia (R$)": "🔴 Divergencia (R$)",
+    "% Diverg": "🔴 % Diverg",
+    "Infracao": "🔴 Infracao",
+}
 
 
 def _destacar_vermelho_grupo_alvo(df: pd.DataFrame) -> "pd.io.formats.style.Styler":
@@ -1568,7 +1574,8 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
     st.caption(
         "Marque \"Selecionar p/ Fiscalização\" pros produtos que entram no grupo efetivamente "
         "fiscalizado (fica salvo mesmo trocando o filtro de busca depois), e \"Ver Anos\" pra "
-        "abrir o detalhamento anual (simulação +30%) do produto logo abaixo da tabela."
+        "abrir o detalhamento anual (simulação +30%) do produto logo abaixo da tabela. Total "
+        "Débito, Total Crédito e Observação ficam só nas tabelas de leitura abaixo."
     )
 
     ja_selecionados, _ = loader.consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=True)
@@ -1591,10 +1598,18 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
         editor_exibicao[_col] = editor_exibicao[_col].apply(_formatar_moeda_br)
     editor_exibicao = editor_exibicao.rename(columns=loader.carregar_dicionario_campos())
     editor_exibicao = editor_exibicao.rename(columns={"OBSERVACAO": "Observacao"})
+    # Total Débito/Total Crédito/Observação saem da tabela editável (pedido
+    # do usuário 2026-07-22) — continuam disponíveis no drill-down e no
+    # "Ver grupo completo já salvo" abaixo. Divergência/%Diverg/Infração
+    # ganham marcador 🔴 só no CABEÇALHO (não no valor de cada linha) —
+    # mesma sessão, depois de descartar bolinha por linha e crachá/etiqueta
+    # (ver memoria/2026-07-22.md pro raciocínio completo dessa escolha).
+    editor_exibicao = editor_exibicao.drop(columns=list(_COLUNAS_OCULTAS_EDITOR_GRUPO_ALVO))
+    editor_exibicao = editor_exibicao.rename(columns=_MARCADOR_CABECALHO_VERMELHO_EDITOR_GRUPO_ALVO)
 
     colunas_travadas = [
         c for c in editor_exibicao.columns
-        if c not in (_COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, _COLUNA_CHECKBOX_VER_ANOS, "Observacao")
+        if c not in (_COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, _COLUNA_CHECKBOX_VER_ANOS)
     ]
     with st.container(key="rn1_simulada_30_editor_grupo_alvo"):
         st.markdown(
@@ -1615,7 +1630,9 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
         selecoes["SELECIONADO"] = (
             editado[_COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO].reindex(editor_base.index).to_numpy()
         )
-        selecoes["OBSERVACAO"] = editado["Observacao"].reindex(editor_base.index).to_numpy()
+        # "Observacao" não está mais na tabela exibida (removida a pedido do
+        # usuário) — mantém o que já estava salvo, sem edição possível aqui.
+        selecoes["OBSERVACAO"] = editor_base["OBSERVACAO"].to_numpy()
         resultado = loader.salvar_grupo_produto_alvo_fiscalizacao(selecoes)
         if "erro" in resultado:
             st.error(f"Erro: {resultado['erro']}")
