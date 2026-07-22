@@ -1514,6 +1514,18 @@ _COLUNAS_BASE_GRUPO_PRODUTO_ALVO = [
 ]
 _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO = "Selecionar p/ Fiscalização"
 _COLUNA_CHECKBOX_VER_ANOS = "📅 Ver Anos"
+_COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO = ("TOTAL_DEBITO", "TOTAL_CREDITO", "DIVERGENCIA")
+
+
+def _formatar_moeda_br_vermelho(v: float) -> str:
+    """Mesmo formato de _formatar_moeda_br(), com marcador 🔴 na frente —
+    destaque de Total Débito/Total Crédito/Divergência pedido pelo
+    usuário (2026-07-22) nas tabelas do Grupo de Produto Alvo. st.data_
+    editor (usado na tabela principal, por causa dos checkboxes) não
+    aceita pandas.Styler — só st.dataframe aceita cor de texto de
+    verdade — então o marcador emoji é o destaque possível numa grade
+    editável (confirmado com o usuário; ver memoria/2026-07-22.md)."""
+    return f"🔴 {_formatar_moeda_br(v)}"
 
 
 def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
@@ -1564,8 +1576,8 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
 
     editor_exibicao = editor_base.copy()
     editor_exibicao["PCT_DIVERGENCIA"] = editor_exibicao["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
-    for _col in ("DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO"):
-        editor_exibicao[_col] = editor_exibicao[_col].apply(_formatar_moeda_br)
+    for _col in _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO:
+        editor_exibicao[_col] = editor_exibicao[_col].apply(_formatar_moeda_br_vermelho)
     editor_exibicao = editor_exibicao.rename(columns=loader.carregar_dicionario_campos())
     editor_exibicao = editor_exibicao.rename(columns={"OBSERVACAO": "Observacao"})
 
@@ -1610,8 +1622,8 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
             st.info("Nenhum detalhamento anual encontrado pra este produto.")
         else:
             detalhe["PCT_DIVERGENCIA"] = detalhe["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
-            for _col in ("DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO"):
-                detalhe[_col] = detalhe[_col].apply(_formatar_moeda_br)
+            for _col in _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO:
+                detalhe[_col] = detalhe[_col].apply(_formatar_moeda_br_vermelho)
             st.dataframe(
                 _preparar_preview_rn1_fisica_simulada_30(detalhe),
                 use_container_width=True,
@@ -1623,8 +1635,8 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
         with st.expander(f"Ver grupo completo já salvo ({total_grupo} produto(s))"):
             grupo_preview = grupo_atual.copy()
             grupo_preview["PCT_DIVERGENCIA"] = grupo_preview["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
-            for _col in ("DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO"):
-                grupo_preview[_col] = grupo_preview[_col].apply(_formatar_moeda_br)
+            for _col in _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO:
+                grupo_preview[_col] = grupo_preview[_col].apply(_formatar_moeda_br_vermelho)
             st.dataframe(
                 _preparar_preview(
                     grupo_preview,
