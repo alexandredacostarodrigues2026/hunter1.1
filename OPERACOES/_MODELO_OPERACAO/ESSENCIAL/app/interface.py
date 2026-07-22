@@ -1661,7 +1661,7 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
         else:
             acima_30 = detalhe["PCT_DIVERGENCIA"] > _LIMIAR_DESTAQUE_VERMELHO_PCT_DIVERG
             detalhe["PCT_DIVERGENCIA"] = detalhe["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
-            for _col in _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO:
+            for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
                 detalhe[_col] = detalhe[_col].apply(_formatar_moeda_br)
             st.dataframe(
                 _destacar_vermelho_grupo_alvo(_preparar_preview_rn1_fisica_simulada_30(detalhe), acima_30),
