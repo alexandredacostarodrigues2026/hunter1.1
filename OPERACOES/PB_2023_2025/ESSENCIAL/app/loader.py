@@ -3422,6 +3422,132 @@ def consultar_rn1_produto(limite: "int | None" = 200) -> "tuple[pd.DataFrame, in
         return pd.DataFrame(), 0
 
 
+# ── Estágio 7.3.2 — Simulação RN1 (+30%) ─────────────────────────────────
+# Solicitação Técnica (2026-07-22): parte de rn1_produto (Estágio 7.3.1, já
+# condensado por DESCR_ALVO) e majora EI/Compras/EF em 30%, mantendo Vendas
+# como âncora real do XML (sem acréscimo) — testa se uma eventual
+# subvaloração de 30% nessas contas de "custo"/"estoque" seria suficiente
+# pra explicar as divergências, ou se o risco fiscal permanece estrutural
+# mesmo com os valores majorados. Convenção de INFRACAO idêntica à do 7.3.1
+# (confirmado com o usuário 2026-07-22 — o texto original do pedido descrevia
+# a regra invertida, mas a intenção é manter a mesma lógica fiscal já
+# validada em 7.2/7.2.1/7.3/7.3.1, não criar uma regra nova só pra este
+# estágio): diferenca = TOTAL_DEBITO - TOTAL_CREDITO; diferenca < 0 →
+# "Entradas sem NF", senão "Saídas sem NF".
+_FATOR_SIMULACAO_30 = 1.30
+
+
+def gerar_rn1_simulada_30() -> dict:
+    """Estágio 7.3.2 — Simulação RN1 (+30%): parte de rn1_produto (Estágio
+    7.3.1) e multiplica EI/Compras/EF por 1.3, recalculando Total Débito
+    (EI_sim + Compras_sim), Total Crédito (Vendas + EF_sim — Vendas
+    permanece o valor físico real do XML, sem acréscimo, servindo de
+    âncora de confronto), Divergência, Infração e % Diverg sobre os novos
+    totais. Não reprocessa entradas/saídas do zero — exige rn1_produto já
+    persistida. Ordenação: por DIVERGENCIA decrescente. Regra R07:
+    DESCR_ALVO sempre string.
+
+    Devolve {'resumo': dict, 'cruzamento': DataFrame, 'erros': list} —
+    erros não-vazio quando rn1_produto (Estágio 7.3.1) ainda não foi
+    gerada."""
+    base, _ = consultar_rn1_produto(limite=None)
+    if base.empty:
+        return {
+            "resumo": {}, "cruzamento": pd.DataFrame(),
+            "erros": ["Tabela rn1_produto (Estágio 7.3.1) ainda não foi gerada."],
+        }
+
+    simulado = base[["DESCR_ALVO"]].copy()
+    for col in ("EI", "COMPRAS", "EF"):
+        valor = pd.to_numeric(base[col], errors="coerce").fillna(0.0)
+        simulado[col] = (valor * _FATOR_SIMULACAO_30).round(2)
+    simulado["VENDAS"] = pd.to_numeric(base["VENDAS"], errors="coerce").fillna(0.0).round(2)
+
+    simulado["TOTAL_DEBITO"] = (simulado["EI"] + simulado["COMPRAS"]).round(2)
+    simulado["TOTAL_CREDITO"] = (simulado["VENDAS"] + simulado["EF"]).round(2)
+    diferenca = simulado["TOTAL_DEBITO"] - simulado["TOTAL_CREDITO"]
+    simulado["DIVERGENCIA"] = diferenca.abs().round(2)
+    simulado["INFRACAO"] = np.where(diferenca < 0, _INFRACAO_ENTRADAS_SEM_NF, _INFRACAO_SAIDAS_SEM_NF)
+
+    minimo = simulado[["TOTAL_DEBITO", "TOTAL_CREDITO"]].min(axis=1)
+    minimo_seguro = minimo.where(minimo != 0, 0.00001)
+    simulado["PCT_DIVERGENCIA"] = (simulado["DIVERGENCIA"] / minimo_seguro * 100).round(2)
+
+    cruzamento = (
+        _forcar_colunas_string(simulado, ["DESCR_ALVO"])[_COLUNAS_RN1_PRODUTO]
+        .sort_values("DIVERGENCIA", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    resumo = {
+        "total_produtos": len(cruzamento),
+        "total_divergencia_acumulada": float(cruzamento["DIVERGENCIA"].sum()),
+    }
+    return {"resumo": resumo, "cruzamento": cruzamento, "erros": []}
+
+
+def persistir_rn1_simulada_30(callback=None) -> dict:
+    """Estágio 7.3.2: persiste rn1_simulada_30 no DuckDB, ver
+    gerar_rn1_simulada_30(). callback(etapa, n) chamado ao final."""
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    resultado = {}
+    try:
+        r = gerar_rn1_simulada_30()
+        if r["erros"]:
+            resultado["erro"] = " | ".join(r["erros"])
+            return resultado
+        df = r["cruzamento"]
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            if not df.empty:
+                con.register("_df_rn1_simulada_30", df)
+                con.execute("CREATE OR REPLACE TABLE rn1_simulada_30 AS SELECT * FROM _df_rn1_simulada_30")
+                con.unregister("_df_rn1_simulada_30")
+        resultado["rn1_simulada_30"] = len(df)
+        if callback:
+            callback("rn1_simulada_30", resultado["rn1_simulada_30"])
+    except Exception as exc:
+        logger.exception("Erro ao persistir rn1_simulada_30: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def rn1_simulada_30_ja_gerado() -> bool:
+    """True se a tabela rn1_simulada_30 (Estágio 7.3.2) já existe no
+    DuckDB da operação."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            return "rn1_simulada_30" in tabelas
+    except Exception:
+        logger.exception("Erro ao verificar rn1_simulada_30 existente em %s", _BANCO_PATH)
+        return False
+
+
+def consultar_rn1_simulada_30(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê rn1_simulada_30 já persistida (sem reprocessar), devolvendo uma
+    amostra (até 'limite' linhas) e o total real de linhas. limite=None
+    devolve a tabela inteira."""
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "rn1_simulada_30" not in tabelas:
+                return pd.DataFrame(), 0
+            total = con.execute("SELECT COUNT(*) FROM rn1_simulada_30").fetchone()[0]
+            query = (
+                "SELECT * FROM rn1_simulada_30" if limite is None
+                else f"SELECT * FROM rn1_simulada_30 LIMIT {limite}"
+            )
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar rn1_simulada_30 em %s", _BANCO_PATH)
+        return pd.DataFrame(), 0
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio

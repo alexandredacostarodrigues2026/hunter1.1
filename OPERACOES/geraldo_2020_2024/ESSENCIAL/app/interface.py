@@ -1488,6 +1488,106 @@ def render_rn1_produto() -> None:
     st.rerun()
 
 
+_COLUNAS_PREVIEW_RN1_SIMULADA_30 = [
+    "DESCR_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
+    "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
+]
+
+
+def _preparar_preview_rn1_simulada_30(df: pd.DataFrame) -> pd.DataFrame:
+    """Mesma preparação de _preparar_preview_rn1_produto(), mas identifica
+    as colunas majoradas (EI/Compras/EF) com o sufixo "(+30%)" no
+    cabeçalho, pra evitar confusão com os valores reais do Estágio 7.3.1.
+    Vendas permanece "Vendas (XML)" — âncora real, sem acréscimo."""
+    preview = _preparar_preview(df, _COLUNAS_PREVIEW_RN1_SIMULADA_30)
+    return preview.rename(columns={
+        "EI (R$)": "EI (+30%)",
+        "Compras (R$)": "Compras (+30%)",
+        "EF (R$)": "EF (+30%)",
+        "Vendas (R$)": "Vendas (XML)",
+    })
+
+
+def render_rn1_simulada_30() -> None:
+    """Estágio 7.3.2 — Simulação RN1 (+30%) (2026-07-22, Solicitação
+    Técnica): parte de rn1_produto (Estágio 7.3.1, já condensado por
+    Descrição Relevante) e majora EI/Compras/EF em 30% — testa se uma
+    eventual subvaloração de 30% nessas contas de "custo"/"estoque"
+    explicaria as divergências, ou se o risco fiscal permanece estrutural
+    mesmo com os valores majorados. Vendas permanece o valor físico real
+    do XML, sem acréscimo, servindo de âncora de confronto — ver
+    loader.gerar_rn1_simulada_30() pro raciocínio completo. Exige
+    `rn1_produto` (Estágio 7.3.1) já gerada. Mesmo padrão "Gerar/Regerar" +
+    prévia de alta densidade do 7.3.1, sem drill-down (a simulação já
+    parte do total acumulado por produto, não tem detalhe por ano)."""
+    st.subheader("Estágio 7.3.2 — Simulação RN1 (+30%)")
+    st.caption(
+        "Simula uma subvaloração de 30% em Estoque Inicial, Compras e Estoque Final (colunas "
+        "marcadas com \"(+30%)\") sobre o total acumulado por produto do Estágio 7.3.1, mantendo "
+        "Vendas como âncora real do XML, sem acréscimo. Total Débito, Total Crédito, Divergência, "
+        "Infração e % Diverg recalculados sobre os novos totais — ajuda a identificar se uma margem "
+        "de erro de escrituração explicaria as divergências ou se os indícios de omissão são "
+        "estruturais. Ordenado por Divergência decrescente."
+    )
+
+    if "rn1_simulada_30_gerado" not in st.session_state:
+        st.session_state["rn1_simulada_30_gerado"] = loader.rn1_simulada_30_ja_gerado()
+
+    if st.session_state["rn1_simulada_30_gerado"]:
+        df_preview, total = loader.consultar_rn1_simulada_30(limite=None)
+        st.success(f"✅ {total:,} produto(s) em `rn1_simulada_30`.".replace(",", "."))
+
+        if df_preview.empty:
+            st.info('Nenhum produto gerado — gere "RN1 por Produto" (Estágio 7.3.1) primeiro.')
+        else:
+            busca_descricao = st.text_input(
+                "Buscar por Descrição", key="filtro_descricao_rn1_simulada_30",
+            )
+            filtrado = df_preview
+            if busca_descricao.strip():
+                filtrado = filtrado[
+                    filtrado["DESCR_ALVO"].str.contains(busca_descricao.strip(), case=False, na=False)
+                ]
+
+            st.markdown(f"**{len(filtrado):,} produto(s)** após filtro.".replace(",", "."))
+            amostra = filtrado.head(200).copy()
+            amostra["PCT_DIVERGENCIA"] = amostra["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+            for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
+                amostra[_col] = amostra[_col].apply(_formatar_moeda_br)
+            with st.container(key="rn1_simulada_30_tabela"):
+                st.markdown(
+                    "<style>.st-key-rn1_simulada_30_tabela [data-testid='stDataFrame'] "
+                    "* { font-size: 12px; }</style>",
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(
+                    _preparar_preview_rn1_simulada_30(amostra),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        clicou = st.button(
+            "Regerar Simulação RN1 (+30%)",
+            key="btn_regerar_rn1_simulada_30",
+            help="Reprocessa a partir de rn1_produto (Estágio 7.3.1) e recalcula os totais majorados.",
+        )
+    else:
+        clicou = st.button("Gerar Simulação RN1 (+30%)", key="btn_gerar_rn1_simulada_30")
+
+    if not clicou:
+        return
+
+    with st.spinner("Majorando EI/Compras/EF em 30% e recalculando os totais por produto..."):
+        resultado = loader.persistir_rn1_simulada_30()
+
+    if "erro" in resultado:
+        st.error(f"Erro: {resultado['erro']}")
+        return
+
+    st.session_state["rn1_simulada_30_gerado"] = True
+    st.rerun()
+
+
 _COLUNAS_PREVIEW_DIVERGENCIA = [
     "CHV_NFE", "EXCEL_QTD_ITENS", "HUNTER_ENTRADAS_QTD", "ITENS_ENTRADAS_REAIS",
     "ITENS_SAIDAS_REAIS", "ITENS_SITUACAO", "ITENS_ANALISE_CFOP",
@@ -1904,9 +2004,11 @@ def render_menu_principal() -> None:
     render_pagina_rn1_fisica() (Estágio 7.3, 2026-07-20 — mesma fórmula
     do 7.2 agregada por Descrição Relevante, mantendo o Ano)/
     render_pagina_rn1_produto() (Estágio 7.3.1, 2026-07-20 — condensação
-    do 7.3 por Descrição Relevante, somando todos os anos)."""
+    do 7.3 por Descrição Relevante, somando todos os anos)/
+    render_pagina_rn1_simulada_30() (Estágio 7.3.2, 2026-07-22 — majora
+    EI/Compras/EF do 7.3.1 em 30%, Vendas como âncora real)."""
     st.subheader("Menu Principal")
-    col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns(10)
+    col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11 = st.columns(11)
     if col1.button("📥 EXTRAÇÃO", key="btn_menu_extracao", use_container_width=True):
         st.session_state["pagina_ativa"] = "extracao"
         st.rerun()
@@ -1939,6 +2041,9 @@ def render_menu_principal() -> None:
         st.rerun()
     if col10.button("📊 7.3.1: RN1 POR PRODUTO", key="btn_menu_rn1_produto", use_container_width=True):
         st.session_state["pagina_ativa"] = "rn1_produto"
+        st.rerun()
+    if col11.button("📈 7.3.2: SIMULAÇÃO RN1 (+30%)", key="btn_menu_rn1_simulada_30", use_container_width=True):
+        st.session_state["pagina_ativa"] = "rn1_simulada_30"
         st.rerun()
 
 
@@ -2191,3 +2296,17 @@ def render_pagina_rn1_produto() -> None:
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     render_rn1_produto()
+
+
+def render_pagina_rn1_simulada_30() -> None:
+    """Painel '7.3.2: SIMULAÇÃO RN1 (+30%)' (Estágio 7.3.2, 2026-07-22,
+    Solicitação Técnica), botão de 11º nível no Menu Principal: ver
+    loader.gerar_rn1_simulada_30()/render_rn1_simulada_30(). Exige
+    dados_carregados (mesmo padrão das outras páginas); depende também de
+    rn1_produto (Estágio 7.3.1) já gerada, checado dentro de
+    render_rn1_simulada_30()."""
+    _botao_voltar_menu()
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        return
+    render_rn1_simulada_30()
