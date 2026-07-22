@@ -1488,36 +1488,18 @@ def render_rn1_produto() -> None:
     st.rerun()
 
 
-_COLUNAS_PREVIEW_RN1_SIMULADA_30 = [
-    "DESCR_ALVO", "COD_ITEM", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
-    "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
-]
-
-
 _COLUNAS_PREVIEW_RN1_FISICA_SIMULADA_30 = [
     "ANO", "DESCR_ALVO", "COD_ITEM", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
     "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
 
 
-def _preparar_preview_rn1_simulada_30(df: pd.DataFrame) -> pd.DataFrame:
-    """Mesma preparação de _preparar_preview_rn1_produto(), mas identifica
-    as colunas majoradas (EI/Compras/EF) com o sufixo "(+30%)" no
-    cabeçalho, pra evitar confusão com os valores reais do Estágio 7.3.1.
-    Vendas permanece "Vendas (XML)" — âncora real, sem acréscimo."""
-    preview = _preparar_preview(df, _COLUNAS_PREVIEW_RN1_SIMULADA_30)
-    return preview.rename(columns={
-        "EI (R$)": "EI (+30%)",
-        "Compras (R$)": "Compras (+30%)",
-        "EF (R$)": "EF (+30%)",
-        "Vendas (R$)": "Vendas (XML)",
-    })
-
-
 def _preparar_preview_rn1_fisica_simulada_30(df: pd.DataFrame) -> pd.DataFrame:
-    """Mesma renomeação de _preparar_preview_rn1_simulada_30(), aplicada ao
-    detalhamento por ANO (drill-down) — usa _COLUNAS_PREVIEW_RN1_FISICA_
-    SIMULADA_30, que inclui a coluna ANO."""
+    """Identifica as colunas majoradas (EI/Compras/EF) com o sufixo
+    "(+30%)" no cabeçalho, pra evitar confusão com os valores reais do
+    Estágio 7.3.1. Vendas permanece "Vendas (XML)" — âncora real, sem
+    acréscimo. Usada no drill-down por ano dentro de
+    _render_grupo_produto_alvo_fiscalizacao()."""
     preview = _preparar_preview(df, _COLUNAS_PREVIEW_RN1_FISICA_SIMULADA_30)
     return preview.rename(columns={
         "EI (R$)": "EI (+30%)",
@@ -1527,26 +1509,11 @@ def _preparar_preview_rn1_fisica_simulada_30(df: pd.DataFrame) -> pd.DataFrame:
     })
 
 
-_COLUNAS_DESTAQUE_VERMELHO_RN1 = [
-    "Total Debito (R$)", "Total Credito (R$)", "Divergencia (R$)", "% Diverg",
-]
-
-
-def _destacar_vermelho_rn1(df: pd.DataFrame) -> "pd.io.formats.style.Styler":
-    """Pinta de vermelho o texto de Total Débito, Total Crédito,
-    Divergência e % Diverg (pedido do usuário, Estágio 7.3.2) — as 4
-    colunas que resumem o risco fiscal calculado, destacadas pra saltarem
-    aos olhos no meio das outras colunas monetárias. st.dataframe aceita
-    um pandas.Styler diretamente no lugar do DataFrame (ver
-    streamlit.elements.arrow.marshall_styler)."""
-    colunas = [c for c in _COLUNAS_DESTAQUE_VERMELHO_RN1 if c in df.columns]
-    return df.style.map(lambda _: "color: red", subset=colunas)
-
-
 _COLUNAS_BASE_GRUPO_PRODUTO_ALVO = [
     "DESCR_ALVO", "COD_ITEM", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO",
 ]
 _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO = "Selecionar p/ Fiscalização"
+_COLUNA_CHECKBOX_VER_ANOS = "📅 Ver Anos"
 
 
 def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
@@ -1557,16 +1524,28 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
     produtos já filtrados/exibidos no 7.3.2 (Divergência, Infração, %
     Diverg) em vez da tabela de ranking bruta (Origem/Produto/QT/Valor)
     do app antigo. `amostra_raw` é a mesma fatia (até 200 linhas, já
-    filtrada por Descrição) da tabela principal do 7.3.2, ANTES da
-    formatação de moeda/percentual — os valores crus são o que
-    efetivamente vai pra loader.salvar_grupo_produto_alvo_fiscalizacao();
-    a formatação aqui é só cosmética (mesmo padrão do resto do painel).
-    Marcar/desmarcar e salvar sob um filtro de busca não apaga seleções
-    feitas sob outro filtro (merge por DESCR_ALVO em loader.py)."""
+    filtrada por Descrição), ANTES da formatação de moeda/percentual —
+    os valores crus são o que efetivamente vai pra loader.salvar_grupo_
+    produto_alvo_fiscalizacao(); a formatação aqui é só cosmética (mesmo
+    padrão do resto do painel). Marcar/desmarcar e salvar sob um filtro
+    de busca não apaga seleções feitas sob outro filtro (merge por
+    DESCR_ALVO em loader.py).
+
+    Segunda coluna de checkbox, "📅 Ver Anos" (2026-07-22, mesma sessão —
+    usuário pediu pra esta tabela virar também a base do drill-down por
+    ano, "ignorando" a antiga tabela read-only com clique-de-linha):
+    marcar essa coluna abre, logo abaixo da tabela, o detalhamento anual
+    (loader.simular_rn1_fisica_30()) do(s) produto(s) marcado(s) — não
+    precisa de on_select (que st.data_editor nem suporta nesta versão do
+    Streamlit) porque o próprio retorno do data_editor já dá o estado do
+    checkbox editado. Extração de valores marcados sempre por índice
+    (`.reindex`), nunca por posição (`.to_numpy()` direto) — mais seguro
+    contra qualquer reordenação interna do widget."""
     st.markdown("**🎯 Grupo de Produto Alvo (Fiscalização)**")
     st.caption(
-        "Marque, entre os produtos listados acima, quais entram no grupo que será efetivamente "
-        "fiscalizado. Produtos marcados ficam salvos mesmo trocando o filtro de busca depois."
+        "Marque \"Selecionar p/ Fiscalização\" pros produtos que entram no grupo efetivamente "
+        "fiscalizado (fica salvo mesmo trocando o filtro de busca depois), e \"Ver Anos\" pra "
+        "abrir o detalhamento anual (simulação +30%) do produto logo abaixo da tabela."
     )
 
     ja_selecionados, _ = loader.consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=True)
@@ -1576,6 +1555,7 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
     editor_base.insert(
         2, _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, editor_base["DESCR_ALVO"].isin(descricoes_ja_selecionadas),
     )
+    editor_base.insert(3, _COLUNA_CHECKBOX_VER_ANOS, False)
     if not ja_selecionados.empty:
         obs_por_produto = ja_selecionados.set_index("DESCR_ALVO")["OBSERVACAO"]
         editor_base["OBSERVACAO"] = editor_base["DESCR_ALVO"].map(obs_por_produto).fillna("")
@@ -1591,7 +1571,7 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
 
     colunas_travadas = [
         c for c in editor_exibicao.columns
-        if c not in (_COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, "Observacao")
+        if c not in (_COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, _COLUNA_CHECKBOX_VER_ANOS, "Observacao")
     ]
     with st.container(key="rn1_simulada_30_editor_grupo_alvo"):
         st.markdown(
@@ -1609,14 +1589,34 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
 
     if st.button("💾 Salvar Grupo de Produto Alvo", key="btn_salvar_grupo_produto_alvo"):
         selecoes = editor_base[_COLUNAS_BASE_GRUPO_PRODUTO_ALVO].copy()
-        selecoes["SELECIONADO"] = editado[_COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO].to_numpy()
-        selecoes["OBSERVACAO"] = editado["Observacao"].to_numpy()
+        selecoes["SELECIONADO"] = (
+            editado[_COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO].reindex(editor_base.index).to_numpy()
+        )
+        selecoes["OBSERVACAO"] = editado["Observacao"].reindex(editor_base.index).to_numpy()
         resultado = loader.salvar_grupo_produto_alvo_fiscalizacao(selecoes)
         if "erro" in resultado:
             st.error(f"Erro: {resultado['erro']}")
         else:
             st.success(f"✅ Grupo salvo — {resultado['total_ativos']} produto(s) ativo(s) no total.")
             st.rerun()
+
+    marcados_ver_anos = editado[_COLUNA_CHECKBOX_VER_ANOS].reindex(editor_base.index)
+    produtos_ver_anos = editor_base.loc[marcados_ver_anos.fillna(False), "DESCR_ALVO"].tolist()
+    for descr_produto in produtos_ver_anos:
+        st.divider()
+        st.markdown(f"**Detalhamento por Ano — simulação +30% — {descr_produto}**")
+        detalhe = loader.simular_rn1_fisica_30(descr_produto)
+        if detalhe.empty:
+            st.info("Nenhum detalhamento anual encontrado pra este produto.")
+        else:
+            detalhe["PCT_DIVERGENCIA"] = detalhe["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+            for _col in ("DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO"):
+                detalhe[_col] = detalhe[_col].apply(_formatar_moeda_br)
+            st.dataframe(
+                _preparar_preview_rn1_fisica_simulada_30(detalhe),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     grupo_atual, total_grupo = loader.consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=True)
     if not grupo_atual.empty:
@@ -1644,15 +1644,14 @@ def render_rn1_simulada_30() -> None:
     mesmo com os valores majorados. Vendas permanece o valor físico real
     do XML, sem acréscimo, servindo de âncora de confronto — ver
     loader.gerar_rn1_simulada_30() pro raciocínio completo. Exige
-    `rn1_produto` (Estágio 7.3.1) já gerada. Mesmo padrão "Gerar/Regerar" +
-    prévia de alta densidade do 7.3.1, com o mesmo drill-down "explode os
-    anos" ao clicar num produto — aqui a simulação +30% é recalculada
-    linha a linha por ANO (loader.simular_rn1_fisica_30()), não só
-    mostrando o detalhe real do 7.3 sem simular. Termina com a seção
-    "Grupo de Produto Alvo (Fiscalização)" (2026-07-22,
-    _render_grupo_produto_alvo_fiscalizacao()) — este painel também é a
-    tela de escolha de quais produtos entram no grupo fiscalizado, mesma
-    mecânica do `ranking.py` do app antigo."""
+    `rn1_produto` (Estágio 7.3.1) já gerada. Painel único, direto pra
+    seção "Grupo de Produto Alvo (Fiscalização)"
+    (_render_grupo_produto_alvo_fiscalizacao()) — 2026-07-22, usuário
+    pediu pra unificar: a tabela editável (checkbox de seleção +
+    checkbox "Ver Anos" pro drill-down) virou a ÚNICA tabela do painel,
+    substituindo a antiga tabela read-only com clique-de-linha (removida
+    a pedido: "essa tabela ficou ótima como base para drill down de
+    anos... pode ignorar a primeira tabela")."""
     st.subheader("Estágio 7.3.2 — Simulação RN1 (+30%)")
     st.caption(
         "Simula uma subvaloração de 30% em Estoque Inicial, Compras e Estoque Final (colunas "
@@ -1684,72 +1683,6 @@ def render_rn1_simulada_30() -> None:
 
             st.markdown(f"**{len(filtrado):,} produto(s)** após filtro.".replace(",", "."))
             amostra_raw = filtrado.head(200).copy()
-            amostra = amostra_raw.copy()
-            amostra["PCT_DIVERGENCIA"] = amostra["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
-            for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
-                amostra[_col] = amostra[_col].apply(_formatar_moeda_br)
-            with st.container(key="rn1_simulada_30_tabela"):
-                st.markdown(
-                    "<style>.st-key-rn1_simulada_30_tabela [data-testid='stDataFrame'] "
-                    "* { font-size: 12px; }</style>",
-                    unsafe_allow_html=True,
-                )
-                evento_tabela = st.dataframe(
-                    _destacar_vermelho_rn1(_preparar_preview_rn1_simulada_30(amostra)),
-                    use_container_width=True,
-                    hide_index=True,
-                    on_select="rerun",
-                    selection_mode="single-row",
-                    key="rn1_simulada_30_selecao_linha",
-                )
-
-            # Clique na linha da tabela alimenta o selectbox do drill-down
-            # abaixo (st.dataframe não expõe clique nenhum sem on_select/
-            # selection_mode — sem isso, a linha só fica destacada/
-            # copiável, sem nenhum efeito real, que era o bug reportado
-            # pelo usuário). Só força o valor do selectbox quando a linha
-            # clicada MUDA (compara com "_ultimo" salvo), pra não sobrescrever
-            # uma escolha manual feita depois no próprio selectbox enquanto a
-            # seleção da tabela permanece a mesma.
-            linhas_selecionadas = evento_tabela["selection"]["rows"] if evento_tabela else []
-            produto_clicado = (
-                amostra.iloc[linhas_selecionadas[0]]["DESCR_ALVO"] if linhas_selecionadas else None
-            )
-            if produto_clicado != st.session_state.get("rn1_simulada_30_ultimo_clicado"):
-                st.session_state["rn1_simulada_30_ultimo_clicado"] = produto_clicado
-                if produto_clicado is not None:
-                    st.session_state["drilldown_rn1_simulada_30"] = produto_clicado
-
-            st.divider()
-            st.markdown("**Detalhamento por Ano — simulação +30% (drill-down)**")
-            produtos_disponiveis = sorted(df_preview["DESCR_ALVO"].unique())
-            produto_selecionado = st.selectbox(
-                "Selecione um produto para ver o detalhamento anual (ou clique numa linha da "
-                "tabela acima)",
-                options=["Selecione..."] + produtos_disponiveis,
-                key="drilldown_rn1_simulada_30",
-            )
-            if produto_selecionado != "Selecione...":
-                detalhe = loader.simular_rn1_fisica_30(produto_selecionado)
-                if detalhe.empty:
-                    st.info("Nenhum detalhamento anual encontrado pra este produto.")
-                else:
-                    detalhe["PCT_DIVERGENCIA"] = detalhe["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
-                    for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
-                        detalhe[_col] = detalhe[_col].apply(_formatar_moeda_br)
-                    with st.container(key="rn1_simulada_30_drilldown_tabela"):
-                        st.markdown(
-                            "<style>.st-key-rn1_simulada_30_drilldown_tabela "
-                            "[data-testid='stDataFrame'] * { font-size: 12px; }</style>",
-                            unsafe_allow_html=True,
-                        )
-                        st.dataframe(
-                            _destacar_vermelho_rn1(_preparar_preview_rn1_fisica_simulada_30(detalhe)),
-                            use_container_width=True,
-                            hide_index=True,
-                        )
-
-            st.divider()
             _render_grupo_produto_alvo_fiscalizacao(amostra_raw)
 
         clicou = st.button(
