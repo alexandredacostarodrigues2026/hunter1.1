@@ -2680,28 +2680,43 @@ def verificar_estagio_8() -> dict:
 # Solicitação Técnica (2026-07-23): mesma mecânica do Estágio 8 (Resumo de
 # Entradas), agora sobre estoque_saidas (Estágio 4) — só 2 colunas de vínculo
 # (codproddecl, desc_xml; sem descrição_decl, que não foi pedida aqui) e
-# agrupamento por (codproddecl, desc_xml). ATENÇÃO — achado real confirmado
-# antes de implementar (2026-07-23): a bc3 (Matching, Estágio 2) só cobre
-# ENTRADAS de terceiros (BC2 x BC1); COD_ITEM_DECLARACAO fica NULL em ~99%
-# das linhas de estoque_saidas (achado real na geraldo: 59.901 de 60.623 —
-# mesma limitação já documentada em montar_estoque_saidas()). O Estágio
-# 8.1 ainda assim é implementado como pedido — só o valor prático de "achar
-# múltiplos códigos associados" fica bem mais limitado aqui do que em
-# Entradas, por causa dessa cobertura de Matching.
+# agrupamento por (codproddecl, desc_xml). PRIMEIRA VERSÃO (2026-07-23) usava
+# COD_ITEM_DECLARACAO pra codproddecl (mesmo campo do Estágio 8) — achado
+# real: fica NULL em ~99% das linhas de estoque_saidas (geraldo: 59.901 de
+# 60.623), porque a bc3 (Matching, Estágio 2) só cobre ENTRADAS de terceiros
+# (BC2 x BC1), sem elo equivalente pro sentido auditada→cliente. CORRIGIDO
+# no mesmo dia (usuário esclareceu: "nas saídas, o código de produto da
+# declaração é o código do xml") — codproddecl passou a vir de
+# fatoitemnfe_infnfe_det_prod_cprod (código do produto do PRÓPRIO XML): na
+# saída a auditada é EMITENTE da nota, então o cProd dela já é o código
+# dela mesma, sem precisar de Matching nenhum — mesmo raciocínio já usado
+# em _valores_por_ano_item() pra Vendas do Estágio 7.2. Cobertura 100%
+# confirmada na geraldo (0 nulos em 60.623 linhas).
 _COLUNAS_ESTAGIO8_SAIDAS_DETALHADO = ["codproddecl", "desc_xml", "idunico"]
 _COLUNAS_ESTAGIO8_SAIDAS_AGRUPADO = ["codproddecl", "desc_xml", "qtde_ocorrencias"]
 
 
 def gerar_estagio_8_saidas() -> dict:
     """Estágio 8.1 — Resumo de Saídas: extrai de estoque_saidas (Estágio
-    4) codproddecl (COD_ITEM_DECLARACAO), desc_xml (fatoitemnfe_infnfe_
-    det_prod_xprod) e idunico (ID_UNICO) — mesmo raciocínio de Regra R07
-    de gerar_estagio_8() (NULL genuíno preservado, nunca vira "None").
-    "agrupado" por (codproddecl, desc_xml), dropna=False (mesmo motivo:
-    não descartar da contagem os itens sem código declarado — aqui é a
-    maioria, ver comentário da seção). Devolve {'detalhado': DataFrame,
-    'agrupado': DataFrame, 'erros': list} — erros não-vazio quando
-    estoque_saidas (Estágio 4) ainda não foi gerada."""
+    4) codproddecl, desc_xml (fatoitemnfe_infnfe_det_prod_xprod) e
+    idunico (ID_UNICO). codproddecl vem de fatoitemnfe_infnfe_det_
+    prod_cprod (código do produto do PRÓPRIO XML), NÃO de COD_ITEM_
+    DECLARACAO — achado real confirmado com o usuário 2026-07-23: "nas
+    saídas, o código de produto da declaração é o código do xml" — na
+    saída a auditada é EMITENTE da nota, então o cProd do XML dela já É
+    o código dela mesma, sem precisar de Matching/BC3 nenhum (BC3 só
+    vincula no sentido fornecedor→auditada, útil só nas entradas — ver
+    mesmo raciocínio já aplicado em _valores_por_ano_item() pra Vendas
+    do Estágio 7.2). COD_ITEM_DECLARACAO (o que era usado até então)
+    fica NULL em ~99% das linhas de estoque_saidas por isso mesmo;
+    cprod tem cobertura 100% (confirmado na geraldo: 0 nulos em 60.623
+    linhas, contra 59.901 nulos em COD_ITEM_DECLARACAO). Mesmo
+    raciocínio de Regra R07 de gerar_estagio_8() (NULL genuíno
+    preservado, nunca vira "None" — cprod na prática não deveria ter
+    nenhum, mas o tratamento fica por segurança). "agrupado" por
+    (codproddecl, desc_xml), dropna=False. Devolve {'detalhado':
+    DataFrame, 'agrupado': DataFrame, 'erros': list} — erros não-vazio
+    quando estoque_saidas (Estágio 4) ainda não foi gerada."""
     vazio = {
         "detalhado": pd.DataFrame(columns=_COLUNAS_ESTAGIO8_SAIDAS_DETALHADO),
         "agrupado": pd.DataFrame(columns=_COLUNAS_ESTAGIO8_SAIDAS_AGRUPADO),
@@ -2714,7 +2729,7 @@ def gerar_estagio_8_saidas() -> dict:
             if "estoque_saidas" not in tabelas:
                 return {**vazio, "erros": ["Tabela estoque_saidas (Estágio 4) ainda não foi gerada."]}
             detalhado = con.execute(
-                "SELECT COD_ITEM_DECLARACAO AS codproddecl, "
+                "SELECT fatoitemnfe_infnfe_det_prod_cprod AS codproddecl, "
                 "fatoitemnfe_infnfe_det_prod_xprod AS desc_xml, "
                 "ID_UNICO AS idunico "
                 "FROM estoque_saidas"

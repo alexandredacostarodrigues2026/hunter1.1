@@ -2664,11 +2664,12 @@ def render_estagio_8() -> None:
     gerar_estagio_8_saidas() pro raciocínio completo. Duas abas de
     nível superior, "Entradas" e "Saídas", cada uma com sub-abas
     "Detalhada"/"Agrupada" (_render_bloco_estagio8(), função genérica
-    reusada pelas duas). ATENÇÃO (Saídas): a bc3/Matching só cobre
-    ENTRADAS de terceiros — codproddecl fica NULL em ~99% das linhas de
-    estoque_saidas (achado real, confirmado com o usuário antes de
-    implementar), então a aba Saídas tem valor de conferência de
-    Matching bem mais limitado que Entradas."""
+    reusada pelas duas). Em Saídas, codproddecl vem de fatoitemnfe_
+    infnfe_det_prod_cprod (código do próprio XML) — não de COD_ITEM_
+    DECLARACAO/Matching, que não se aplica a saídas (auditada é
+    emitente da nota, cProd já é o código dela mesma; achado confirmado
+    com o usuário 2026-07-23, mesma correção já aplicada em Vendas do
+    Estágio 7.2)."""
     st.subheader("Estágio 8 — Resumo de Entradas / Saídas")
 
     aba_entradas, aba_saidas = st.tabs(["📥 Entradas", "📤 Saídas"])
@@ -2699,11 +2700,11 @@ def render_estagio_8() -> None:
 
     with aba_saidas:
         st.caption(
-            "Mesma lógica sobre estoque_saidas (Estágio 4): Detalhada (código/descrição declarados "
-            "quando existir vínculo + descrição do XML + ID Único) e Agrupada (código + descrição "
-            "do XML, contando ocorrências). ⚠️ A bc3/Matching só cobre ENTRADAS de terceiros — "
-            "código declarado fica vazio na quase totalidade das saídas; esta aba serve mais pra "
-            "ver os itens de saída mais frequentes do que pra conferir qualidade de Matching."
+            "Mesma lógica sobre estoque_saidas (Estágio 4): Detalhada (código do produto do próprio "
+            "XML + descrição do XML + ID Único) e Agrupada (código + descrição do XML, contando "
+            "ocorrências). Na saída a auditada é emitente da nota, então o código do produto do "
+            "XML dela já é o código próprio, sem precisar de Matching/BC3 (diferente de Entradas, "
+            "onde o código vem de terceiros e precisa ser traduzido pelo Matching)."
         )
         _render_bloco_estagio8(
             chave_estado="estagio8_saidas_gerado",
