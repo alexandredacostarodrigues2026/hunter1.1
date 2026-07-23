@@ -2244,12 +2244,17 @@ def render_menu_principal() -> None:
     # "inicie com o 8 uma nova linha de botões"). 12 colunas ficavam
     # espremidas numa linha só; a 2ª linha também dá espaço pros próximos
     # estágios sem precisar espremer mais a 1ª.
-    (col_estagio8,) = st.columns(1)
+    col_estagio8, col_produtos_alvo_salvos = st.columns(2)
     if col_estagio8.button(
         "📋 ESTÁGIO 8: RESUMO DE ENTRADAS / SAÍDAS / ESTOQUES",
         key="btn_menu_estagio_8", use_container_width=True,
     ):
         st.session_state["pagina_ativa"] = "estagio_8"
+        st.rerun()
+    if col_produtos_alvo_salvos.button(
+        "🎯 PRODUTOS ALVOS SALVOS", key="btn_menu_produtos_alvo_salvos", use_container_width=True,
+    ):
+        st.session_state["pagina_ativa"] = "produtos_alvo_salvos"
         st.rerun()
 
 
@@ -2798,3 +2803,87 @@ def render_pagina_estagio_8() -> None:
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     render_estagio_8()
+
+
+def render_produtos_alvo_salvos() -> None:
+    """Painel 'PRODUTOS ALVOS SALVOS' (2026-07-23, Solicitação Técnica:
+    "SERÁ UM PAINEL EM QUE ESCOLHEREU UM PRODUTO A SER CRUZADO"): lista
+    os produtos já salvos e ativos no Grupo de Produto Alvo (Estágio
+    7.3.2, produto_alvo_fiscalizacao) e deixa o auditor ESCOLHER um
+    deles como o produto que será objeto do cruzamento — escolha
+    persistida (loader.escolher_produto_cruzamento()), substituindo
+    qualquer escolha anterior (só existe um produto escolhido por vez,
+    diferente do GRUPO salvo, que pode ter vários). Mesmo destaque
+    vermelho condicional (>30%, _destacar_vermelho_grupo_alvo()) da
+    tabela "Ver grupo completo já salvo" do 7.3.2, aqui promovido a
+    painel próprio."""
+    st.subheader("Produtos Alvos Salvos")
+    st.caption(
+        "Produtos já marcados como ativos no Grupo de Produto Alvo (Estágio 7.3.2). Escolha um "
+        "deles abaixo para ser o produto objeto do cruzamento."
+    )
+
+    grupo, total = loader.consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=True)
+    if grupo.empty:
+        st.info(
+            'Nenhum produto salvo ainda — marque produtos em "📈 7.3.2: SIMULAÇÃO RN1 (+30%)" '
+            'primeiro (checkbox "Selecionar p/ Fiscalização" + botão "Salvar Grupo de Produto Alvo").'
+        )
+        return
+
+    escolhido_atual = loader.consultar_produto_cruzamento_escolhido()
+    if escolhido_atual:
+        st.success(
+            f"🎯 Produto atualmente escolhido pra cruzamento: **{escolhido_atual['DESCR_ALVO']}** "
+            f"(Cód. {escolhido_atual['COD_ITEM']}) — escolhido em {escolhido_atual['TS']}."
+        )
+
+    st.markdown(f"**{total:,} produto(s)** no grupo salvo.".replace(",", "."))
+    grupo_preview = grupo.copy()
+    acima_30 = grupo_preview["PCT_DIVERGENCIA"] > _LIMIAR_DESTAQUE_VERMELHO_PCT_DIVERG
+    grupo_preview["PCT_DIVERGENCIA"] = grupo_preview["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+    for _col in _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO:
+        grupo_preview[_col] = grupo_preview[_col].apply(_formatar_moeda_br)
+    with st.container(key="produtos_alvo_salvos_tabela"):
+        st.markdown(
+            "<style>.st-key-produtos_alvo_salvos_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 12px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            _destacar_vermelho_grupo_alvo(
+                _preparar_preview(grupo_preview, _COLUNAS_BASE_GRUPO_PRODUTO_ALVO + ["TS", "OBSERVACAO"]),
+                acima_30,
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    st.divider()
+    produtos_disponiveis = sorted(grupo["DESCR_ALVO"].unique())
+    produto_selecionado = st.selectbox(
+        "Escolha o produto a ser cruzado",
+        options=["Selecione..."] + produtos_disponiveis,
+        key="select_produto_cruzamento",
+    )
+    if produto_selecionado != "Selecione...":
+        if st.button("🎯 Confirmar produto pra cruzamento", key="btn_confirmar_produto_cruzamento"):
+            cod_item = grupo.loc[grupo["DESCR_ALVO"] == produto_selecionado, "COD_ITEM"].iloc[0]
+            resultado = loader.escolher_produto_cruzamento(produto_selecionado, cod_item)
+            if "erro" in resultado:
+                st.error(f"Erro: {resultado['erro']}")
+            else:
+                st.success(f"✅ Produto '{produto_selecionado}' escolhido pra cruzamento.")
+                st.rerun()
+
+
+def render_pagina_produtos_alvo_salvos() -> None:
+    """Painel 'PRODUTOS ALVOS SALVOS' (Botão 9, 2026-07-23), botão da 2ª
+    linha do Menu Principal: ver loader.consultar_grupo_produto_alvo_
+    fiscalizacao()/render_produtos_alvo_salvos(). Exige dados_carregados
+    (mesmo padrão das outras páginas)."""
+    _botao_voltar_menu()
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        return
+    render_produtos_alvo_salvos()

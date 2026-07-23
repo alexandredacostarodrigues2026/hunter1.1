@@ -1,13 +1,14 @@
 """Ponto de entrada Streamlit do Hunter 1.1.
 
 Despacha pro Menu Principal (Estágio 6 — VAMOS ORGANIZAR, ver
-docs/estagios/06_menu_navegacao.md) e os 12 grupos de painéis navegáveis
+docs/estagios/06_menu_navegacao.md) e os 13 grupos de painéis navegáveis
 (Extração, Matching (BC3), Segregados, Tabelas Entradas/Saídas/Estoques,
 Auditoria1, Descrição Relevante, Cruzamento por Valor, Cruzamento por
 Produto, RN1 — Movimentação Física, RN1 por Produto, Simulação RN1
-(+30%), Estágio 8 — Resumo de Entradas). Arquivo idêntico entre
-operações — a operação ativa é resolvida em runtime por
-loader.nome_operacao() (pasta-pai de ESSENCIAL/, ou HUNTER_OPERACAO_DIR).
+(+30%), Estágio 8 — Resumo de Entradas/Saídas/Estoques, Produtos Alvos
+Salvos). Arquivo idêntico entre operações — a operação ativa é
+resolvida em runtime por loader.nome_operacao() (pasta-pai de
+ESSENCIAL/, ou HUNTER_OPERACAO_DIR).
 """
 import sys
 from pathlib import Path
@@ -40,8 +41,9 @@ def main() -> None:
         # None = Menu Principal (Estágio 6); "extracao"/"matching"/
         # "segregados"/"construcao"/"auditoria1"/"descricao_relevante"/
         # "cruzamento_valor"/"cruzamento_produto"/"rn1_fisica"/
-        # "rn1_produto"/"rn1_simulada_30"/"estagio_8" = os 12 grupos de
-        # painéis navegáveis, ver interface.render_menu_principal().
+        # "rn1_produto"/"rn1_simulada_30"/"estagio_8"/
+        # "produtos_alvo_salvos" = os 13 grupos de painéis navegáveis,
+        # ver interface.render_menu_principal().
         st.session_state["pagina_ativa"] = None
 
     st.title("Hunter 1.1")
@@ -72,6 +74,8 @@ def main() -> None:
         interface.render_pagina_rn1_simulada_30()
     elif pagina == "estagio_8":
         interface.render_pagina_estagio_8()
+    elif pagina == "produtos_alvo_salvos":
+        interface.render_pagina_produtos_alvo_salvos()
     else:
         interface.render_menu_principal()
 

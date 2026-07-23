@@ -4325,6 +4325,64 @@ def consultar_grupo_produto_alvo_fiscalizacao(
         return pd.DataFrame(columns=colunas), 0
 
 
+# ── Produto Escolhido para Cruzamento (Botão 9) ──────────────────────────
+# Solicitação Técnica (2026-07-23): "SERÁ UM PAINEL EM QUE ESCOLHEREU UM
+# PRODUTO A SER CRUZADO" — painel "PRODUTOS ALVOS SALVOS" onde o auditor
+# escolhe, dentre os produtos já salvos e ativos no Grupo de Produto Alvo
+# (Estágio 7.3.2, produto_alvo_fiscalizacao), UM produto específico que
+# será o objeto do cruzamento (próxima etapa de análise, ainda não
+# implementada). Tabela de 1 linha só — sempre SUBSTITUÍDA quando o
+# usuário escolhe outro produto, diferente de produto_alvo_fiscalizacao
+# (que guarda o GRUPO inteiro, com histórico de STATUS ativo/cancelado).
+_COLUNAS_PRODUTO_CRUZAMENTO_ESCOLHIDO = ["DESCR_ALVO", "COD_ITEM", "TS"]
+
+
+def escolher_produto_cruzamento(descr_alvo: str, cod_item: str) -> dict:
+    """Persiste qual produto (dentre os já salvos no Grupo de Produto
+    Alvo) foi escolhido pra ser o objeto do cruzamento — Botão 9
+    "PRODUTOS ALVOS SALVOS". Substitui qualquer escolha anterior (só
+    existe UM produto escolhido por vez). Regra R07: DESCR_ALVO/COD_ITEM
+    sempre string. Devolve {'ok': True} ou {'erro': str}."""
+    resultado = {}
+    try:
+        df = pd.DataFrame({
+            "DESCR_ALVO": [str(descr_alvo)],
+            "COD_ITEM": [str(cod_item) if cod_item is not None else ""],
+            "TS": [datetime.now().isoformat(timespec="seconds")],
+        })
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            con.register("_df_produto_cruzamento", df)
+            con.execute(
+                "CREATE OR REPLACE TABLE produto_cruzamento_escolhido AS "
+                "SELECT * FROM _df_produto_cruzamento"
+            )
+            con.unregister("_df_produto_cruzamento")
+        resultado["ok"] = True
+    except Exception as exc:
+        logger.exception("Erro ao escolher produto de cruzamento: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def consultar_produto_cruzamento_escolhido() -> "dict | None":
+    """Lê o produto atualmente escolhido pra cruzamento (Botão 9), se
+    houver. Devolve {'DESCR_ALVO': str, 'COD_ITEM': str, 'TS': str} ou
+    None se nenhum produto foi escolhido ainda ou a tabela não existir."""
+    if not _BANCO_PATH.exists():
+        return None
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "produto_cruzamento_escolhido" not in tabelas:
+                return None
+            df = con.execute("SELECT * FROM produto_cruzamento_escolhido LIMIT 1").df()
+        return None if df.empty else df.iloc[0].to_dict()
+    except Exception:
+        logger.exception("Erro ao consultar produto_cruzamento_escolhido em %s", _BANCO_PATH)
+        return None
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio
