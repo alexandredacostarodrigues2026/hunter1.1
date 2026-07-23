@@ -2184,6 +2184,24 @@ def render_menu_principal() -> None:
     qualidade do Matching). 2ª linha própria de botões a partir do
     Estágio 8 (2026-07-23) — a 1ª linha (11 botões) já estava cheia."""
     st.subheader("Menu Principal")
+    # Destaque cinza nos botões 7.2/7.2.1/7.3/7.3.1 (2026-07-23, pedido do
+    # usuário) — mesmo padrão de CSS via key (".st-key-<key>") já usado em
+    # containers/tabelas de alta densidade no resto do app; aqui aplicado
+    # ao próprio <button>, com !important pra sobrepor o tema padrão do
+    # Streamlit. Cor semitransparente (não sólida) pra continuar legível
+    # tanto no tema claro quanto no escuro.
+    st.markdown(
+        "<style>"
+        + "".join(
+            f".st-key-{chave} button {{ background-color: rgba(128, 128, 128, 0.35) !important; }}"
+            for chave in (
+                "btn_menu_cruzamento_valor", "btn_menu_cruzamento_produto",
+                "btn_menu_rn1_fisica", "btn_menu_rn1_produto",
+            )
+        )
+        + "</style>",
+        unsafe_allow_html=True,
+    )
     col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11 = st.columns(11)
     if col1.button("📥 EXTRAÇÃO", key="btn_menu_extracao", use_container_width=True):
         st.session_state["pagina_ativa"] = "extracao"
