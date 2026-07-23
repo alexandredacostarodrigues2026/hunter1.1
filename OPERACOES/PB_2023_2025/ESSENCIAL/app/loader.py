@@ -4452,6 +4452,109 @@ def cruzar_produto_escolhido_entradas_detalhado() -> "tuple[pd.DataFrame, dict |
     return correspondentes, escolhido
 
 
+# ── Rubrica do Produto Alvo (confirmação manual do cruzamento) ───────────
+# Solicitação Técnica (2026-07-23): "CRIE CAIXA PARA GRAVAR O PRODUTO QUE
+# FARÁ PARTE DA RUBRICA DO PRODUTO ALVO. GERE 1 OPÇÃO DE 'CRITÉRIO DE
+# BUSCA1_MESMO CÓDIGO DE PRODUTO'." — depois de ver as correspondências do
+# Critério 1 (mesmo código, normalizado), o auditor MARCA quais delas
+# confirma que pertencem de fato à "rubrica" (grupo) do produto alvo
+# escolhido, etiquetando com qual critério de busca justificou a inclusão
+# ("Critério de Busca1: Mesmo Código de Produto" — primeira de futuras
+# opções, ainda não implementadas). Tabela própria, cresce por produto/
+# origem — diferente de produto_cruzamento_escolhido (1 produto só, tabela
+# de 1 linha) e de produto_alvo_fiscalizacao (grupo de produtos elegíveis
+# pra fiscalização, sem ligação com critério de busca nenhum).
+_COLUNAS_CRUZAMENTO_CONFIRMADO = [
+    "DESCR_ALVO", "COD_ITEM", "ORIGEM", "codproddecl", "desc_xml",
+    "descrição_decl", "qtde_ocorrencias", "CRITERIO", "TS",
+]
+CRITERIO_BUSCA1_MESMO_CODIGO = "Critério de Busca1: Mesmo Código de Produto"
+
+
+def salvar_cruzamento_confirmado(
+    escolhido: dict, origem: str, criterio: str, linhas: pd.DataFrame,
+) -> dict:
+    """Persiste em cruzamento_confirmado as linhas que o auditor marcou
+    (checkbox) como pertencentes à rubrica do produto alvo `escolhido`,
+    vindas da origem `origem` ("entradas"/"saidas"/"estoques") e
+    justificadas pelo `criterio` de busca (ex.:
+    CRITERIO_BUSCA1_MESMO_CODIGO). `linhas` tem as colunas codproddecl/
+    desc_xml/descrição_decl/qtde_ocorrencias (mesmo formato de estagio8_
+    agrupado). Upsert por (DESCR_ALVO, ORIGEM, codproddecl, desc_xml) —
+    reconfirmar a mesma linha atualiza TS/CRITERIO em vez de duplicar;
+    linhas de outros produtos/origens ficam intocadas. Regra R07:
+    DESCR_ALVO/COD_ITEM/codproddecl sempre string. Devolve {'ok': True,
+    'total_salvo': int} ou {'erro': str}."""
+    resultado = {}
+    try:
+        novo = linhas[["codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias"]].copy()
+        novo["DESCR_ALVO"] = str(escolhido["DESCR_ALVO"])
+        novo["COD_ITEM"] = str(escolhido["COD_ITEM"])
+        novo["ORIGEM"] = origem
+        novo["CRITERIO"] = criterio
+        novo["TS"] = datetime.now().isoformat(timespec="seconds")
+        novo = novo[_COLUNAS_CRUZAMENTO_CONFIRMADO]
+
+        existente, _ = consultar_cruzamento_confirmado(limite=None)
+        if not existente.empty:
+            chave_nova = set(
+                zip(novo["DESCR_ALVO"], novo["ORIGEM"], novo["codproddecl"], novo["desc_xml"])
+            )
+            chave_existente = list(
+                zip(existente["DESCR_ALVO"], existente["ORIGEM"], existente["codproddecl"], existente["desc_xml"])
+            )
+            mascara_preservar = [chave not in chave_nova for chave in chave_existente]
+            preservar = existente[mascara_preservar]
+            combinado = pd.concat([preservar, novo], ignore_index=True)
+        else:
+            combinado = novo
+
+        combinado = _forcar_colunas_string(combinado, ["DESCR_ALVO", "COD_ITEM", "codproddecl", "ORIGEM", "CRITERIO"])
+        combinado = combinado[_COLUNAS_CRUZAMENTO_CONFIRMADO].reset_index(drop=True)
+
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            con.register("_df_cruzamento_confirmado", combinado)
+            con.execute(
+                "CREATE OR REPLACE TABLE cruzamento_confirmado AS SELECT * FROM _df_cruzamento_confirmado"
+            )
+            con.unregister("_df_cruzamento_confirmado")
+        resultado["ok"] = True
+        resultado["total_salvo"] = len(novo)
+    except Exception as exc:
+        logger.exception("Erro ao salvar cruzamento_confirmado: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def consultar_cruzamento_confirmado(
+    descr_alvo: "str | None" = None, limite: "int | None" = 200,
+) -> "tuple[pd.DataFrame, int]":
+    """Lê cruzamento_confirmado já persistida (sem reprocessar) —
+    opcionalmente filtrada por DESCR_ALVO. limite=None devolve tudo."""
+    colunas = _COLUNAS_CRUZAMENTO_CONFIRMADO
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "cruzamento_confirmado" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            filtro = ""
+            if descr_alvo is not None:
+                escapado = descr_alvo.replace("'", "''")
+                filtro = f"WHERE DESCR_ALVO = '{escapado}'"
+            total = con.execute(f"SELECT COUNT(*) FROM cruzamento_confirmado {filtro}").fetchone()[0]
+            query = f"SELECT * FROM cruzamento_confirmado {filtro}"
+            if limite is not None:
+                query += f" LIMIT {limite}"
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar cruzamento_confirmado em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio

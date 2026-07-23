@@ -2818,12 +2818,17 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
     padding (`7891149200504` vs `07891149200504`), mesmo sendo o mesmo
     produto/código. Zero correspondências MESMO após normalizar
     continua sendo resultado válido (produto genuinamente sem
-    correspondência nas entradas com esse código). Termina com uma
-    tabela inferior (2026-07-23, mesma sessão: "CRIE UMA TABELA
-    INFERIOR COM OS PRODUTOS E RESPECTIVOS IDS ÚNICOS") — mesma
-    comparação, mas contra estagio8_detalhado (uma linha por item do
-    XML, com idunico) via loader.cruzar_produto_escolhido_entradas_
-    detalhado(), pra localizar a nota fiscal exata de cada item."""
+    correspondência nas entradas com esse código). A tabela de
+    correspondências ganhou checkbox "Selecionar p/ Rubrica" (2026-07-23,
+    mesma sessão: "CRIE CAIXA PARA GRAVAR O PRODUTO QUE FARÁ PARTE DA
+    RUBRICA DO PRODUTO ALVO") + selectbox "Critério de busca" (só
+    CRITERIO_BUSCA1_MESMO_CODIGO por enquanto) + botão "Salvar na
+    Rubrica", persistindo em loader.salvar_cruzamento_confirmado().
+    Termina com uma tabela inferior ("CRIE UMA TABELA INFERIOR COM OS
+    PRODUTOS E RESPECTIVOS IDS ÚNICOS") — mesma comparação, mas contra
+    estagio8_detalhado (uma linha por item do XML, com idunico) via
+    loader.cruzar_produto_escolhido_entradas_detalhado(), pra localizar
+    a nota fiscal exata de cada item."""
     st.caption(
         f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com o MESMO código de produto "
         f"(100%) de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — comparação normalizada "
@@ -2840,17 +2845,65 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
     st.success(
         f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
     )
+
+    # Checkbox "Selecionar p/ Rubrica" (2026-07-23, pedido do usuário:
+    # "CRIE CAIXA PARA GRAVAR O PRODUTO QUE FARÁ PARTE DA RUBRICA DO
+    # PRODUTO ALVO. GERE 1 OPÇÃO DE 'CRITÉRIO DE BUSCA1_MESMO CÓDIGO DE
+    # PRODUTO'.") — o auditor confirma quais correspondências pertencem
+    # de fato à rubrica do produto escolhido, etiquetadas com o critério
+    # de busca usado. st.data_editor (não st.dataframe) por causa do
+    # checkbox — mesmo padrão/limitações já usados no Grupo de Produto
+    # Alvo (7.3.2): sem Styler nesta tabela, cor de destaque só nas
+    # tabelas somente-leitura.
+    ja_confirmadas, _ = loader.consultar_cruzamento_confirmado(descr_alvo=escolhido["DESCR_ALVO"], limite=None)
+    ja_confirmadas_entradas = (
+        ja_confirmadas[ja_confirmadas["ORIGEM"] == "entradas"] if not ja_confirmadas.empty
+        else ja_confirmadas
+    )
+    chaves_confirmadas = set(
+        zip(ja_confirmadas_entradas["codproddecl"], ja_confirmadas_entradas["desc_xml"])
+    ) if not ja_confirmadas_entradas.empty else set()
+
+    editor_base = correspondentes[_COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO].copy()
+    editor_base.insert(
+        0, "Selecionar p/ Rubrica",
+        [(c, d) in chaves_confirmadas for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])],
+    )
+    editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
+    colunas_travadas = [c for c in editor_exibicao.columns if c != "Selecionar p/ Rubrica"]
     with st.container(key="cruzamento_entradas_tabela"):
         st.markdown(
             "<style>.st-key-cruzamento_entradas_tabela [data-testid='stDataFrame'] "
             "* { font-size: 12px; }</style>",
             unsafe_allow_html=True,
         )
-        st.dataframe(
-            _preparar_preview(correspondentes, _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO),
+        editado = st.data_editor(
+            editor_exibicao,
             use_container_width=True,
             hide_index=True,
+            disabled=colunas_travadas,
+            key="editor_cruzamento_entradas",
         )
+
+    criterio_busca = st.selectbox(
+        "Critério de busca",
+        options=[loader.CRITERIO_BUSCA1_MESMO_CODIGO],
+        key="select_criterio_busca_entradas",
+    )
+    if st.button("💾 Salvar na Rubrica do Produto Alvo", key="btn_salvar_rubrica_entradas"):
+        marcadas = editado["Selecionar p/ Rubrica"].reindex(editor_base.index)
+        selecionadas = editor_base.loc[marcadas.fillna(False), _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO]
+        if selecionadas.empty:
+            st.warning("Nenhuma linha marcada — marque ao menos uma combinação antes de salvar.")
+        else:
+            resultado = loader.salvar_cruzamento_confirmado(
+                escolhido, "entradas", criterio_busca, selecionadas,
+            )
+            if "erro" in resultado:
+                st.error(f"Erro: {resultado['erro']}")
+            else:
+                st.success(f"✅ {resultado['total_salvo']} combinação(ões) salva(s) na rubrica.")
+                st.rerun()
 
     # Tabela inferior (2026-07-23, pedido do usuário: "CRIE UMA TABELA
     # INFERIOR COM OS PRODUTOS E RESPECTIVOS IDS ÚNICOS") — mesma
