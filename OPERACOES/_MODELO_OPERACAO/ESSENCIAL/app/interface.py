@@ -2536,7 +2536,6 @@ _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO = ["codproddecl", "desc_xml", "descrição_de
 # CRUZAMENTO_ENTRADAS em _render_cruzamento_entradas_criterio1().
 _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
 _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_DETALHADO = _COLUNAS_PREVIEW_ESTAGIO8_DETALHADO + ["SIMILARIDADE_DESCRICAO"]
-_LIMIAR_DESTAQUE_SIMILARIDADE_DESCRICAO = 70
 
 
 _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_DETALHADO = ["codproddecl", "desc_xml", "idunico"]
@@ -2840,13 +2839,20 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
     A tabela de correspondências ganhou checkbox "Salvar" (2026-07-23:
     "CRIE CAIXA PARA GRAVAR O PRODUTO QUE FARÁ PARTE DA RUBRICA DO
     PRODUTO ALVO" — rótulo encurtado de "Selecionar p/ Rubrica" pra
-    "Salvar" na mesma sessão) + botão "Salvar na Rubrica", persistindo
-    em loader.salvar_cruzamento_confirmado(). Termina com uma tabela
+    "Salvar" na mesma sessão, sempre começa DESMARCADO — "deixe como
+    defaut 'Salvar' desmarcado", sem pré-marcação do que já foi
+    confirmado antes) + botão "Salvar na Rubrica", persistindo em
+    loader.salvar_cruzamento_confirmado(). Termina com uma tabela
     inferior ("CRIE UMA TABELA INFERIOR COM OS PRODUTOS E RESPECTIVOS
     IDS ÚNICOS") — mesma comparação, mas contra estagio8_detalhado (uma
     linha por item do XML, com idunico) via loader.cruzar_produto_
     escolhido_entradas_detalhado(), pra localizar a nota fiscal exata de
-    cada item.
+    cada item — FILTRADA (2026-07-23, mesma sessão: "ao salvar o
+    produto buscado, atribuir os mesmos ao alvo, assim como atualizar a
+    tabela com ids únicos") só pelas combinações (codproddecl, desc_xml)
+    já CONFIRMADAS na Rubrica pra este alvo+origem, não mais todo item
+    com o mesmo código — antes de qualquer confirmação, a tabela fica
+    vazia com aviso orientando a marcar "Salvar" primeiro.
 
     Selectbox "Critério de busca" (2026-07-23, pedido do usuário:
     "escolha do critério dever ser antes do cruzamento" — antes ficava
@@ -2889,39 +2895,17 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
     # checkbox — mesmo padrão/limitações já usados no Grupo de Produto
     # Alvo (7.3.2): sem Styler nesta tabela, cor de destaque só nas
     # tabelas somente-leitura.
-    ja_confirmadas, _ = loader.consultar_cruzamento_confirmado(descr_alvo=escolhido["DESCR_ALVO"], limite=None)
-    ja_confirmadas_entradas = (
-        ja_confirmadas[ja_confirmadas["ORIGEM"] == "entradas"] if not ja_confirmadas.empty
-        else ja_confirmadas
-    )
-    chaves_confirmadas = set(
-        zip(ja_confirmadas_entradas["codproddecl"], ja_confirmadas_entradas["desc_xml"])
-    ) if not ja_confirmadas_entradas.empty else set()
-
+    # "Salvar" sempre começa DESMARCADO (2026-07-23, pedido do usuário:
+    # "deixe como defaut 'Salvar' desmarcado") — antes vinha pré-marcado
+    # pras combinações já confirmadas em cruzamento_confirmado; removido
+    # a pedido do usuário, sem pré-marcação nenhuma.
     editor_base = correspondentes[_COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO].copy()
-    editor_base.insert(
-        0, "Salvar",
-        [(c, d) in chaves_confirmadas for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])],
-    )
+    editor_base.insert(0, "Salvar", False)
     editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
     # "Descricao Declaracao" sai só da EXIBIÇÃO (2026-07-23: "retire
     # descrição da declaração") — editor_base mantém a coluna crua
     # (descrição_decl), exigida por loader.salvar_cruzamento_confirmado().
     editor_exibicao = editor_exibicao.drop(columns=["Descricao Declaracao"], errors="ignore")
-    # Destaque de SIMILARIDADE_DESCRICAO >= 70% (2026-07-23, pedido do
-    # usuário: "destaque similaridade acima de 70%") — st.data_editor não
-    # aceita pandas.Styler (mesma limitação já documentada em
-    # _destacar_vermelho_grupo_alvo()), então o destaque vira um marcador
-    # 🟢 no próprio valor da célula (não só no cabeçalho) pras linhas que
-    # passam do limiar — aqui o "achado" é um BOM sinal (mesmo código,
-    # descrição bem parecida), não um alerta, por isso verde em vez de
-    # vermelho.
-    coluna_similaridade = loader.carregar_dicionario_campos().get(
-        "SIMILARIDADE_DESCRICAO", "SIMILARIDADE_DESCRICAO",
-    )
-    editor_exibicao[coluna_similaridade] = editor_base["SIMILARIDADE_DESCRICAO"].apply(
-        lambda score: f"🟢 {score:.1f}" if score >= _LIMIAR_DESTAQUE_SIMILARIDADE_DESCRICAO else f"{score:.1f}"
-    )
     colunas_travadas = [c for c in editor_exibicao.columns if c != "Salvar"]
     with st.container(key="cruzamento_entradas_tabela"):
         st.markdown(
@@ -2957,10 +2941,34 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
     # comparação normalizada, mas contra estagio8_detalhado (uma linha por
     # item do XML, com idunico) em vez de estagio8_agrupado (uma linha por
     # combinação, sem idunico) — permite localizar a nota fiscal exata de
-    # cada item.
+    # cada item. Filtrada só pelo que já foi CONFIRMADO na Rubrica
+    # (2026-07-23, pedido do usuário: "ao salvar o produto buscado,
+    # atribuir os mesmos ao alvo, assim como atualizar a tabela com ids
+    # únicos" — antes mostrava TODOS os itens com o mesmo código, mesmo
+    # sem terem sido marcados/salvos; agora só os que o auditor já
+    # confirmou pertencerem de fato ao produto alvo — mesma chave
+    # (codproddecl, desc_xml) usada em cruzamento_confirmado, não muda o
+    # schema salvo).
     st.divider()
-    st.markdown("**Itens individuais (com ID Único)**")
+    st.markdown("**Itens individuais (com ID Único) — já atribuídos ao alvo**")
+    ja_confirmadas, _ = loader.consultar_cruzamento_confirmado(descr_alvo=escolhido["DESCR_ALVO"], limite=None)
+    ja_confirmadas_entradas = (
+        ja_confirmadas[ja_confirmadas["ORIGEM"] == "entradas"] if not ja_confirmadas.empty
+        else ja_confirmadas
+    )
+    chaves_confirmadas = set(
+        zip(ja_confirmadas_entradas["codproddecl"], ja_confirmadas_entradas["desc_xml"])
+    ) if not ja_confirmadas_entradas.empty else set()
+    if not chaves_confirmadas:
+        st.info(
+            "Nenhuma combinação confirmada na Rubrica ainda — marque \"Salvar\" na tabela acima e "
+            "clique em \"Salvar na Rubrica do Produto Alvo\" pra ver os itens individuais aqui."
+        )
+        return
     detalhado, _ = loader.cruzar_produto_escolhido_entradas_detalhado()
+    detalhado = detalhado[
+        [(c, d) in chaves_confirmadas for c, d in zip(detalhado["codproddecl"], detalhado["desc_xml"])]
+    ]
     if detalhado.empty:
         st.info("Nenhum item individual encontrado.")
         return
