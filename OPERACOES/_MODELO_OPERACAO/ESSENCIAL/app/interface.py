@@ -2528,8 +2528,15 @@ _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO = ["codproddecl", "desc_xml", "descrição_de
 
 # Critério 1 do Cruzamento (Botão 9, Entradas) inclui SIMILARIDADE_DESCRICAO
 # além das colunas do Estágio 8 — ver loader.cruzar_produto_escolhido_entradas().
+# "descrição_decl" continua na base (loader.salvar_cruzamento_confirmado()
+# exige a coluna), mas sai só da EXIBIÇÃO do editor (2026-07-23, pedido do
+# usuário: "retire descrição da declaração" — já aparece só uma vez, no
+# cabeçalho/caption da seção, repetir em toda linha é redundante aqui; a
+# tabela detalhada de baixo mantém a coluna) — ver _COLUNA_OCULTA_EDITOR_
+# CRUZAMENTO_ENTRADAS em _render_cruzamento_entradas_criterio1().
 _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
 _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_DETALHADO = _COLUNAS_PREVIEW_ESTAGIO8_DETALHADO + ["SIMILARIDADE_DESCRICAO"]
+_LIMIAR_DESTAQUE_SIMILARIDADE_DESCRICAO = 70
 
 
 _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_DETALHADO = ["codproddecl", "desc_xml", "idunico"]
@@ -2830,9 +2837,10 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
        nenhuma linha, só ordena (desc) e é exibida como coluna, pra
        ajudar a decidir qual descrição de XML é de fato o mesmo produto
        quando o código aparece associado a mais de uma descrição.
-    A tabela de correspondências ganhou checkbox "Selecionar p/ Rubrica"
-    (2026-07-23: "CRIE CAIXA PARA GRAVAR O PRODUTO QUE FARÁ PARTE DA
-    RUBRICA DO PRODUTO ALVO") + botão "Salvar na Rubrica", persistindo
+    A tabela de correspondências ganhou checkbox "Salvar" (2026-07-23:
+    "CRIE CAIXA PARA GRAVAR O PRODUTO QUE FARÁ PARTE DA RUBRICA DO
+    PRODUTO ALVO" — rótulo encurtado de "Selecionar p/ Rubrica" pra
+    "Salvar" na mesma sessão) + botão "Salvar na Rubrica", persistindo
     em loader.salvar_cruzamento_confirmado(). Termina com uma tabela
     inferior ("CRIE UMA TABELA INFERIOR COM OS PRODUTOS E RESPECTIVOS
     IDS ÚNICOS") — mesma comparação, mas contra estagio8_detalhado (uma
@@ -2870,12 +2878,14 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
         f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
     )
 
-    # Checkbox "Selecionar p/ Rubrica" (2026-07-23, pedido do usuário:
-    # "CRIE CAIXA PARA GRAVAR O PRODUTO QUE FARÁ PARTE DA RUBRICA DO
-    # PRODUTO ALVO. GERE 1 OPÇÃO DE 'CRITÉRIO DE BUSCA1_MESMO CÓDIGO DE
-    # PRODUTO'.") — o auditor confirma quais correspondências pertencem
-    # de fato à rubrica do produto escolhido, etiquetadas com o critério
-    # de busca usado. st.data_editor (não st.dataframe) por causa do
+    # Checkbox "Salvar" (2026-07-23, pedido do usuário: "CRIE CAIXA PARA
+    # GRAVAR O PRODUTO QUE FARÁ PARTE DA RUBRICA DO PRODUTO ALVO. GERE 1
+    # OPÇÃO DE 'CRITÉRIO DE BUSCA1_MESMO CÓDIGO DE PRODUTO'." — rótulo da
+    # coluna encurtado de "Selecionar p/ Rubrica" pra "Salvar" em
+    # 2026-07-23, mesma sessão: "primeiro campo passa a ser chamado
+    # 'Salvar'") — o auditor confirma quais correspondências pertencem de
+    # fato à rubrica do produto escolhido, etiquetadas com o critério de
+    # busca usado. st.data_editor (não st.dataframe) por causa do
     # checkbox — mesmo padrão/limitações já usados no Grupo de Produto
     # Alvo (7.3.2): sem Styler nesta tabela, cor de destaque só nas
     # tabelas somente-leitura.
@@ -2890,15 +2900,33 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
 
     editor_base = correspondentes[_COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO].copy()
     editor_base.insert(
-        0, "Selecionar p/ Rubrica",
+        0, "Salvar",
         [(c, d) in chaves_confirmadas for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])],
     )
     editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
-    colunas_travadas = [c for c in editor_exibicao.columns if c != "Selecionar p/ Rubrica"]
+    # "Descricao Declaracao" sai só da EXIBIÇÃO (2026-07-23: "retire
+    # descrição da declaração") — editor_base mantém a coluna crua
+    # (descrição_decl), exigida por loader.salvar_cruzamento_confirmado().
+    editor_exibicao = editor_exibicao.drop(columns=["Descricao Declaracao"], errors="ignore")
+    # Destaque de SIMILARIDADE_DESCRICAO >= 70% (2026-07-23, pedido do
+    # usuário: "destaque similaridade acima de 70%") — st.data_editor não
+    # aceita pandas.Styler (mesma limitação já documentada em
+    # _destacar_vermelho_grupo_alvo()), então o destaque vira um marcador
+    # 🟢 no próprio valor da célula (não só no cabeçalho) pras linhas que
+    # passam do limiar — aqui o "achado" é um BOM sinal (mesmo código,
+    # descrição bem parecida), não um alerta, por isso verde em vez de
+    # vermelho.
+    coluna_similaridade = loader.carregar_dicionario_campos().get(
+        "SIMILARIDADE_DESCRICAO", "SIMILARIDADE_DESCRICAO",
+    )
+    editor_exibicao[coluna_similaridade] = editor_base["SIMILARIDADE_DESCRICAO"].apply(
+        lambda score: f"🟢 {score:.1f}" if score >= _LIMIAR_DESTAQUE_SIMILARIDADE_DESCRICAO else f"{score:.1f}"
+    )
+    colunas_travadas = [c for c in editor_exibicao.columns if c != "Salvar"]
     with st.container(key="cruzamento_entradas_tabela"):
         st.markdown(
             "<style>.st-key-cruzamento_entradas_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 12px; }</style>",
+            "* { font-size: 10px; }</style>",
             unsafe_allow_html=True,
         )
         editado = st.data_editor(
@@ -2910,7 +2938,7 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
         )
 
     if st.button("💾 Salvar na Rubrica do Produto Alvo", key="btn_salvar_rubrica_entradas"):
-        marcadas = editado["Selecionar p/ Rubrica"].reindex(editor_base.index)
+        marcadas = editado["Salvar"].reindex(editor_base.index)
         selecionadas = editor_base.loc[marcadas.fillna(False), _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO]
         if selecionadas.empty:
             st.warning("Nenhuma linha marcada — marque ao menos uma combinação antes de salvar.")
