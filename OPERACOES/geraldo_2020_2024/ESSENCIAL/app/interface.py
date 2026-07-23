@@ -2977,11 +2977,12 @@ def render_produtos_alvo_salvos() -> None:
     escolher_produto_cruzamento(), que só guarda 1 linha) — o botão
     valida isso e avisa se 0 ou mais de 1 estiverem marcados.
 
-    Termina com a seção "🔀 Cruzamento" (2026-07-23, mesma sessão) — aba
-    "📥 Entradas" com o Critério 1 (mesmo código de produto + similaridade
-    de descrição contra estagio8_agrupado, ver _render_cruzamento_
-    entradas_criterio1()/loader.cruzar_produto_escolhido_entradas());
-    mais critérios/abas (Saídas, Estoques) ficam pra próximas rodadas."""
+    Termina com a seção "🔀 Busca de Produtos Correspondentes" (rótulo
+    ajustado 2026-07-23, era "Cruzamento") — aba "📥 Entradas" com o
+    Critério 1 (mesmo código de produto + similaridade de descrição
+    contra estagio8_agrupado, ver _render_cruzamento_entradas_
+    criterio1()/loader.cruzar_produto_escolhido_entradas()); mais
+    critérios/abas (Saídas, Estoques) ficam pra próximas rodadas."""
     st.subheader("Produtos Alvos Salvos")
     st.caption(
         "Produtos já marcados como ativos no Grupo de Produto Alvo (Estágio 7.3.2). Marque "
@@ -3043,7 +3044,7 @@ def render_produtos_alvo_salvos() -> None:
                 st.rerun()
 
     st.divider()
-    st.markdown("### 🔀 Cruzamento")
+    st.markdown("### 🔀 Busca de Produtos Correspondentes")
     if not escolhido_atual:
         st.info("Escolha um produto acima pra ver o cruzamento com o Estágio 8.")
     else:
