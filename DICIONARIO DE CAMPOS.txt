@@ -119,3 +119,10 @@ PCT_DIVERGENCIA;% Diverg
 STATUS;Status
 TS;Data da Selecao
 OBSERVACAO;Observacao
+
+# Novos campos - 2026-07-23 (Estagio 8 - Resumo de Entradas)
+codproddecl;Cod. Produto Declaracao
+desc_xml;Descricao XML
+descrição_decl;Descricao Declaracao
+idunico;ID Unico
+qtde_ocorrencias;Qtde. Ocorrencias
