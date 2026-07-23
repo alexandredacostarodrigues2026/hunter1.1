@@ -2943,6 +2943,10 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
         )
 
 
+_COLUNAS_PRODUTOS_ALVO_SALVOS = ["DESCR_ALVO", "COD_ITEM"]
+_COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS = "🎯 Escolher p/ Cruzamento"
+
+
 def render_produtos_alvo_salvos() -> None:
     """Painel 'PRODUTOS ALVOS SALVOS' (2026-07-23, Solicitação Técnica:
     "SERÁ UM PAINEL EM QUE ESCOLHEREU UM PRODUTO A SER CRUZADO"): lista
@@ -2951,19 +2955,30 @@ def render_produtos_alvo_salvos() -> None:
     deles como o produto que será objeto do cruzamento — escolha
     persistida (loader.escolher_produto_cruzamento()), substituindo
     qualquer escolha anterior (só existe um produto escolhido por vez,
-    diferente do GRUPO salvo, que pode ter vários). Mesmo destaque
-    vermelho condicional (>30%, _destacar_vermelho_grupo_alvo()) da
-    tabela "Ver grupo completo já salvo" do 7.3.2, aqui promovido a
-    painel próprio. Termina com a seção "🔀 Cruzamento" (2026-07-23,
-    mesma sessão) — aba "📥 Entradas" com o Critério 1 (similaridade
-    100% do código de produto contra estagio8_agrupado, ver
-    _render_cruzamento_entradas_criterio1()/loader.cruzar_produto_
-    escolhido_entradas()); mais critérios/abas (Saídas, Estoques) ficam
-    pra próximas rodadas."""
+    diferente do GRUPO salvo, que pode ter vários).
+
+    Tabela reduzida a Cód. Produto + Descrição Relevante (2026-07-23,
+    pedido do usuário: "mantenha cod e descrição" — antes trazia
+    Divergência/Infração/%Diverg também, depois disso foi enxugado pra
+    só as 2 colunas de identificação) e a ESCOLHA passou a ser feita
+    dentro da própria tabela via checkbox (antes era um st.selectbox
+    separado abaixo — "a escolha deve ser nessa tabela para economizar
+    espaço"), mesmo padrão de st.data_editor com coluna de checkbox já
+    usado em _render_grupo_produto_alvo_fiscalizacao() (7.3.2): sem
+    on_select, extração do estado marcado sempre por índice (.reindex).
+    Só um produto pode estar marcado por vez (mesma regra de
+    escolher_produto_cruzamento(), que só guarda 1 linha) — o botão
+    valida isso e avisa se 0 ou mais de 1 estiverem marcados.
+
+    Termina com a seção "🔀 Cruzamento" (2026-07-23, mesma sessão) — aba
+    "📥 Entradas" com o Critério 1 (mesmo código de produto + similaridade
+    de descrição contra estagio8_agrupado, ver _render_cruzamento_
+    entradas_criterio1()/loader.cruzar_produto_escolhido_entradas());
+    mais critérios/abas (Saídas, Estoques) ficam pra próximas rodadas."""
     st.subheader("Produtos Alvos Salvos")
     st.caption(
-        "Produtos já marcados como ativos no Grupo de Produto Alvo (Estágio 7.3.2). Escolha um "
-        "deles abaixo para ser o produto objeto do cruzamento."
+        "Produtos já marcados como ativos no Grupo de Produto Alvo (Estágio 7.3.2). Marque "
+        "\"Escolher p/ Cruzamento\" pra um deles e confirme abaixo."
     )
 
     grupo, total = loader.consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=True)
@@ -2982,41 +2997,42 @@ def render_produtos_alvo_salvos() -> None:
         )
 
     st.markdown(f"**{total:,} produto(s)** no grupo salvo.".replace(",", "."))
-    grupo_preview = grupo.copy()
-    acima_30 = grupo_preview["PCT_DIVERGENCIA"] > _LIMIAR_DESTAQUE_VERMELHO_PCT_DIVERG
-    grupo_preview["PCT_DIVERGENCIA"] = grupo_preview["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
-    for _col in _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO:
-        grupo_preview[_col] = grupo_preview[_col].apply(_formatar_moeda_br)
+
+    editor_base = grupo[_COLUNAS_PRODUTOS_ALVO_SALVOS].drop_duplicates().reset_index(drop=True)
+    editor_base.insert(
+        0, _COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS,
+        editor_base["DESCR_ALVO"].eq(escolhido_atual["DESCR_ALVO"]) if escolhido_atual else False,
+    )
+    editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
+    colunas_travadas = [c for c in editor_exibicao.columns if c != _COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS]
     with st.container(key="produtos_alvo_salvos_tabela"):
         st.markdown(
             "<style>.st-key-produtos_alvo_salvos_tabela [data-testid='stDataFrame'] "
             "* { font-size: 12px; }</style>",
             unsafe_allow_html=True,
         )
-        st.dataframe(
-            _destacar_vermelho_grupo_alvo(
-                _preparar_preview(grupo_preview, _COLUNAS_BASE_GRUPO_PRODUTO_ALVO + ["TS", "OBSERVACAO"]),
-                acima_30,
-            ),
+        editado = st.data_editor(
+            editor_exibicao,
             use_container_width=True,
             hide_index=True,
+            disabled=colunas_travadas,
+            key="editor_produtos_alvo_salvos",
         )
 
-    st.divider()
-    produtos_disponiveis = sorted(grupo["DESCR_ALVO"].unique())
-    produto_selecionado = st.selectbox(
-        "Escolha o produto a ser cruzado",
-        options=["Selecione..."] + produtos_disponiveis,
-        key="select_produto_cruzamento",
-    )
-    if produto_selecionado != "Selecione...":
-        if st.button("🎯 Confirmar produto pra cruzamento", key="btn_confirmar_produto_cruzamento"):
-            cod_item = grupo.loc[grupo["DESCR_ALVO"] == produto_selecionado, "COD_ITEM"].iloc[0]
-            resultado = loader.escolher_produto_cruzamento(produto_selecionado, cod_item)
+    if st.button("🎯 Confirmar produto pra cruzamento", key="btn_confirmar_produto_cruzamento"):
+        marcados = editado[_COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS].reindex(editor_base.index).fillna(False)
+        marcadas = editor_base.loc[marcados]
+        if marcadas.empty:
+            st.warning("Nenhum produto marcado — marque \"Escolher p/ Cruzamento\" antes de confirmar.")
+        elif len(marcadas) > 1:
+            st.warning("Marque só UM produto por vez — desmarque os outros antes de confirmar.")
+        else:
+            linha = marcadas.iloc[0]
+            resultado = loader.escolher_produto_cruzamento(linha["DESCR_ALVO"], linha["COD_ITEM"])
             if "erro" in resultado:
                 st.error(f"Erro: {resultado['erro']}")
             else:
-                st.success(f"✅ Produto '{produto_selecionado}' escolhido pra cruzamento.")
+                st.success(f"✅ Produto '{linha['DESCR_ALVO']}' escolhido pra cruzamento.")
                 st.rerun()
 
     st.divider()
