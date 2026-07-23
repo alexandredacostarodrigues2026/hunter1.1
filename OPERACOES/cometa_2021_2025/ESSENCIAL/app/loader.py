@@ -2503,9 +2503,16 @@ def gerar_estagio_8() -> dict:
     dropna=False no groupby — sem isso, pandas descartaria silenciosamente
     todo item sem correspondência da contagem (NULL em qualquer chave de
     groupby some por padrão), subestimando o volume real de itens sem
-    vínculo. Ordenação de "agrupado": qtde_ocorrencias decrescente. Devolve
-    {'detalhado': DataFrame, 'agrupado': DataFrame, 'erros': list} — erros
-    não-vazio quando estoque_entradas (Estágio 4) ainda não foi gerada."""
+    vínculo. Ordenação de "agrupado": qtde_ocorrencias decrescente. A
+    soma de qtde_ocorrencias em "agrupado" DEVE ser igual ao total de
+    linhas de "detalhado" (= total de estoque_entradas, já que
+    "detalhado" é uma leitura sem filtro nenhum) — Solicitação Técnica
+    2026-07-23, confirmado nas 3 operações reais; verificação exposta
+    na UI via verificar_estagio_8() (consulta SQL agregada sobre as
+    tabelas JÁ PERSISTIDAS, não recalcula aqui — chamada a cada exibição
+    da tela, não só na geração). Devolve {'detalhado': DataFrame,
+    'agrupado': DataFrame, 'erros': list} — erros não-vazio quando
+    estoque_entradas (Estágio 4) ainda não foi gerada."""
     vazio = {
         "detalhado": pd.DataFrame(columns=_COLUNAS_ESTAGIO8_DETALHADO),
         "agrupado": pd.DataFrame(columns=_COLUNAS_ESTAGIO8_AGRUPADO),
@@ -2632,6 +2639,41 @@ def consultar_estagio8_agrupado(limite: "int | None" = 200) -> "tuple[pd.DataFra
     except Exception:
         logger.exception("Erro ao consultar estagio8_agrupado em %s", _BANCO_PATH)
         return pd.DataFrame(columns=colunas), 0
+
+
+def verificar_estagio_8() -> dict:
+    """Verificação de qualidade do Estágio 8 (Solicitação Técnica
+    2026-07-23: "a quantidade de ocorrencias deve bater com a quantidade
+    de linhas da tabela entrada enriquecida do estágio 4"): a soma de
+    qtde_ocorrencias em estagio8_agrupado DEVE ser igual ao total de
+    linhas de estagio8_detalhado (que por sua vez é uma leitura sem
+    filtro de estoque_entradas — ver gerar_estagio_8()). Consulta via
+    SQL agregada (COUNT/SUM), sem carregar as tabelas inteiras em
+    memória — chamada por render_estagio_8() a cada exibição da tela,
+    não só logo após gerar, pra funcionar como verificação de qualidade
+    permanente (se um bug futuro tirar o dropna=False do groupby de
+    gerar_estagio_8(), 'bate' vira False e a UI avisa em vez de mostrar
+    silenciosamente um total errado). Devolve {'total_detalhado': int,
+    'soma_ocorrencias': int, 'bate': bool | None} — bate=None (tabelas
+    ainda não existem, nada a comparar) em vez de True/False."""
+    if not _BANCO_PATH.exists():
+        return {"total_detalhado": 0, "soma_ocorrencias": 0, "bate": None}
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estagio8_detalhado" not in tabelas or "estagio8_agrupado" not in tabelas:
+                return {"total_detalhado": 0, "soma_ocorrencias": 0, "bate": None}
+            total_detalhado = con.execute("SELECT COUNT(*) FROM estagio8_detalhado").fetchone()[0]
+            soma_ocorrencias = con.execute("SELECT SUM(qtde_ocorrencias) FROM estagio8_agrupado").fetchone()[0]
+        soma_ocorrencias = int(soma_ocorrencias) if soma_ocorrencias is not None else 0
+        return {
+            "total_detalhado": total_detalhado,
+            "soma_ocorrencias": soma_ocorrencias,
+            "bate": total_detalhado == soma_ocorrencias,
+        }
+    except Exception:
+        logger.exception("Erro ao verificar Estágio 8 em %s", _BANCO_PATH)
+        return {"total_detalhado": 0, "soma_ocorrencias": 0, "bate": None}
 
 
 # ── Estágio 7.2 — Cruzamento por Valor ───────────────────────────────────────

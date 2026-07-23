@@ -2505,7 +2505,11 @@ def render_estagio_8() -> None:
     resto do app (fonte reduzida, hide_index) + exportação CSV sob
     demanda (mesmo padrão de render_pagina_extracao()/entradas_
     terceiros — só busca a tabela inteira quando pedido, não a cada
-    redesenho da tela)."""
+    redesenho da tela). Antes das abas, mostra a verificação de
+    qualidade (loader.verificar_estagio_8(), Solicitação Técnica
+    2026-07-23: "a quantidade de ocorrencias deve bater com a
+    quantidade de linhas da tabela entrada enriquecida do estágio 4") —
+    recalculada a CADA exibição da tela, não só logo após gerar."""
     st.subheader("Estágio 8 — Resumo de Entradas")
     st.caption(
         "Duas visões de referência sobre estoque_entradas (Estágio 4): a aba Detalhada mostra "
@@ -2519,6 +2523,20 @@ def render_estagio_8() -> None:
         st.session_state["estagio8_gerado"] = loader.estagio8_ja_gerado()
 
     if st.session_state["estagio8_gerado"]:
+        verificacao = loader.verificar_estagio_8()
+        if verificacao["bate"] is True:
+            st.success(
+                f"✅ Verificação de qualidade: {verificacao['total_detalhado']:,} linha(s) em "
+                f"`estagio8_detalhado` = {verificacao['soma_ocorrencias']:,} em soma de "
+                "qtde_ocorrencias — bate.".replace(",", ".")
+            )
+        elif verificacao["bate"] is False:
+            st.error(
+                f"❌ Verificação de qualidade falhou: {verificacao['total_detalhado']:,} linha(s) em "
+                f"`estagio8_detalhado`, mas soma de qtde_ocorrencias é "
+                f"{verificacao['soma_ocorrencias']:,} — regere o Estágio 8.".replace(",", ".")
+            )
+
         aba_detalhado, aba_agrupado = st.tabs(["Detalhada", "Agrupada"])
 
         with aba_detalhado:
