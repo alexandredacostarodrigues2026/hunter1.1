@@ -4429,6 +4429,29 @@ def cruzar_produto_escolhido_entradas() -> "tuple[pd.DataFrame, dict | None]":
     return correspondentes, escolhido
 
 
+def cruzar_produto_escolhido_entradas_detalhado() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 1 (Entradas) — tabela DETALHADA (2026-07-23, pedido do
+    usuário: "CRIE UMA TABELA INFERIOR COM OS PRODUTOS E RESPECTIVOS IDS
+    ÚNICOS"): mesma comparação normalizada de cruzar_produto_escolhido_
+    entradas(), mas contra estagio8_detalhado (uma linha por item do
+    XML, com idunico) em vez de estagio8_agrupado (uma linha por
+    combinação, sem idunico) — permite localizar a nota fiscal exata de
+    cada item que corresponde ao produto escolhido. Devolve (DataFrame
+    com as linhas detalhadas correspondentes, dict do produto escolhido
+    usado na comparação) — mesmas regras de vazio/None de cruzar_
+    produto_escolhido_entradas()."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_ESTAGIO8_DETALHADO), None
+    detalhado, _ = consultar_estagio8_detalhado(limite=None)
+    if detalhado.empty:
+        return pd.DataFrame(columns=_COLUNAS_ESTAGIO8_DETALHADO), escolhido
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    codigos_normalizados = _normalizar_cod_item_flexivel(detalhado["codproddecl"])
+    correspondentes = detalhado[codigos_normalizados == cod_item_normalizado].reset_index(drop=True)
+    return correspondentes, escolhido
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio

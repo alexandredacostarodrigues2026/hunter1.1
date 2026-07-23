@@ -2818,7 +2818,12 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
     padding (`7891149200504` vs `07891149200504`), mesmo sendo o mesmo
     produto/código. Zero correspondências MESMO após normalizar
     continua sendo resultado válido (produto genuinamente sem
-    correspondência nas entradas com esse código)."""
+    correspondência nas entradas com esse código). Termina com uma
+    tabela inferior (2026-07-23, mesma sessão: "CRIE UMA TABELA
+    INFERIOR COM OS PRODUTOS E RESPECTIVOS IDS ÚNICOS") — mesma
+    comparação, mas contra estagio8_detalhado (uma linha por item do
+    XML, com idunico) via loader.cruzar_produto_escolhido_entradas_
+    detalhado(), pra localizar a nota fiscal exata de cada item."""
     st.caption(
         f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com o MESMO código de produto "
         f"(100%) de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — comparação normalizada "
@@ -2843,6 +2848,31 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
         )
         st.dataframe(
             _preparar_preview(correspondentes, _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    # Tabela inferior (2026-07-23, pedido do usuário: "CRIE UMA TABELA
+    # INFERIOR COM OS PRODUTOS E RESPECTIVOS IDS ÚNICOS") — mesma
+    # comparação normalizada, mas contra estagio8_detalhado (uma linha por
+    # item do XML, com idunico) em vez de estagio8_agrupado (uma linha por
+    # combinação, sem idunico) — permite localizar a nota fiscal exata de
+    # cada item.
+    st.divider()
+    st.markdown("**Itens individuais (com ID Único)**")
+    detalhado, _ = loader.cruzar_produto_escolhido_entradas_detalhado()
+    if detalhado.empty:
+        st.info("Nenhum item individual encontrado.")
+        return
+    st.markdown(f"**{len(detalhado):,} item(ns)** individuais.".replace(",", "."))
+    with st.container(key="cruzamento_entradas_detalhado_tabela"):
+        st.markdown(
+            "<style>.st-key-cruzamento_entradas_detalhado_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 12px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            _preparar_preview(detalhado, _COLUNAS_PREVIEW_ESTAGIO8_DETALHADO),
             use_container_width=True,
             hide_index=True,
         )
