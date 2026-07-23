@@ -4398,21 +4398,31 @@ def consultar_produto_cruzamento_escolhido() -> "dict | None":
 def cruzar_produto_escolhido_entradas() -> "tuple[pd.DataFrame, dict | None]":
     """Critério 1 (Entradas): compara o produto atualmente escolhido
     (consultar_produto_cruzamento_escolhido()) com estagio8_agrupado
-    (Entradas) por SIMILARIDADE 100% do código de produto — match exato
-    de codproddecl == COD_ITEM do produto escolhido. Devolve (DataFrame
-    com as combinações correspondentes, dict do produto escolhido usado
-    na comparação) — DataFrame vazio se nenhum produto foi escolhido
-    ainda, estagio8_agrupado não existir, ou nenhum match for
-    encontrado; escolhido=None só no primeiro caso."""
+    (Entradas) por SIMILARIDADE 100% do código de produto — "100%"
+    significa o MESMO código, não a mesma string byte-a-byte: usa
+    _normalizar_cod_item_flexivel() (remove zero à esquerda só de
+    código puramente numérico, preserva alfanumérico como está) dos DOIS
+    lados antes de comparar. Achado real confirmado com o usuário
+    2026-07-23: sem essa normalização, "CERV SKOL LATA 350ML" dava ZERO
+    correspondências — código `7891149200504` (Descrição Relevante,
+    Estágio 7.1) vs `07891149200504` (estagio8_agrupado, vindo do
+    Matching/BC3 de Entradas) são o MESMO código, só com padding
+    diferente (mesmo tipo de caso que _normalizar_cod_item_flexivel() já
+    resolve em gerar_cruzamento_valor()). Devolve (DataFrame com as
+    combinações correspondentes, dict do produto escolhido usado na
+    comparação) — DataFrame vazio se nenhum produto foi escolhido ainda,
+    estagio8_agrupado não existir, ou nenhum match for encontrado (mesmo
+    após normalizar); escolhido=None só no primeiro caso."""
     escolhido = consultar_produto_cruzamento_escolhido()
     if not escolhido:
         return pd.DataFrame(columns=_COLUNAS_ESTAGIO8_AGRUPADO), None
     agrupado, _ = consultar_estagio8_agrupado(limite=None)
     if agrupado.empty:
         return pd.DataFrame(columns=_COLUNAS_ESTAGIO8_AGRUPADO), escolhido
-    cod_item = str(escolhido["COD_ITEM"])
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    codigos_normalizados = _normalizar_cod_item_flexivel(agrupado["codproddecl"])
     correspondentes = (
-        agrupado[agrupado["codproddecl"] == cod_item]
+        agrupado[codigos_normalizados == cod_item_normalizado]
         .sort_values("qtde_ocorrencias", ascending=False)
         .reset_index(drop=True)
     )

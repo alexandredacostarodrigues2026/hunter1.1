@@ -2810,25 +2810,26 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
     "CRIE UMA ABA DE ENTRADAS. NELA VAMOS COMPARAR COM OS PRODUTOS
     AGRUPADOS DAS ENTRADAS DO ESTÁGIO 8 USANDO O CRITÉRIO1: SIMILARIDADE
     100% DO CODIGO DE PRODUTO"): compara o produto escolhido com
-    estagio8_agrupado (Entradas) por match EXATO de código — ver
-    loader.cruzar_produto_escolhido_entradas(). Zero correspondências é
-    um resultado válido e informativo (não um erro) — revela quando o
-    código do produto escolhido tem formatação diferente entre os dois
-    lados (ex.: zero à esquerda), útil pra decidir critérios futuros
-    menos estritos."""
+    estagio8_agrupado (Entradas) — ver loader.cruzar_produto_escolhido_
+    entradas(). "100%" é o MESMO código (normalizado — zero à esquerda
+    não conta como diferença), não string idêntica byte-a-byte: achado
+    real confirmado com o usuário 2026-07-23 — sem normalizar, "CERV
+    SKOL LATA 350ML" dava zero correspondências por causa só do
+    padding (`7891149200504` vs `07891149200504`), mesmo sendo o mesmo
+    produto/código. Zero correspondências MESMO após normalizar
+    continua sendo resultado válido (produto genuinamente sem
+    correspondência nas entradas com esse código)."""
     st.caption(
-        f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com código de produto "
-        f"IDÊNTICO (100%) a **{escolhido['COD_ITEM']}** — código do produto "
-        f"**{escolhido['DESCR_ALVO']}**, sem nenhuma normalização (zero à esquerda, etc. contam "
-        "como diferentes)."
+        f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com o MESMO código de produto "
+        f"(100%) de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — comparação normalizada "
+        "(zero à esquerda em código numérico não conta como diferença)."
     )
     correspondentes, _ = loader.cruzar_produto_escolhido_entradas()
     if correspondentes.empty:
         st.warning(
-            f"⚠️ Nenhuma combinação encontrada com código idêntico a **{escolhido['COD_ITEM']}** "
-            "em `estagio8_agrupado`. Pode ser que o produto não apareça nas entradas com esse "
-            "código exato, ou que o código tenha formatação diferente (ex.: zero à esquerda) "
-            "entre a Descrição Relevante e o Matching de Entradas."
+            f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
+            "em `estagio8_agrupado`, mesmo após normalizar zero à esquerda — o produto "
+            "provavelmente não aparece nas entradas com esse código."
         )
         return
     st.success(
