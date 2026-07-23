@@ -2832,14 +2832,26 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
        quando o código aparece associado a mais de uma descrição.
     A tabela de correspondências ganhou checkbox "Selecionar p/ Rubrica"
     (2026-07-23: "CRIE CAIXA PARA GRAVAR O PRODUTO QUE FARÁ PARTE DA
-    RUBRICA DO PRODUTO ALVO") + selectbox "Critério de busca" (só
-    CRITERIO_BUSCA1_MESMO_CODIGO por enquanto) + botão "Salvar na
-    Rubrica", persistindo em loader.salvar_cruzamento_confirmado().
-    Termina com uma tabela inferior ("CRIE UMA TABELA INFERIOR COM OS
-    PRODUTOS E RESPECTIVOS IDS ÚNICOS") — mesma comparação, mas contra
-    estagio8_detalhado (uma linha por item do XML, com idunico) via
-    loader.cruzar_produto_escolhido_entradas_detalhado(), pra localizar
-    a nota fiscal exata de cada item."""
+    RUBRICA DO PRODUTO ALVO") + botão "Salvar na Rubrica", persistindo
+    em loader.salvar_cruzamento_confirmado(). Termina com uma tabela
+    inferior ("CRIE UMA TABELA INFERIOR COM OS PRODUTOS E RESPECTIVOS
+    IDS ÚNICOS") — mesma comparação, mas contra estagio8_detalhado (uma
+    linha por item do XML, com idunico) via loader.cruzar_produto_
+    escolhido_entradas_detalhado(), pra localizar a nota fiscal exata de
+    cada item.
+
+    Selectbox "Critério de busca" (2026-07-23, pedido do usuário:
+    "escolha do critério dever ser antes do cruzamento" — antes ficava
+    ABAIXO da tabela de correspondências, só pra etiquetar o que ia ser
+    salvo; agora vem primeiro, antes de rodar a comparação, já que a
+    escolha do critério é o que DEFINE qual comparação roda — hoje só
+    existe CRITERIO_BUSCA1_MESMO_CODIGO, mas a estrutura já fica pronta
+    pra despachar pra uma função diferente quando entrar um Critério 2)."""
+    criterio_busca = st.selectbox(
+        "Critério de busca",
+        options=[loader.CRITERIO_BUSCA1_MESMO_CODIGO],
+        key="select_criterio_busca_entradas",
+    )
     st.caption(
         f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com o MESMO código de produto "
         f"de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — comparação normalizada "
@@ -2897,11 +2909,6 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
             key="editor_cruzamento_entradas",
         )
 
-    criterio_busca = st.selectbox(
-        "Critério de busca",
-        options=[loader.CRITERIO_BUSCA1_MESMO_CODIGO],
-        key="select_criterio_busca_entradas",
-    )
     if st.button("💾 Salvar na Rubrica do Produto Alvo", key="btn_salvar_rubrica_entradas"):
         marcadas = editado["Selecionar p/ Rubrica"].reindex(editor_base.index)
         selecionadas = editor_base.loc[marcadas.fillna(False), _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO]
