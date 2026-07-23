@@ -2805,6 +2805,48 @@ def render_pagina_estagio_8() -> None:
     render_estagio_8()
 
 
+def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
+    """Aba 'Entradas' do cruzamento (Botão 9, Critério 1, 2026-07-23:
+    "CRIE UMA ABA DE ENTRADAS. NELA VAMOS COMPARAR COM OS PRODUTOS
+    AGRUPADOS DAS ENTRADAS DO ESTÁGIO 8 USANDO O CRITÉRIO1: SIMILARIDADE
+    100% DO CODIGO DE PRODUTO"): compara o produto escolhido com
+    estagio8_agrupado (Entradas) por match EXATO de código — ver
+    loader.cruzar_produto_escolhido_entradas(). Zero correspondências é
+    um resultado válido e informativo (não um erro) — revela quando o
+    código do produto escolhido tem formatação diferente entre os dois
+    lados (ex.: zero à esquerda), útil pra decidir critérios futuros
+    menos estritos."""
+    st.caption(
+        f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com código de produto "
+        f"IDÊNTICO (100%) a **{escolhido['COD_ITEM']}** — código do produto "
+        f"**{escolhido['DESCR_ALVO']}**, sem nenhuma normalização (zero à esquerda, etc. contam "
+        "como diferentes)."
+    )
+    correspondentes, _ = loader.cruzar_produto_escolhido_entradas()
+    if correspondentes.empty:
+        st.warning(
+            f"⚠️ Nenhuma combinação encontrada com código idêntico a **{escolhido['COD_ITEM']}** "
+            "em `estagio8_agrupado`. Pode ser que o produto não apareça nas entradas com esse "
+            "código exato, ou que o código tenha formatação diferente (ex.: zero à esquerda) "
+            "entre a Descrição Relevante e o Matching de Entradas."
+        )
+        return
+    st.success(
+        f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
+    )
+    with st.container(key="cruzamento_entradas_tabela"):
+        st.markdown(
+            "<style>.st-key-cruzamento_entradas_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 12px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            _preparar_preview(correspondentes, _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
 def render_produtos_alvo_salvos() -> None:
     """Painel 'PRODUTOS ALVOS SALVOS' (2026-07-23, Solicitação Técnica:
     "SERÁ UM PAINEL EM QUE ESCOLHEREU UM PRODUTO A SER CRUZADO"): lista
@@ -2816,7 +2858,12 @@ def render_produtos_alvo_salvos() -> None:
     diferente do GRUPO salvo, que pode ter vários). Mesmo destaque
     vermelho condicional (>30%, _destacar_vermelho_grupo_alvo()) da
     tabela "Ver grupo completo já salvo" do 7.3.2, aqui promovido a
-    painel próprio."""
+    painel próprio. Termina com a seção "🔀 Cruzamento" (2026-07-23,
+    mesma sessão) — aba "📥 Entradas" com o Critério 1 (similaridade
+    100% do código de produto contra estagio8_agrupado, ver
+    _render_cruzamento_entradas_criterio1()/loader.cruzar_produto_
+    escolhido_entradas()); mais critérios/abas (Saídas, Estoques) ficam
+    pra próximas rodadas."""
     st.subheader("Produtos Alvos Salvos")
     st.caption(
         "Produtos já marcados como ativos no Grupo de Produto Alvo (Estágio 7.3.2). Escolha um "
@@ -2875,6 +2922,15 @@ def render_produtos_alvo_salvos() -> None:
             else:
                 st.success(f"✅ Produto '{produto_selecionado}' escolhido pra cruzamento.")
                 st.rerun()
+
+    st.divider()
+    st.markdown("### 🔀 Cruzamento")
+    if not escolhido_atual:
+        st.info("Escolha um produto acima pra ver o cruzamento com o Estágio 8.")
+    else:
+        (aba_cruzamento_entradas,) = st.tabs(["📥 Entradas"])
+        with aba_cruzamento_entradas:
+            _render_cruzamento_entradas_criterio1(escolhido_atual)
 
 
 def render_pagina_produtos_alvo_salvos() -> None:

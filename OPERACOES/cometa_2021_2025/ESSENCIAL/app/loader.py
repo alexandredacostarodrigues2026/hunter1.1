@@ -4383,6 +4383,42 @@ def consultar_produto_cruzamento_escolhido() -> "dict | None":
         return None
 
 
+# ── Cruzamento do Produto Escolhido — Critério 1 (Entradas) ──────────────
+# Solicitação Técnica (2026-07-23): "CRIE UMA ABA DE ENTRADAS. NELA VAMOS
+# COMPARAR COM OS PRODUTOS AGRUPADOS DAS ENTRADAS DO ESTÁGIO 8 USANDO O
+# CRITÉRIO1: SIMILARIDADE 100% DO CODIGO DE PRODUTO" — primeiro critério de
+# cruzamento do produto escolhido (Botão 9, produto_cruzamento_escolhido)
+# contra estagio8_agrupado (Entradas, Estágio 8): match EXATO (string ==
+# string, sem normalização/padding — "100%" é o critério mais estrito;
+# critérios futuros, mais permissivos, ainda não implementados) entre
+# codproddecl (estagio8_agrupado) e COD_ITEM (produto escolhido). Revela
+# se o código do produto escolhido aparece associado a mais de uma
+# descrição de XML nas entradas — mesmo tipo de achado que o Estágio 8 já
+# mostra de forma geral, aqui filtrado só pro produto em análise.
+def cruzar_produto_escolhido_entradas() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 1 (Entradas): compara o produto atualmente escolhido
+    (consultar_produto_cruzamento_escolhido()) com estagio8_agrupado
+    (Entradas) por SIMILARIDADE 100% do código de produto — match exato
+    de codproddecl == COD_ITEM do produto escolhido. Devolve (DataFrame
+    com as combinações correspondentes, dict do produto escolhido usado
+    na comparação) — DataFrame vazio se nenhum produto foi escolhido
+    ainda, estagio8_agrupado não existir, ou nenhum match for
+    encontrado; escolhido=None só no primeiro caso."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_ESTAGIO8_AGRUPADO), None
+    agrupado, _ = consultar_estagio8_agrupado(limite=None)
+    if agrupado.empty:
+        return pd.DataFrame(columns=_COLUNAS_ESTAGIO8_AGRUPADO), escolhido
+    cod_item = str(escolhido["COD_ITEM"])
+    correspondentes = (
+        agrupado[agrupado["codproddecl"] == cod_item]
+        .sort_values("qtde_ocorrencias", ascending=False)
+        .reset_index(drop=True)
+    )
+    return correspondentes, escolhido
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio
