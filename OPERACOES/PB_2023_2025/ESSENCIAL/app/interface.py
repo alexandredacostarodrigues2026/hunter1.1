@@ -2179,10 +2179,12 @@ def render_menu_principal() -> None:
     render_pagina_rn1_simulada_30() (Estágio 7.3.2, 2026-07-22 — majora
     EI/Compras/EF do 7.3.1 em 30%, Vendas como âncora real)/
     render_pagina_estagio_8() (Estágio 8, 2026-07-23 — Resumo de
-    Entradas: visão detalhada + agrupada de estoque_entradas pra
-    conferir qualidade do Matching)."""
+    Entradas/Saídas/Estoques: visão detalhada + agrupada de estoque_
+    entradas/estoque_saidas/estoque_anual_consolidado pra conferir
+    qualidade do Matching). 2ª linha própria de botões a partir do
+    Estágio 8 (2026-07-23) — a 1ª linha (11 botões) já estava cheia."""
     st.subheader("Menu Principal")
-    col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11, col12 = st.columns(12)
+    col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11 = st.columns(11)
     if col1.button("📥 EXTRAÇÃO", key="btn_menu_extracao", use_container_width=True):
         st.session_state["pagina_ativa"] = "extracao"
         st.rerun()
@@ -2219,7 +2221,16 @@ def render_menu_principal() -> None:
     if col11.button("📈 7.3.2: SIMULAÇÃO RN1 (+30%)", key="btn_menu_rn1_simulada_30", use_container_width=True):
         st.session_state["pagina_ativa"] = "rn1_simulada_30"
         st.rerun()
-    if col12.button("📋 ESTÁGIO 8: RESUMO DE ENTRADAS", key="btn_menu_estagio_8", use_container_width=True):
+
+    # 2ª linha do menu — começa no Estágio 8 (2026-07-23, pedido do usuário:
+    # "inicie com o 8 uma nova linha de botões"). 12 colunas ficavam
+    # espremidas numa linha só; a 2ª linha também dá espaço pros próximos
+    # estágios sem precisar espremer mais a 1ª.
+    (col_estagio8,) = st.columns(1)
+    if col_estagio8.button(
+        "📋 ESTÁGIO 8: RESUMO DE ENTRADAS / SAÍDAS / ESTOQUES",
+        key="btn_menu_estagio_8", use_container_width=True,
+    ):
         st.session_state["pagina_ativa"] = "estagio_8"
         st.rerun()
 
