@@ -2493,162 +2493,242 @@ _COLUNAS_PREVIEW_ESTAGIO8_DETALHADO = ["codproddecl", "desc_xml", "descrição_d
 _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO = ["codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias"]
 
 
-def render_estagio_8() -> None:
-    """Estágio 8 — Resumo de Entradas (2026-07-23, Solicitação Técnica):
-    duas visões de referência sobre estoque_entradas (Estágio 4) pra
-    conferir a qualidade do Matching e identificar padrões de
-    escrituração da auditada — ver loader.gerar_estagio_8() pro
-    raciocínio completo. Duas abas: "Detalhada" (uma linha por item do
-    XML, com idunico pra rastrear a nota exata) e "Agrupada" (condensada
-    por código/descrição declarados + descrição do XML, ordenada por
-    qtde_ocorrencias decrescente). Mesmo padrão de alta densidade do
-    resto do app (fonte reduzida, hide_index) + exportação CSV sob
-    demanda (mesmo padrão de render_pagina_extracao()/entradas_
-    terceiros — só busca a tabela inteira quando pedido, não a cada
-    redesenho da tela). Antes das abas, mostra a verificação de
-    qualidade (loader.verificar_estagio_8(), Solicitação Técnica
-    2026-07-23: "a quantidade de ocorrencias deve bater com a
-    quantidade de linhas da tabela entrada enriquecida do estágio 4") —
-    recalculada a CADA exibição da tela, não só logo após gerar."""
-    st.subheader("Estágio 8 — Resumo de Entradas")
-    st.caption(
-        "Duas visões de referência sobre estoque_entradas (Estágio 4): a aba Detalhada mostra "
-        "cada item do XML com o código/descrição declarados e o ID Único (rastreia a nota exata); "
-        "a aba Agrupada condensa por código + descrição declarados + descrição do XML, contando "
-        "ocorrências — revela se o mesmo item do XML está associado a mais de um código "
-        "declarado, ou o inverso. Ordenada por quantidade de ocorrências decrescente."
-    )
+_COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_DETALHADO = ["codproddecl", "desc_xml", "idunico"]
+_COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_AGRUPADO = ["codproddecl", "desc_xml", "qtde_ocorrencias"]
 
-    if "estagio8_gerado" not in st.session_state:
-        st.session_state["estagio8_gerado"] = loader.estagio8_ja_gerado()
 
-    if st.session_state["estagio8_gerado"]:
-        verificacao = loader.verificar_estagio_8()
+def _render_bloco_estagio8(
+    *,
+    chave_estado: str,
+    chave_widget: str,
+    nome_tabela_detalhado: str,
+    nome_tabela_agrupado: str,
+    colunas_preview_detalhado: list,
+    colunas_preview_agrupado: list,
+    fn_ja_gerado,
+    fn_verificar,
+    fn_consultar_detalhado,
+    fn_consultar_agrupado,
+    fn_persistir,
+    nome_tabela_origem: str,
+    label_gerar: str,
+) -> None:
+    """Bloco genérico Detalhada+Agrupada+verificação+exportação CSV do
+    Estágio 8 — reusado por Entradas (2026-07-23) e Saídas (2026-07-23,
+    Estágio 8.1), mesma estrutura sobre fontes diferentes
+    (estoque_entradas/estoque_saidas). Já é chamado de DENTRO de uma aba
+    de nível superior (render_estagio_8(): "📥 Entradas"/"📤 Saídas") —
+    por isso Detalhada/Agrupada aqui são SEÇÕES (cabeçalho + divisor),
+    não abas aninhadas, evitando `st.tabs` dentro de `st.tabs`.
+    `chave_widget` prefixa toda key de widget/container pra não colidir
+    entre as duas seções na mesma tela. Mostra a verificação de
+    qualidade (fn_verificar — soma de qtde_ocorrencias no agrupado DEVE
+    bater com o total do detalhado, Solicitação Técnica 2026-07-23) a
+    cada exibição, não só logo após gerar."""
+    if chave_estado not in st.session_state:
+        st.session_state[chave_estado] = fn_ja_gerado()
+
+    if st.session_state[chave_estado]:
+        verificacao = fn_verificar()
         if verificacao["bate"] is True:
             st.success(
                 f"✅ Verificação de qualidade: {verificacao['total_detalhado']:,} linha(s) em "
-                f"`estagio8_detalhado` = {verificacao['soma_ocorrencias']:,} em soma de "
+                f"`{nome_tabela_detalhado}` = {verificacao['soma_ocorrencias']:,} em soma de "
                 "qtde_ocorrencias — bate.".replace(",", ".")
             )
         elif verificacao["bate"] is False:
             st.error(
                 f"❌ Verificação de qualidade falhou: {verificacao['total_detalhado']:,} linha(s) em "
-                f"`estagio8_detalhado`, mas soma de qtde_ocorrencias é "
-                f"{verificacao['soma_ocorrencias']:,} — regere o Estágio 8.".replace(",", ".")
+                f"`{nome_tabela_detalhado}`, mas soma de qtde_ocorrencias é "
+                f"{verificacao['soma_ocorrencias']:,} — regere.".replace(",", ".")
             )
 
-        aba_detalhado, aba_agrupado = st.tabs(["Detalhada", "Agrupada"])
-
-        with aba_detalhado:
-            df_preview, total = loader.consultar_estagio8_detalhado(limite=200)
-            st.success(f"✅ {total:,} registro(s) em `estagio8_detalhado`.".replace(",", "."))
-            if df_preview.empty:
-                st.info("Nenhum registro encontrado.")
-            else:
-                st.markdown(f"Prévia limitada a 200 linhas de {total:,}".replace(",", "."))
-                with st.container(key="estagio8_detalhado_tabela"):
-                    st.markdown(
-                        "<style>.st-key-estagio8_detalhado_tabela [data-testid='stDataFrame'] "
-                        "* { font-size: 12px; }</style>",
-                        unsafe_allow_html=True,
-                    )
-                    st.dataframe(
-                        _preparar_preview(df_preview, _COLUNAS_PREVIEW_ESTAGIO8_DETALHADO),
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-
-                preparar = st.button(
-                    "Preparar exportação completa (CSV)", key="btn_preparar_export_estagio8_detalhado",
+        # Seções (não abas aninhadas — st.tabs dentro de st.tabs tem
+        # histórico de comportamento visual inconsistente no Streamlit;
+        # "abas ou seções" era explicitamente aceito na Solicitação
+        # Técnica, então o nível interno usa cabeçalho + divisor).
+        st.markdown("#### Detalhada")
+        df_preview, total = fn_consultar_detalhado(limite=200)
+        st.success(f"✅ {total:,} registro(s) em `{nome_tabela_detalhado}`.".replace(",", "."))
+        if df_preview.empty:
+            st.info("Nenhum registro encontrado.")
+        else:
+            st.markdown(f"Prévia limitada a 200 linhas de {total:,}".replace(",", "."))
+            chave_container = f"{chave_widget}_detalhado_tabela"
+            with st.container(key=chave_container):
+                st.markdown(
+                    f"<style>.st-key-{chave_container} [data-testid='stDataFrame'] "
+                    "* { font-size: 12px; }</style>",
+                    unsafe_allow_html=True,
                 )
-                if preparar:
-                    with st.spinner("Preparando exportação completa..."):
-                        df_completo, total_completo = loader.consultar_estagio8_detalhado(limite=None)
-                        csv_completo = df_completo.rename(columns=loader.carregar_dicionario_campos())
-                        st.session_state["estagio8_detalhado_csv_bytes"] = (
-                            csv_completo.to_csv(index=False, sep=";").encode("utf-8-sig")
-                        )
-                        st.session_state["estagio8_detalhado_csv_total"] = total_completo
-
-                if "estagio8_detalhado_csv_bytes" in st.session_state:
-                    st.download_button(
-                        f"Baixar tabela completa ({st.session_state['estagio8_detalhado_csv_total']:,} "
-                        "linha(s), CSV)".replace(",", "."),
-                        data=st.session_state["estagio8_detalhado_csv_bytes"],
-                        file_name="estagio8_detalhado.csv",
-                        mime="text/csv",
-                        key="btn_download_estagio8_detalhado",
-                    )
-
-        with aba_agrupado:
-            df_preview, total = loader.consultar_estagio8_agrupado(limite=200)
-            st.success(f"✅ {total:,} combinação(ões) em `estagio8_agrupado`.".replace(",", "."))
-            if df_preview.empty:
-                st.info("Nenhum registro encontrado.")
-            else:
-                st.markdown(f"Prévia limitada a 200 linhas de {total:,}".replace(",", "."))
-                with st.container(key="estagio8_agrupado_tabela"):
-                    st.markdown(
-                        "<style>.st-key-estagio8_agrupado_tabela [data-testid='stDataFrame'] "
-                        "* { font-size: 12px; }</style>",
-                        unsafe_allow_html=True,
-                    )
-                    st.dataframe(
-                        _preparar_preview(df_preview, _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO),
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-
-                preparar = st.button(
-                    "Preparar exportação completa (CSV)", key="btn_preparar_export_estagio8_agrupado",
+                st.dataframe(
+                    _preparar_preview(df_preview, colunas_preview_detalhado),
+                    use_container_width=True,
+                    hide_index=True,
                 )
-                if preparar:
-                    with st.spinner("Preparando exportação completa..."):
-                        df_completo, total_completo = loader.consultar_estagio8_agrupado(limite=None)
-                        csv_completo = df_completo.rename(columns=loader.carregar_dicionario_campos())
-                        st.session_state["estagio8_agrupado_csv_bytes"] = (
-                            csv_completo.to_csv(index=False, sep=";").encode("utf-8-sig")
-                        )
-                        st.session_state["estagio8_agrupado_csv_total"] = total_completo
 
-                if "estagio8_agrupado_csv_bytes" in st.session_state:
-                    st.download_button(
-                        f"Baixar tabela completa ({st.session_state['estagio8_agrupado_csv_total']:,} "
-                        "linha(s), CSV)".replace(",", "."),
-                        data=st.session_state["estagio8_agrupado_csv_bytes"],
-                        file_name="estagio8_agrupado.csv",
-                        mime="text/csv",
-                        key="btn_download_estagio8_agrupado",
-                    )
+            chave_csv = f"{chave_widget}_detalhado_csv_bytes"
+            chave_csv_total = f"{chave_widget}_detalhado_csv_total"
+            preparar = st.button(
+                "Preparar exportação completa (CSV)", key=f"btn_preparar_export_{chave_widget}_detalhado",
+            )
+            if preparar:
+                with st.spinner("Preparando exportação completa..."):
+                    df_completo, total_completo = fn_consultar_detalhado(limite=None)
+                    csv_completo = df_completo.rename(columns=loader.carregar_dicionario_campos())
+                    st.session_state[chave_csv] = csv_completo.to_csv(index=False, sep=";").encode("utf-8-sig")
+                    st.session_state[chave_csv_total] = total_completo
 
+            if chave_csv in st.session_state:
+                st.download_button(
+                    f"Baixar tabela completa ({st.session_state[chave_csv_total]:,} "
+                    "linha(s), CSV)".replace(",", "."),
+                    data=st.session_state[chave_csv],
+                    file_name=f"{nome_tabela_detalhado}.csv",
+                    mime="text/csv",
+                    key=f"btn_download_{chave_widget}_detalhado",
+                )
+
+        st.divider()
+        st.markdown("#### Agrupada")
+        df_preview, total = fn_consultar_agrupado(limite=200)
+        st.success(f"✅ {total:,} combinação(ões) em `{nome_tabela_agrupado}`.".replace(",", "."))
+        if df_preview.empty:
+            st.info("Nenhum registro encontrado.")
+        else:
+            st.markdown(f"Prévia limitada a 200 linhas de {total:,}".replace(",", "."))
+            chave_container = f"{chave_widget}_agrupado_tabela"
+            with st.container(key=chave_container):
+                st.markdown(
+                    f"<style>.st-key-{chave_container} [data-testid='stDataFrame'] "
+                    "* { font-size: 12px; }</style>",
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(
+                    _preparar_preview(df_preview, colunas_preview_agrupado),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            chave_csv = f"{chave_widget}_agrupado_csv_bytes"
+            chave_csv_total = f"{chave_widget}_agrupado_csv_total"
+            preparar = st.button(
+                "Preparar exportação completa (CSV)", key=f"btn_preparar_export_{chave_widget}_agrupado",
+            )
+            if preparar:
+                with st.spinner("Preparando exportação completa..."):
+                    df_completo, total_completo = fn_consultar_agrupado(limite=None)
+                    csv_completo = df_completo.rename(columns=loader.carregar_dicionario_campos())
+                    st.session_state[chave_csv] = csv_completo.to_csv(index=False, sep=";").encode("utf-8-sig")
+                    st.session_state[chave_csv_total] = total_completo
+
+            if chave_csv in st.session_state:
+                st.download_button(
+                    f"Baixar tabela completa ({st.session_state[chave_csv_total]:,} "
+                    "linha(s), CSV)".replace(",", "."),
+                    data=st.session_state[chave_csv],
+                    file_name=f"{nome_tabela_agrupado}.csv",
+                    mime="text/csv",
+                    key=f"btn_download_{chave_widget}_agrupado",
+                )
+
+        st.divider()
         clicou = st.button(
-            "Regerar Estágio 8",
-            key="btn_regerar_estagio8",
-            help="Reprocessa a partir de estoque_entradas (Estágio 4) e substitui as 2 tabelas.",
+            f"Regerar {label_gerar}",
+            key=f"btn_regerar_{chave_widget}",
+            help=f"Reprocessa a partir de {nome_tabela_origem} e substitui as 2 tabelas.",
         )
     else:
-        clicou = st.button("Gerar Estágio 8 — Resumo de Entradas", key="btn_gerar_estagio8")
+        clicou = st.button(f"Gerar {label_gerar}", key=f"btn_gerar_{chave_widget}")
 
     if not clicou:
         return
 
-    with st.spinner("Processando estoque_entradas (Detalhada + Agrupada)..."):
-        resultado = loader.persistir_estagio_8()
+    with st.spinner(f"Processando {nome_tabela_origem} (Detalhada + Agrupada)..."):
+        resultado = fn_persistir()
 
     if "erro" in resultado:
         st.error(f"Erro: {resultado['erro']}")
         return
 
-    st.session_state["estagio8_gerado"] = True
+    st.session_state[chave_estado] = True
     st.rerun()
+
+
+def render_estagio_8() -> None:
+    """Estágio 8 — Resumo de Entradas/Saídas (2026-07-23, Solicitação
+    Técnica, expandido no mesmo dia com o Estágio 8.1): visões de
+    referência sobre estoque_entradas/estoque_saidas (Estágio 4) pra
+    conferir a qualidade do Matching e identificar padrões de
+    escrituração da auditada — ver loader.gerar_estagio_8()/loader.
+    gerar_estagio_8_saidas() pro raciocínio completo. Duas abas de
+    nível superior, "Entradas" e "Saídas", cada uma com sub-abas
+    "Detalhada"/"Agrupada" (_render_bloco_estagio8(), função genérica
+    reusada pelas duas). ATENÇÃO (Saídas): a bc3/Matching só cobre
+    ENTRADAS de terceiros — codproddecl fica NULL em ~99% das linhas de
+    estoque_saidas (achado real, confirmado com o usuário antes de
+    implementar), então a aba Saídas tem valor de conferência de
+    Matching bem mais limitado que Entradas."""
+    st.subheader("Estágio 8 — Resumo de Entradas / Saídas")
+
+    aba_entradas, aba_saidas = st.tabs(["📥 Entradas", "📤 Saídas"])
+
+    with aba_entradas:
+        st.caption(
+            "Duas visões de referência sobre estoque_entradas (Estágio 4): a aba Detalhada mostra "
+            "cada item do XML com o código/descrição declarados e o ID Único (rastreia a nota "
+            "exata); a aba Agrupada condensa por código + descrição declarados + descrição do XML, "
+            "contando ocorrências — revela se o mesmo item do XML está associado a mais de um "
+            "código declarado, ou o inverso. Ordenada por quantidade de ocorrências decrescente."
+        )
+        _render_bloco_estagio8(
+            chave_estado="estagio8_gerado",
+            chave_widget="estagio8",
+            nome_tabela_detalhado="estagio8_detalhado",
+            nome_tabela_agrupado="estagio8_agrupado",
+            colunas_preview_detalhado=_COLUNAS_PREVIEW_ESTAGIO8_DETALHADO,
+            colunas_preview_agrupado=_COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO,
+            fn_ja_gerado=loader.estagio8_ja_gerado,
+            fn_verificar=loader.verificar_estagio_8,
+            fn_consultar_detalhado=loader.consultar_estagio8_detalhado,
+            fn_consultar_agrupado=loader.consultar_estagio8_agrupado,
+            fn_persistir=loader.persistir_estagio_8,
+            nome_tabela_origem="estoque_entradas (Estágio 4)",
+            label_gerar="Estágio 8 — Resumo de Entradas",
+        )
+
+    with aba_saidas:
+        st.caption(
+            "Mesma lógica sobre estoque_saidas (Estágio 4): Detalhada (código/descrição declarados "
+            "quando existir vínculo + descrição do XML + ID Único) e Agrupada (código + descrição "
+            "do XML, contando ocorrências). ⚠️ A bc3/Matching só cobre ENTRADAS de terceiros — "
+            "código declarado fica vazio na quase totalidade das saídas; esta aba serve mais pra "
+            "ver os itens de saída mais frequentes do que pra conferir qualidade de Matching."
+        )
+        _render_bloco_estagio8(
+            chave_estado="estagio8_saidas_gerado",
+            chave_widget="estagio8_saidas",
+            nome_tabela_detalhado="estagio8_saidas_detalhado",
+            nome_tabela_agrupado="estagio8_saidas_agrupado",
+            colunas_preview_detalhado=_COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_DETALHADO,
+            colunas_preview_agrupado=_COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_AGRUPADO,
+            fn_ja_gerado=loader.estagio8_saidas_ja_gerado,
+            fn_verificar=loader.verificar_estagio_8_saidas,
+            fn_consultar_detalhado=loader.consultar_estagio8_saidas_detalhado,
+            fn_consultar_agrupado=loader.consultar_estagio8_saidas_agrupado,
+            fn_persistir=loader.persistir_estagio_8_saidas,
+            nome_tabela_origem="estoque_saidas (Estágio 4)",
+            label_gerar="Estágio 8.1 — Resumo de Saídas",
+        )
 
 
 def render_pagina_estagio_8() -> None:
     """Painel 'ESTÁGIO 8: RESUMO DE ENTRADAS' (2026-07-23, Solicitação
-    Técnica), botão de 12º nível no Menu Principal: ver loader.gerar_
-    estagio_8()/render_estagio_8(). Exige dados_carregados (mesmo padrão
-    das outras páginas); depende também de estoque_entradas (Estágio 4)
-    já gerada, checado dentro de render_estagio_8()."""
+    Técnica; expandido no mesmo dia com a aba Saídas, Estágio 8.1),
+    botão de 12º nível no Menu Principal: ver loader.gerar_estagio_8()/
+    render_estagio_8(). Exige dados_carregados (mesmo padrão das outras
+    páginas); depende também de estoque_entradas/estoque_saidas
+    (Estágio 4) já geradas, checado dentro de render_estagio_8()."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
