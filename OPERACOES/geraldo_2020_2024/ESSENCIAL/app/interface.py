@@ -2526,6 +2526,11 @@ def render_pagina_rn1_simulada_30() -> None:
 _COLUNAS_PREVIEW_ESTAGIO8_DETALHADO = ["codproddecl", "desc_xml", "descrição_decl", "idunico"]
 _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO = ["codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias"]
 
+# Critério 1 do Cruzamento (Botão 9, Entradas) inclui SIMILARIDADE_DESCRICAO
+# além das colunas do Estágio 8 — ver loader.cruzar_produto_escolhido_entradas().
+_COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
+_COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_DETALHADO = _COLUNAS_PREVIEW_ESTAGIO8_DETALHADO + ["SIMILARIDADE_DESCRICAO"]
+
 
 _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_DETALHADO = ["codproddecl", "desc_xml", "idunico"]
 _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_AGRUPADO = ["codproddecl", "desc_xml", "qtde_ocorrencias"]
@@ -2806,21 +2811,27 @@ def render_pagina_estagio_8() -> None:
 
 
 def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
-    """Aba 'Entradas' do cruzamento (Botão 9, Critério 1, 2026-07-23:
-    "CRIE UMA ABA DE ENTRADAS. NELA VAMOS COMPARAR COM OS PRODUTOS
-    AGRUPADOS DAS ENTRADAS DO ESTÁGIO 8 USANDO O CRITÉRIO1: SIMILARIDADE
-    100% DO CODIGO DE PRODUTO"): compara o produto escolhido com
-    estagio8_agrupado (Entradas) — ver loader.cruzar_produto_escolhido_
-    entradas(). "100%" é o MESMO código (normalizado — zero à esquerda
-    não conta como diferença), não string idêntica byte-a-byte: achado
-    real confirmado com o usuário 2026-07-23 — sem normalizar, "CERV
-    SKOL LATA 350ML" dava zero correspondências por causa só do
-    padding (`7891149200504` vs `07891149200504`), mesmo sendo o mesmo
-    produto/código. Zero correspondências MESMO após normalizar
-    continua sendo resultado válido (produto genuinamente sem
-    correspondência nas entradas com esse código). A tabela de
-    correspondências ganhou checkbox "Selecionar p/ Rubrica" (2026-07-23,
-    mesma sessão: "CRIE CAIXA PARA GRAVAR O PRODUTO QUE FARÁ PARTE DA
+    """Aba 'Entradas' do cruzamento (Botão 9, Critério 1): compara o
+    produto escolhido com estagio8_agrupado (Entradas) — ver loader.
+    cruzar_produto_escolhido_entradas(). Critério 1 combina DUAS
+    condições (redefinido 2026-07-23: "critério1: mesmo codigo do
+    produto e similaridade entre descricao do produto xml buscado e e
+    descrição do alvo"):
+    1. MESMO código de produto (normalizado — zero à esquerda não conta
+       como diferença): achado real confirmado com o usuário 2026-07-23
+       — sem normalizar, "CERV SKOL LATA 350ML" dava zero
+       correspondências por causa só do padding (`7891149200504` vs
+       `07891149200504`), mesmo sendo o mesmo produto/código. Zero
+       correspondências MESMO após normalizar continua sendo resultado
+       válido (produto genuinamente sem correspondência nas entradas com
+       esse código).
+    2. SIMILARIDADE_DESCRICAO (overlap de tokens entre `desc_xml` e a
+       descrição do alvo, mesma fórmula do app antigo) — não filtra
+       nenhuma linha, só ordena (desc) e é exibida como coluna, pra
+       ajudar a decidir qual descrição de XML é de fato o mesmo produto
+       quando o código aparece associado a mais de uma descrição.
+    A tabela de correspondências ganhou checkbox "Selecionar p/ Rubrica"
+    (2026-07-23: "CRIE CAIXA PARA GRAVAR O PRODUTO QUE FARÁ PARTE DA
     RUBRICA DO PRODUTO ALVO") + selectbox "Critério de busca" (só
     CRITERIO_BUSCA1_MESMO_CODIGO por enquanto) + botão "Salvar na
     Rubrica", persistindo em loader.salvar_cruzamento_confirmado().
@@ -2831,8 +2842,9 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
     a nota fiscal exata de cada item."""
     st.caption(
         f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com o MESMO código de produto "
-        f"(100%) de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — comparação normalizada "
-        "(zero à esquerda em código numérico não conta como diferença)."
+        f"de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — comparação normalizada "
+        "(zero à esquerda em código numérico não conta como diferença) — ordenadas por "
+        "similaridade de descrição (overlap de tokens) entre o produto do XML e a descrição do alvo."
     )
     correspondentes, _ = loader.cruzar_produto_escolhido_entradas()
     if correspondentes.empty:
@@ -2864,7 +2876,7 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
         zip(ja_confirmadas_entradas["codproddecl"], ja_confirmadas_entradas["desc_xml"])
     ) if not ja_confirmadas_entradas.empty else set()
 
-    editor_base = correspondentes[_COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO].copy()
+    editor_base = correspondentes[_COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO].copy()
     editor_base.insert(
         0, "Selecionar p/ Rubrica",
         [(c, d) in chaves_confirmadas for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])],
@@ -2925,7 +2937,7 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
             unsafe_allow_html=True,
         )
         st.dataframe(
-            _preparar_preview(detalhado, _COLUNAS_PREVIEW_ESTAGIO8_DETALHADO),
+            _preparar_preview(detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_DETALHADO),
             use_container_width=True,
             hide_index=True,
         )

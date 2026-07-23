@@ -126,3 +126,6 @@ desc_xml;Descricao XML
 descrição_decl;Descricao Declaracao
 idunico;ID Unico
 qtde_ocorrencias;Qtde. Ocorrencias
+
+# Novos campos - 2026-07-23 (Botao 9 - Cruzamento, Criterio 1: codigo + similaridade de descricao)
+SIMILARIDADE_DESCRICAO;Similaridade Descricao (%)

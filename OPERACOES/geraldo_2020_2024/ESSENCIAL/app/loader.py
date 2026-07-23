@@ -4388,18 +4388,27 @@ def consultar_produto_cruzamento_escolhido() -> "dict | None":
 # COMPARAR COM OS PRODUTOS AGRUPADOS DAS ENTRADAS DO ESTÁGIO 8 USANDO O
 # CRITÉRIO1: SIMILARIDADE 100% DO CODIGO DE PRODUTO" — primeiro critério de
 # cruzamento do produto escolhido (Botão 9, produto_cruzamento_escolhido)
-# contra estagio8_agrupado (Entradas, Estágio 8): match EXATO (string ==
-# string, sem normalização/padding — "100%" é o critério mais estrito;
-# critérios futuros, mais permissivos, ainda não implementados) entre
-# codproddecl (estagio8_agrupado) e COD_ITEM (produto escolhido). Revela
-# se o código do produto escolhido aparece associado a mais de uma
-# descrição de XML nas entradas — mesmo tipo de achado que o Estágio 8 já
-# mostra de forma geral, aqui filtrado só pro produto em análise.
+# contra estagio8_agrupado (Entradas, Estágio 8): Critério 1 = MESMO
+# código de produto (normalizado, zero à esquerda não conta como
+# diferença) E similaridade de descrição entre o XML buscado (desc_xml)
+# e a descrição do alvo (DESCR_ALVO) — combinação pedida pelo usuário em
+# 2026-07-23 ("critério1: mesmo codigo do produto e similaridade entre
+# descricao do produto xml buscado e e descrição do alvo") pra ajudar a
+# decidir, quando o mesmo código aparece com mais de uma descrição de
+# XML (achado que o Estágio 8 já revela de forma geral), qual delas é de
+# fato o mesmo produto do alvo. O código continua sendo o filtro (só
+# entram linhas com o MESMO código); a similaridade de descrição é
+# informativa/ordenação, não descarta nenhuma linha — mesma fórmula de
+# overlap de tokens do app antigo (_score_similaridade_descricao()).
+_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_ESTAGIO8_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
+_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO = _COLUNAS_ESTAGIO8_DETALHADO + ["SIMILARIDADE_DESCRICAO"]
+
+
 def cruzar_produto_escolhido_entradas() -> "tuple[pd.DataFrame, dict | None]":
     """Critério 1 (Entradas): compara o produto atualmente escolhido
     (consultar_produto_cruzamento_escolhido()) com estagio8_agrupado
-    (Entradas) por SIMILARIDADE 100% do código de produto — "100%"
-    significa o MESMO código, não a mesma string byte-a-byte: usa
+    (Entradas) por MESMO código de produto — "100%" significa o MESMO
+    código, não a mesma string byte-a-byte: usa
     _normalizar_cod_item_flexivel() (remove zero à esquerda só de
     código puramente numérico, preserva alfanumérico como está) dos DOIS
     lados antes de comparar. Achado real confirmado com o usuário
@@ -4408,47 +4417,64 @@ def cruzar_produto_escolhido_entradas() -> "tuple[pd.DataFrame, dict | None]":
     Estágio 7.1) vs `07891149200504` (estagio8_agrupado, vindo do
     Matching/BC3 de Entradas) são o MESMO código, só com padding
     diferente (mesmo tipo de caso que _normalizar_cod_item_flexivel() já
-    resolve em gerar_cruzamento_valor()). Devolve (DataFrame com as
+    resolve em gerar_cruzamento_valor()). Além do código, calcula
+    `SIMILARIDADE_DESCRICAO` (0-100, overlap de tokens entre `desc_xml` e
+    `DESCR_ALVO` do escolhido) e ordena por ela (desc) — segunda metade
+    do Critério 1, pedida em 2026-07-23. Devolve (DataFrame com as
     combinações correspondentes, dict do produto escolhido usado na
     comparação) — DataFrame vazio se nenhum produto foi escolhido ainda,
     estagio8_agrupado não existir, ou nenhum match for encontrado (mesmo
     após normalizar); escolhido=None só no primeiro caso."""
     escolhido = consultar_produto_cruzamento_escolhido()
     if not escolhido:
-        return pd.DataFrame(columns=_COLUNAS_ESTAGIO8_AGRUPADO), None
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), None
     agrupado, _ = consultar_estagio8_agrupado(limite=None)
     if agrupado.empty:
-        return pd.DataFrame(columns=_COLUNAS_ESTAGIO8_AGRUPADO), escolhido
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
     cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
     codigos_normalizados = _normalizar_cod_item_flexivel(agrupado["codproddecl"])
-    correspondentes = (
-        agrupado[codigos_normalizados == cod_item_normalizado]
-        .sort_values("qtde_ocorrencias", ascending=False)
-        .reset_index(drop=True)
+    correspondentes = agrupado[codigos_normalizados == cod_item_normalizado].copy()
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
+    correspondentes = correspondentes.sort_values(
+        ["SIMILARIDADE_DESCRICAO", "qtde_ocorrencias"], ascending=[False, False]
+    )[_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO].reset_index(drop=True)
     return correspondentes, escolhido
 
 
 def cruzar_produto_escolhido_entradas_detalhado() -> "tuple[pd.DataFrame, dict | None]":
     """Critério 1 (Entradas) — tabela DETALHADA (2026-07-23, pedido do
     usuário: "CRIE UMA TABELA INFERIOR COM OS PRODUTOS E RESPECTIVOS IDS
-    ÚNICOS"): mesma comparação normalizada de cruzar_produto_escolhido_
-    entradas(), mas contra estagio8_detalhado (uma linha por item do
-    XML, com idunico) em vez de estagio8_agrupado (uma linha por
-    combinação, sem idunico) — permite localizar a nota fiscal exata de
-    cada item que corresponde ao produto escolhido. Devolve (DataFrame
-    com as linhas detalhadas correspondentes, dict do produto escolhido
-    usado na comparação) — mesmas regras de vazio/None de cruzar_
-    produto_escolhido_entradas()."""
+    ÚNICOS"): mesma comparação de cruzar_produto_escolhido_entradas()
+    (mesmo código normalizado + `SIMILARIDADE_DESCRICAO`), mas contra
+    estagio8_detalhado (uma linha por item do XML, com idunico) em vez
+    de estagio8_agrupado (uma linha por combinação, sem idunico) —
+    permite localizar a nota fiscal exata de cada item que corresponde
+    ao produto escolhido. Devolve (DataFrame com as linhas detalhadas
+    correspondentes, dict do produto escolhido usado na comparação) —
+    mesmas regras de vazio/None de cruzar_produto_escolhido_entradas()."""
     escolhido = consultar_produto_cruzamento_escolhido()
     if not escolhido:
-        return pd.DataFrame(columns=_COLUNAS_ESTAGIO8_DETALHADO), None
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), None
     detalhado, _ = consultar_estagio8_detalhado(limite=None)
     if detalhado.empty:
-        return pd.DataFrame(columns=_COLUNAS_ESTAGIO8_DETALHADO), escolhido
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
     cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
     codigos_normalizados = _normalizar_cod_item_flexivel(detalhado["codproddecl"])
-    correspondentes = detalhado[codigos_normalizados == cod_item_normalizado].reset_index(drop=True)
+    correspondentes = detalhado[codigos_normalizados == cod_item_normalizado].copy()
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    correspondentes = correspondentes.sort_values(
+        "SIMILARIDADE_DESCRICAO", ascending=False
+    )[_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO].reset_index(drop=True)
     return correspondentes, escolhido
 
 
@@ -4723,6 +4749,32 @@ def _normalizar_cod_item_flexivel(serie: pd.Series) -> pd.Series:
     s = s.copy()
     s.loc[numerico] = pd.to_numeric(s.loc[numerico]).astype("int64").astype(str)
     return s
+
+
+_STOPWORDS_DESCRICAO_PT = {"COM", "SEM", "DOS", "DAS", "POR", "PARA", "UMA", "UNS", "NOS", "NAS", "NUM"}
+
+
+def _tokenizar_descricao(texto: str) -> set:
+    """Tokeniza descrição de produto pra comparação por overlap — mesma
+    lógica do app antigo (ANTIGO_geraldo_2020_2024_5/ESSENCIAL/app/
+    matching/scoring.py:tokenizar): maiúsculas, só palavras com 3+
+    caracteres, remove stopwords em português e tokens puramente
+    numéricos (medida/tamanho isolado não deve pesar na similaridade)."""
+    palavras = re.findall(r"\b\w{3,}\b", str(texto).upper())
+    return {p for p in palavras if p not in _STOPWORDS_DESCRICAO_PT and not p.isdigit()}
+
+
+def _score_similaridade_descricao(texto_a: str, texto_b: str) -> float:
+    """Similaridade de descrição por overlap de tokens (Jaccard:
+    |interseção| / |união| × 100) — mesma fórmula do app antigo
+    (matching/scoring.py:score_descricao). 0.0 se qualquer um dos dois
+    lados não tiver nenhum token válido."""
+    tokens_a = _tokenizar_descricao(texto_a)
+    tokens_b = _tokenizar_descricao(texto_b)
+    if not tokens_a or not tokens_b:
+        return 0.0
+    uniao = len(tokens_a | tokens_b)
+    return round(len(tokens_a & tokens_b) / uniao * 100, 1) if uniao > 0 else 0.0
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
