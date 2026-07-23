@@ -2872,6 +2872,218 @@ def verificar_estagio_8_saidas() -> dict:
         return {"total_detalhado": 0, "soma_ocorrencias": 0, "bate": None}
 
 
+# ── Estágio 8.2 — Resumo de Estoques ─────────────────────────────────────────
+# Solicitação Técnica (2026-07-23): mesma mecânica do Estágio 8/8.1, agora
+# sobre estoque_anual_consolidado (Estágio 5) — bloqueada na primeira rodada
+# porque essa tabela não tem COD_ITEM/DESCR_ITEM/ID_UNICO como a Solicitação
+# Técnica original pedia (schema real: ANO_REFERENCIA, COD_ITEM_DECLARACAO,
+# DESCR_ITEM_DECLARACAO, UNIDADE, QUANTIDADE_INICIAL, QUANTIDADE_FINAL — sem
+# nenhuma chave de item individual, é consolidado por ANO+código, não por
+# nota/item como entradas/saídas). Desbloqueada com instrução explícita do
+# usuário: gerar ID_UNICO sintético via hash de (ANO_REFERENCIA,
+# COD_ITEM_DECLARACAO, DESCR_ITEM_DECLARACAO, QUANTIDADE_INICIAL,
+# QUANTIDADE_FINAL) — mesma técnica de _gerar_id_unico() já usada em
+# nfe_entradas/nfe_saidas —, SEM alterar o Estágio 5 (a coluna só existe
+# dentro deste cálculo do Estágio 8.2, a tabela real de estoque_anual_
+# consolidado continua com o schema de sempre). ACHADO real confirmado
+# antes de implementar: (ANO_REFERENCIA, COD_ITEM_DECLARACAO) sozinho JÁ NÃO
+# é chave única em estoque_anual_consolidado — 18 pares duplicados na
+# geraldo, a maioria duplicata EXATA (mesmos 5 campos, achado de qualidade
+# de dado no Estágio 5, fora do escopo daqui), mas alguns com QUANTIDADE_
+# INICIAL/FINAL diferentes (ex.: COD 00000000018653/2020: 11,0/4,0 vs
+# 11,0/11,0) — a composição com as quantidades resolve esses casos, mas
+# duplicatas 100% idênticas nos 5 campos continuam colidindo no mesmo hash
+# (limite real do dado — duas linhas indistinguíveis não podem ganhar IDs
+# diferentes sem um desempate artificial, que não foi pedido).
+_COLUNAS_ESTAGIO8_ESTOQUE_DETALHADO = ["codproddecl", "descrição_decl", "idunico"]
+_COLUNAS_ESTAGIO8_ESTOQUE_AGRUPADO = ["codproddecl", "descrição_decl", "qtde_ocorrencias"]
+_COLUNAS_CHAVE_ID_UNICO_ESTOQUE = [
+    "ANO_REFERENCIA", "COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO",
+    "QUANTIDADE_INICIAL", "QUANTIDADE_FINAL",
+]
+
+
+def gerar_estagio_8_estoque() -> dict:
+    """Estágio 8.2 — Resumo de Estoques: extrai de estoque_anual_
+    consolidado (Estágio 5) codproddecl (COD_ITEM_DECLARACAO),
+    descrição_decl (DESCR_ITEM_DECLARACAO) e idunico — este último
+    SINTÉTICO, gerado via _gerar_id_unico() sobre (ANO_REFERENCIA,
+    COD_ITEM_DECLARACAO, DESCR_ITEM_DECLARACAO, QUANTIDADE_INICIAL,
+    QUANTIDADE_FINAL), instrução explícita do usuário (2026-07-23) —
+    essa tabela não tem chave de item individual (é consolidada por
+    ANO+código, ver comentário da seção). Regra R07: codproddecl/idunico
+    sempre string (idunico é hash, nunca NULL; codproddecl preserva NULL
+    genuíno se um dia existir, hoje 100% preenchido na prática).
+    "agrupado" por (codproddecl, descrição_decl), dropna=False. Devolve
+    {'detalhado': DataFrame, 'agrupado': DataFrame, 'erros': list} —
+    erros não-vazio quando estoque_anual_consolidado (Estágio 5) ainda
+    não foi gerada."""
+    vazio = {
+        "detalhado": pd.DataFrame(columns=_COLUNAS_ESTAGIO8_ESTOQUE_DETALHADO),
+        "agrupado": pd.DataFrame(columns=_COLUNAS_ESTAGIO8_ESTOQUE_AGRUPADO),
+    }
+    if not _BANCO_PATH.exists():
+        return {**vazio, "erros": ["Tabela estoque_anual_consolidado (Estágio 5) ainda não foi gerada."]}
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estoque_anual_consolidado" not in tabelas:
+                return {**vazio, "erros": ["Tabela estoque_anual_consolidado (Estágio 5) ainda não foi gerada."]}
+            base = con.execute(
+                "SELECT ANO_REFERENCIA, COD_ITEM_DECLARACAO, DESCR_ITEM_DECLARACAO, "
+                "QUANTIDADE_INICIAL, QUANTIDADE_FINAL FROM estoque_anual_consolidado"
+            ).df()
+    except Exception:
+        logger.exception("Erro ao gerar Estágio 8.2 (Resumo de Estoques) em %s", _BANCO_PATH)
+        return {**vazio, "erros": ["Erro ao processar estoque_anual_consolidado — ver log."]}
+
+    # QUANTIDADE_INICIAL/FINAL têm NaN genuíno (~20% das linhas na geraldo —
+    # item sem estoque inicial/final naquele ano). Achado real: `.astype(str)`
+    # do pandas NÃO converte NaN de float pra string "nan" (fica como float
+    # mesmo) — _gerar_id_unico() faz "|".join() das colunas convertidas, que
+    # quebra com TypeError se sobrar um float na lista. fillna(-1) ANTES do
+    # hash (só pra esta chave sintética — nunca aparece na saída, que só tem
+    # codproddecl/descrição_decl/idunico) evita o erro sem mascarar dado real
+    # em nenhuma coluna exibida.
+    for col in ("QUANTIDADE_INICIAL", "QUANTIDADE_FINAL"):
+        base[col] = base[col].fillna(-1)
+    base = _gerar_id_unico(base, _COLUNAS_CHAVE_ID_UNICO_ESTOQUE, nome_coluna="idunico")
+    base = base.rename(columns={
+        "COD_ITEM_DECLARACAO": "codproddecl", "DESCR_ITEM_DECLARACAO": "descrição_decl",
+    })
+    base["codproddecl"] = base["codproddecl"].where(base["codproddecl"].isna(), base["codproddecl"].astype(str))
+    detalhado = base[_COLUNAS_ESTAGIO8_ESTOQUE_DETALHADO].reset_index(drop=True)
+
+    agrupado = (
+        detalhado.groupby(["codproddecl", "descrição_decl"], as_index=False, dropna=False)
+        .size()
+        .rename(columns={"size": "qtde_ocorrencias"})
+        .sort_values("qtde_ocorrencias", ascending=False)
+        .reset_index(drop=True)
+    )[_COLUNAS_ESTAGIO8_ESTOQUE_AGRUPADO]
+
+    return {"detalhado": detalhado, "agrupado": agrupado, "erros": []}
+
+
+def persistir_estagio_8_estoque(callback=None) -> dict:
+    """Estágio 8.2: persiste estagio8_estoque_detalhado/estagio8_
+    estoque_agrupado no DuckDB, ver gerar_estagio_8_estoque().
+    callback(etapa, n) chamado ao final de cada uma das 2 tabelas."""
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    resultado = {}
+    try:
+        r = gerar_estagio_8_estoque()
+        if r["erros"]:
+            resultado["erro"] = " | ".join(r["erros"])
+            return resultado
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            for nome_tabela, df in (
+                ("estagio8_estoque_detalhado", r["detalhado"]), ("estagio8_estoque_agrupado", r["agrupado"]),
+            ):
+                if not df.empty:
+                    con.register("_df_estagio8_estoque", df)
+                    con.execute(f"CREATE OR REPLACE TABLE {nome_tabela} AS SELECT * FROM _df_estagio8_estoque")
+                    con.unregister("_df_estagio8_estoque")
+                resultado[nome_tabela] = len(df)
+                if callback:
+                    callback(nome_tabela, resultado[nome_tabela])
+    except Exception as exc:
+        logger.exception("Erro ao persistir Estágio 8.2: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def estagio8_estoque_ja_gerado() -> bool:
+    """True se as tabelas do Estágio 8.2 (estagio8_estoque_detalhado/
+    estagio8_estoque_agrupado) já existem no DuckDB da operação."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            return "estagio8_estoque_detalhado" in tabelas and "estagio8_estoque_agrupado" in tabelas
+    except Exception:
+        logger.exception("Erro ao verificar Estágio 8.2 existente em %s", _BANCO_PATH)
+        return False
+
+
+def consultar_estagio8_estoque_detalhado(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê estagio8_estoque_detalhado já persistida (sem reprocessar),
+    devolvendo uma amostra (até 'limite' linhas) e o total real de
+    linhas. limite=None devolve a tabela inteira (exportação completa)."""
+    colunas = _COLUNAS_ESTAGIO8_ESTOQUE_DETALHADO
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estagio8_estoque_detalhado" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            total = con.execute("SELECT COUNT(*) FROM estagio8_estoque_detalhado").fetchone()[0]
+            query = (
+                "SELECT * FROM estagio8_estoque_detalhado" if limite is None
+                else f"SELECT * FROM estagio8_estoque_detalhado LIMIT {limite}"
+            )
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar estagio8_estoque_detalhado em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
+def consultar_estagio8_estoque_agrupado(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê estagio8_estoque_agrupado já persistida (sem reprocessar),
+    devolvendo uma amostra (até 'limite' linhas, já ordenada por
+    qtde_ocorrencias decrescente na persistência) e o total real de
+    linhas. limite=None devolve a tabela inteira (exportação completa)."""
+    colunas = _COLUNAS_ESTAGIO8_ESTOQUE_AGRUPADO
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estagio8_estoque_agrupado" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            total = con.execute("SELECT COUNT(*) FROM estagio8_estoque_agrupado").fetchone()[0]
+            query = (
+                "SELECT * FROM estagio8_estoque_agrupado" if limite is None
+                else f"SELECT * FROM estagio8_estoque_agrupado LIMIT {limite}"
+            )
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar estagio8_estoque_agrupado em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
+def verificar_estagio_8_estoque() -> dict:
+    """Verificação de qualidade do Estágio 8.2 — mesmo raciocínio de
+    verificar_estagio_8(): a soma de qtde_ocorrencias em estagio8_
+    estoque_agrupado DEVE ser igual ao total de linhas de estagio8_
+    estoque_detalhado. Devolve {'total_detalhado': int,
+    'soma_ocorrencias': int, 'bate': bool | None}."""
+    if not _BANCO_PATH.exists():
+        return {"total_detalhado": 0, "soma_ocorrencias": 0, "bate": None}
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estagio8_estoque_detalhado" not in tabelas or "estagio8_estoque_agrupado" not in tabelas:
+                return {"total_detalhado": 0, "soma_ocorrencias": 0, "bate": None}
+            total_detalhado = con.execute("SELECT COUNT(*) FROM estagio8_estoque_detalhado").fetchone()[0]
+            soma_ocorrencias = con.execute(
+                "SELECT SUM(qtde_ocorrencias) FROM estagio8_estoque_agrupado"
+            ).fetchone()[0]
+        soma_ocorrencias = int(soma_ocorrencias) if soma_ocorrencias is not None else 0
+        return {
+            "total_detalhado": total_detalhado,
+            "soma_ocorrencias": soma_ocorrencias,
+            "bate": total_detalhado == soma_ocorrencias,
+        }
+    except Exception:
+        logger.exception("Erro ao verificar Estágio 8.2 em %s", _BANCO_PATH)
+        return {"total_detalhado": 0, "soma_ocorrencias": 0, "bate": None}
+
+
 # ── Estágio 7.2 — Cruzamento por Valor ───────────────────────────────────────
 # Solicitação Técnica (2026-07-18): aplica a identidade contábil EI+Compras=
 # Vendas+EF por (COD_ITEM, ANO), em R$ — perspectiva híbrida definida pelo

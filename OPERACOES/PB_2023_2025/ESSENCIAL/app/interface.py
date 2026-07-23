@@ -2497,6 +2497,10 @@ _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_DETALHADO = ["codproddecl", "desc_xml", "idunic
 _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_AGRUPADO = ["codproddecl", "desc_xml", "qtde_ocorrencias"]
 
 
+_COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_DETALHADO = ["codproddecl", "descrição_decl", "idunico"]
+_COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_AGRUPADO = ["codproddecl", "descrição_decl", "qtde_ocorrencias"]
+
+
 def _render_bloco_estagio8(
     *,
     chave_estado: str,
@@ -2656,23 +2660,27 @@ def _render_bloco_estagio8(
 
 
 def render_estagio_8() -> None:
-    """Estágio 8 — Resumo de Entradas/Saídas (2026-07-23, Solicitação
-    Técnica, expandido no mesmo dia com o Estágio 8.1): visões de
-    referência sobre estoque_entradas/estoque_saidas (Estágio 4) pra
-    conferir a qualidade do Matching e identificar padrões de
-    escrituração da auditada — ver loader.gerar_estagio_8()/loader.
-    gerar_estagio_8_saidas() pro raciocínio completo. Duas abas de
-    nível superior, "Entradas" e "Saídas", cada uma com sub-abas
-    "Detalhada"/"Agrupada" (_render_bloco_estagio8(), função genérica
-    reusada pelas duas). Em Saídas, codproddecl vem de fatoitemnfe_
-    infnfe_det_prod_cprod (código do próprio XML) — não de COD_ITEM_
-    DECLARACAO/Matching, que não se aplica a saídas (auditada é
-    emitente da nota, cProd já é o código dela mesma; achado confirmado
-    com o usuário 2026-07-23, mesma correção já aplicada em Vendas do
-    Estágio 7.2)."""
-    st.subheader("Estágio 8 — Resumo de Entradas / Saídas")
+    """Estágio 8 — Resumo de Entradas/Saídas/Estoques (2026-07-23,
+    Solicitação Técnica, expandido no mesmo dia com os Estágios 8.1 e
+    8.2): visões de referência sobre estoque_entradas/estoque_saidas
+    (Estágio 4) e estoque_anual_consolidado (Estágio 5) pra conferir a
+    qualidade do Matching e identificar padrões de escrituração da
+    auditada — ver loader.gerar_estagio_8()/gerar_estagio_8_saidas()/
+    gerar_estagio_8_estoque() pro raciocínio completo. Três abas de
+    nível superior, "Entradas"/"Saídas"/"Estoques", cada uma com
+    sub-seções "Detalhada"/"Agrupada" (_render_bloco_estagio8(), função
+    genérica reusada pelas três). Em Saídas, codproddecl vem de
+    fatoitemnfe_infnfe_det_prod_cprod (código do próprio XML) — não de
+    COD_ITEM_DECLARACAO/Matching, que não se aplica a saídas (auditada
+    é emitente da nota, cProd já é o código dela mesma; achado
+    confirmado com o usuário 2026-07-23, mesma correção já aplicada em
+    Vendas do Estágio 7.2). Em Estoques, idunico é SINTÉTICO (hash de
+    Ano+Código+Descrição+EstoqueInicial+EstoqueFinal, instrução
+    explícita do usuário) — estoque_anual_consolidado não tem chave de
+    item individual (é consolidada por Ano+Código)."""
+    st.subheader("Estágio 8 — Resumo de Entradas / Saídas / Estoques")
 
-    aba_entradas, aba_saidas = st.tabs(["📥 Entradas", "📤 Saídas"])
+    aba_entradas, aba_saidas, aba_estoques = st.tabs(["📥 Entradas", "📤 Saídas", "📦 Estoques"])
 
     with aba_entradas:
         st.caption(
@@ -2722,14 +2730,40 @@ def render_estagio_8() -> None:
             label_gerar="Estágio 8.1 — Resumo de Saídas",
         )
 
+    with aba_estoques:
+        st.caption(
+            "Mesma lógica sobre estoque_anual_consolidado (Estágio 5): Detalhada (código/descrição "
+            "declarados + ID Único) e Agrupada (código + descrição, contando ocorrências). Essa "
+            "tabela não tem chave de item individual (é consolidada por Ano+Código) — o ID Único "
+            "aqui é sintético, um hash de Ano + Código + Descrição + Estoque Inicial + Estoque "
+            "Final, só pra esta visão (não altera a tabela real do Estágio 5). Duas linhas 100% "
+            "idênticas nesses 5 campos (achado real de qualidade de dado, raro) recebem o mesmo ID."
+        )
+        _render_bloco_estagio8(
+            chave_estado="estagio8_estoque_gerado",
+            chave_widget="estagio8_estoque",
+            nome_tabela_detalhado="estagio8_estoque_detalhado",
+            nome_tabela_agrupado="estagio8_estoque_agrupado",
+            colunas_preview_detalhado=_COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_DETALHADO,
+            colunas_preview_agrupado=_COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_AGRUPADO,
+            fn_ja_gerado=loader.estagio8_estoque_ja_gerado,
+            fn_verificar=loader.verificar_estagio_8_estoque,
+            fn_consultar_detalhado=loader.consultar_estagio8_estoque_detalhado,
+            fn_consultar_agrupado=loader.consultar_estagio8_estoque_agrupado,
+            fn_persistir=loader.persistir_estagio_8_estoque,
+            nome_tabela_origem="estoque_anual_consolidado (Estágio 5)",
+            label_gerar="Estágio 8.2 — Resumo de Estoques",
+        )
+
 
 def render_pagina_estagio_8() -> None:
     """Painel 'ESTÁGIO 8: RESUMO DE ENTRADAS' (2026-07-23, Solicitação
-    Técnica; expandido no mesmo dia com a aba Saídas, Estágio 8.1),
-    botão de 12º nível no Menu Principal: ver loader.gerar_estagio_8()/
-    render_estagio_8(). Exige dados_carregados (mesmo padrão das outras
-    páginas); depende também de estoque_entradas/estoque_saidas
-    (Estágio 4) já geradas, checado dentro de render_estagio_8()."""
+    Técnica; expandido no mesmo dia com as abas Saídas/Estoques,
+    Estágios 8.1/8.2), botão de 12º nível no Menu Principal: ver
+    loader.gerar_estagio_8()/render_estagio_8(). Exige dados_carregados
+    (mesmo padrão das outras páginas); depende também de estoque_
+    entradas/estoque_saidas (Estágio 4) e estoque_anual_consolidado
+    (Estágio 5) já gerados, checado dentro de render_estagio_8()."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
