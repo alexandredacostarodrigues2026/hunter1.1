@@ -2535,7 +2535,10 @@ _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO = ["codproddecl", "desc_xml", "descrição_de
 # tabela detalhada de baixo mantém a coluna) — ver _COLUNA_OCULTA_EDITOR_
 # CRUZAMENTO_ENTRADAS em _render_cruzamento_entradas_criterio1().
 _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
-_COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_DETALHADO = _COLUNAS_PREVIEW_ESTAGIO8_DETALHADO + ["SIMILARIDADE_DESCRICAO"]
+
+# Tabela "Itens individuais (com ID Único)" persistida (cruzamento_confirmado_detalhado,
+# 2026-07-23) — ver loader.consultar_cruzamento_confirmado_detalhado().
+_COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO = ["codproddecl", "desc_xml", "idunico", "CRITERIO", "TS"]
 
 
 _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_DETALHADO = ["codproddecl", "desc_xml", "idunico"]
@@ -2937,52 +2940,57 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
         resultado = loader.salvar_cruzamento_confirmado(
             escolhido, "entradas", criterio_busca, selecionadas, universo_chaves=universo_chaves,
         )
+        # Grava também o detalhe item-a-item (idunico) — 2026-07-23,
+        # pedido do usuário: "é importante que os produtos com ids
+        # fiquem gravado no produto alvo e que depois de gravado a
+        # situação possa ser revista pelo auditor". Universo = todos os
+        # idunicos possíveis desta busca (todas as combinações,
+        # marcadas ou não); itens a salvar = só os que pertencem às
+        # combinações marcadas AGORA — mesma sincronização do agregado.
+        detalhado_completo, _ = loader.cruzar_produto_escolhido_entradas_detalhado()
+        universo_idunicos = set(detalhado_completo["idunico"])
+        chaves_marcadas = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
+        itens_marcados = detalhado_completo[
+            [(c, d) in chaves_marcadas for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])]
+        ][["codproddecl", "desc_xml", "idunico"]]
+        resultado_detalhado = loader.salvar_cruzamento_confirmado_detalhado(
+            escolhido, "entradas", criterio_busca, itens_marcados, universo_idunicos=universo_idunicos,
+        )
         if "erro" in resultado:
             st.error(f"Erro: {resultado['erro']}")
+        elif "erro" in resultado_detalhado:
+            st.error(f"Erro ao gravar itens individuais: {resultado_detalhado['erro']}")
         else:
             partes = [f"{resultado['total_salvo']} confirmada(s)"]
             if resultado["total_removido"]:
                 partes.append(f"{resultado['total_removido']} removida(s)")
-            st.success(f"✅ Rubrica atualizada — {', '.join(partes)}.")
+            st.success(
+                f"✅ Rubrica atualizada — {', '.join(partes)} "
+                f"({resultado_detalhado['total_salvo']} item(ns) individual(is) gravado(s))."
+            )
             st.rerun()
 
     # Tabela inferior (2026-07-23, pedido do usuário: "CRIE UMA TABELA
-    # INFERIOR COM OS PRODUTOS E RESPECTIVOS IDS ÚNICOS") — mesma
-    # comparação normalizada, mas contra estagio8_detalhado (uma linha por
-    # item do XML, com idunico) em vez de estagio8_agrupado (uma linha por
-    # combinação, sem idunico) — permite localizar a nota fiscal exata de
-    # cada item. Filtrada só pelo que já foi CONFIRMADO na Rubrica
-    # (2026-07-23, pedido do usuário: "ao salvar o produto buscado,
-    # atribuir os mesmos ao alvo, assim como atualizar a tabela com ids
-    # únicos" — antes mostrava TODOS os itens com o mesmo código, mesmo
-    # sem terem sido marcados/salvos; agora só os que o auditor já
-    # confirmou pertencerem de fato ao produto alvo — mesma chave
-    # (codproddecl, desc_xml) usada em cruzamento_confirmado, não muda o
-    # schema salvo).
+    # INFERIOR COM OS PRODUTOS E RESPECTIVOS IDS ÚNICOS") — GRAVADA em
+    # cruzamento_confirmado_detalhado (2026-07-23, mesma sessão: "é
+    # importante que os produtos com ids fiquem gravado no produto alvo
+    # e que depois de gravado a situação possa ser revista pelo
+    # auditor") — deixou de ser recalculada ao vivo (cruzando estagio8_
+    # detalhado com as chaves confirmadas a cada carregamento da
+    # página) e passou a ler direto o que foi persistido, revisável a
+    # qualquer momento independente do Estágio 8 ser regerado depois.
     st.divider()
     st.markdown("**Itens individuais (com ID Único) — já atribuídos ao alvo**")
-    ja_confirmadas, _ = loader.consultar_cruzamento_confirmado(descr_alvo=escolhido["DESCR_ALVO"], limite=None)
-    ja_confirmadas_entradas = (
-        ja_confirmadas[ja_confirmadas["ORIGEM"] == "entradas"] if not ja_confirmadas.empty
-        else ja_confirmadas
+    detalhado, total_detalhado = loader.consultar_cruzamento_confirmado_detalhado(
+        descr_alvo=escolhido["DESCR_ALVO"], origem="entradas", limite=None,
     )
-    chaves_confirmadas = set(
-        zip(ja_confirmadas_entradas["codproddecl"], ja_confirmadas_entradas["desc_xml"])
-    ) if not ja_confirmadas_entradas.empty else set()
-    if not chaves_confirmadas:
+    if detalhado.empty:
         st.info(
             "Nenhuma combinação confirmada na Rubrica ainda — marque \"Salvar\" na tabela acima e "
             "clique em \"Salvar na Rubrica do Produto Alvo\" pra ver os itens individuais aqui."
         )
         return
-    detalhado, _ = loader.cruzar_produto_escolhido_entradas_detalhado()
-    detalhado = detalhado[
-        [(c, d) in chaves_confirmadas for c, d in zip(detalhado["codproddecl"], detalhado["desc_xml"])]
-    ]
-    if detalhado.empty:
-        st.info("Nenhum item individual encontrado.")
-        return
-    st.markdown(f"**{len(detalhado):,} item(ns)** individuais.".replace(",", "."))
+    st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
     with st.container(key="cruzamento_entradas_detalhado_tabela"):
         st.markdown(
             "<style>.st-key-cruzamento_entradas_detalhado_tabela [data-testid='stDataFrame'] "
@@ -2990,7 +2998,7 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
             unsafe_allow_html=True,
         )
         st.dataframe(
-            _preparar_preview(detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_DETALHADO),
+            _preparar_preview(detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO),
             use_container_width=True,
             hide_index=True,
         )

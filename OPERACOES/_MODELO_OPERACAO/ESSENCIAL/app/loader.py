@@ -4619,6 +4619,117 @@ def consultar_cruzamento_confirmado(
         return pd.DataFrame(columns=colunas), 0
 
 
+# ── Rubrica do Produto Alvo — detalhe item-a-item (idunico) ──────────────
+# Solicitação Técnica (2026-07-23): "é importante que os produtos com ids
+# fiquem gravado no produto alvo e que depois de gravado a situação possa
+# ser revista pelo auditor." — cruzamento_confirmado (acima) só grava o
+# AGREGADO (codproddecl/desc_xml/qtde_ocorrencias); esta tabela complementa
+# com uma linha POR ITEM individual (idunico), pra que a atribuição ao
+# produto alvo fique GRAVADA de forma permanente e revisável — não só
+# recalculada ao vivo (cruzando estagio8_detalhado com as chaves
+# confirmadas) toda vez que a página é aberta.
+_COLUNAS_CRUZAMENTO_CONFIRMADO_DETALHADO = [
+    "DESCR_ALVO", "COD_ITEM", "ORIGEM", "codproddecl", "desc_xml", "idunico", "CRITERIO", "TS",
+]
+
+
+def salvar_cruzamento_confirmado_detalhado(
+    escolhido: dict, origem: str, criterio: str, itens: pd.DataFrame,
+    universo_idunicos: "set | None" = None,
+) -> dict:
+    """Persiste em cruzamento_confirmado_detalhado uma linha POR ITEM
+    individual (idunico) que pertence às combinações confirmadas na
+    Rubrica. `itens` tem as colunas codproddecl/desc_xml/idunico (mesmo
+    formato de estagio8_detalhado). Mesma semântica de sincronização de
+    salvar_cruzamento_confirmado(): com `universo_idunicos` informado
+    (todos os idunicos possíveis desta busca, marcados ou não), o
+    estado final vira EXATAMENTE `itens` dentro de (DESCR_ALVO, ORIGEM)
+    — idunico do universo que não vier em `itens` desta vez é removido
+    (mesmo raciocínio: desmarcar uma combinação precisa remover também
+    os itens individuais dela, não só deixar de adicionar).
+    `universo_idunicos=None` mantém comportamento só aditivo. Regra R07:
+    DESCR_ALVO/COD_ITEM/codproddecl/idunico sempre string. Devolve
+    {'ok': True, 'total_salvo': int} ou {'erro': str}."""
+    resultado = {}
+    try:
+        novo = itens[["codproddecl", "desc_xml", "idunico"]].copy()
+        novo["DESCR_ALVO"] = str(escolhido["DESCR_ALVO"])
+        novo["COD_ITEM"] = str(escolhido["COD_ITEM"])
+        novo["ORIGEM"] = origem
+        novo["CRITERIO"] = criterio
+        novo["TS"] = datetime.now().isoformat(timespec="seconds")
+        novo = novo[_COLUNAS_CRUZAMENTO_CONFIRMADO_DETALHADO]
+
+        existente, _ = consultar_cruzamento_confirmado_detalhado(limite=None)
+        if not existente.empty:
+            chave_nova = set(zip(novo["DESCR_ALVO"], novo["ORIGEM"], novo["idunico"]))
+            chave_existente = list(zip(existente["DESCR_ALVO"], existente["ORIGEM"], existente["idunico"]))
+            descr_alvo_str = str(escolhido["DESCR_ALVO"])
+            if universo_idunicos is not None:
+                mascara_preservar = [
+                    not (da == descr_alvo_str and org == origem and idu in universo_idunicos)
+                    for (da, org, idu) in chave_existente
+                ]
+            else:
+                mascara_preservar = [chave not in chave_nova for chave in chave_existente]
+            preservar = existente[mascara_preservar]
+            combinado = pd.concat([preservar, novo], ignore_index=True)
+        else:
+            combinado = novo
+
+        combinado = _forcar_colunas_string(
+            combinado, ["DESCR_ALVO", "COD_ITEM", "codproddecl", "idunico", "ORIGEM", "CRITERIO"],
+        )
+        combinado = combinado[_COLUNAS_CRUZAMENTO_CONFIRMADO_DETALHADO].reset_index(drop=True)
+
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            con.register("_df_cruzamento_confirmado_detalhado", combinado)
+            con.execute(
+                "CREATE OR REPLACE TABLE cruzamento_confirmado_detalhado AS "
+                "SELECT * FROM _df_cruzamento_confirmado_detalhado"
+            )
+            con.unregister("_df_cruzamento_confirmado_detalhado")
+        resultado["ok"] = True
+        resultado["total_salvo"] = len(novo)
+    except Exception as exc:
+        logger.exception("Erro ao salvar cruzamento_confirmado_detalhado: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def consultar_cruzamento_confirmado_detalhado(
+    descr_alvo: "str | None" = None, origem: "str | None" = None, limite: "int | None" = 200,
+) -> "tuple[pd.DataFrame, int]":
+    """Lê cruzamento_confirmado_detalhado já persistida (sem
+    reprocessar) — opcionalmente filtrada por DESCR_ALVO/ORIGEM.
+    limite=None devolve tudo. Base da tabela "Itens individuais (com ID
+    Único)" revisável pelo auditor (interface.py)."""
+    colunas = _COLUNAS_CRUZAMENTO_CONFIRMADO_DETALHADO
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "cruzamento_confirmado_detalhado" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            condicoes = []
+            if descr_alvo is not None:
+                condicoes.append(f"DESCR_ALVO = '{descr_alvo.replace(chr(39), chr(39) * 2)}'")
+            if origem is not None:
+                condicoes.append(f"ORIGEM = '{origem.replace(chr(39), chr(39) * 2)}'")
+            filtro = f"WHERE {' AND '.join(condicoes)}" if condicoes else ""
+            total = con.execute(f"SELECT COUNT(*) FROM cruzamento_confirmado_detalhado {filtro}").fetchone()[0]
+            query = f"SELECT * FROM cruzamento_confirmado_detalhado {filtro}"
+            if limite is not None:
+                query += f" LIMIT {limite}"
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar cruzamento_confirmado_detalhado em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio
