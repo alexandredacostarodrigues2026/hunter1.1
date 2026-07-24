@@ -2181,8 +2181,12 @@ def render_menu_principal() -> None:
     render_pagina_estagio_8() (Estágio 8, 2026-07-23 — Resumo de
     Entradas/Saídas/Estoques: visão detalhada + agrupada de estoque_
     entradas/estoque_saidas/estoque_anual_consolidado pra conferir
-    qualidade do Matching). 2ª linha própria de botões a partir do
-    Estágio 8 (2026-07-23) — a 1ª linha (11 botões) já estava cheia."""
+    qualidade do Matching)/render_pagina_estagio_9() (Estágio 9,
+    2026-07-24 — Curadoria de Fator Multiplicador: saneamento em massa
+    de casos onde a unidade de comercialização do fornecedor diverge da
+    unidade de estoque da auditada). 2ª linha própria de botões a
+    partir do Estágio 8 (2026-07-23) — a 1ª linha (11 botões) já estava
+    cheia."""
     st.subheader("Menu Principal")
     # Destaque cinza nos botões 7.2/7.2.1/7.3/7.3.1 (2026-07-23, pedido do
     # usuário) — mesmo padrão de CSS via key (".st-key-<key>") já usado em
@@ -2244,7 +2248,7 @@ def render_menu_principal() -> None:
     # "inicie com o 8 uma nova linha de botões"). 12 colunas ficavam
     # espremidas numa linha só; a 2ª linha também dá espaço pros próximos
     # estágios sem precisar espremer mais a 1ª.
-    col_estagio8, col_produtos_alvo_salvos = st.columns(2)
+    col_estagio8, col_produtos_alvo_salvos, col_estagio9 = st.columns(3)
     if col_estagio8.button(
         "📋 ESTÁGIO 8: RESUMO DE ENTRADAS / SAÍDAS / ESTOQUES",
         key="btn_menu_estagio_8", use_container_width=True,
@@ -2255,6 +2259,12 @@ def render_menu_principal() -> None:
         "🎯 PRODUTOS ALVOS SALVOS", key="btn_menu_produtos_alvo_salvos", use_container_width=True,
     ):
         st.session_state["pagina_ativa"] = "produtos_alvo_salvos"
+        st.rerun()
+    if col_estagio9.button(
+        "⚖️ ESTÁGIO 9: FATOR MULTIPLICADOR (ENTRADAS)",
+        key="btn_menu_estagio_9", use_container_width=True,
+    ):
+        st.session_state["pagina_ativa"] = "estagio_9"
         st.rerun()
 
 
@@ -2819,6 +2829,222 @@ def render_pagina_estagio_8() -> None:
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     render_estagio_8()
+
+
+_COLUNA_CHECKBOX_FM_ENTRADAS = "Gravar"
+_CHAVE_EDITOR_FM_ENTRADAS = "editor_curadoria_fm_entradas"
+_COLUNAS_PREVIEW_FM_ENTRADAS_AGRUPADO = [
+    "desc_xml", "up_xml", "particula", "fm_sugerido", "nova_up", "qtde_ocorrencias",
+]
+
+
+def _sincronizar_fm_nova_up(chave_editor: str, editor_base: pd.DataFrame) -> None:
+    """Recalcula "Nova UP" quando "FM Sugerido" é editado, e vice-versa
+    (UP XML como âncora fixa, read-only) — Solicitação Técnica do
+    Estágio 9: "Ao alterar o FM Sugerido, o sistema deve atualizar
+    automaticamente a Nova UP (e vice-versa)". st.data_editor não tem
+    coluna calculada nativa — o padrão documentado do Streamlit pra
+    isso é mutar st.session_state[key]['edited_rows'] ANTES do próximo
+    render e forçar st.rerun(); é o que esta função faz.
+
+    Cache por linha (`_<chave_editor>_sync_cache`) guarda o último par
+    (FM, Nova UP) já sincronizado — sem ele, recalcular Nova UP a partir
+    de FM editado, e depois recalcular FM de volta a partir da própria
+    Nova UP recém-calculada (round-trip), oscilaria indefinidamente por
+    ruído de arredondamento a cada rerun. Com o cache, só reage a uma
+    mudança GENUÍNA (valor diferente do que já foi sincronizado antes),
+    convergindo em no máximo 1 rerun por edição."""
+    estado = st.session_state.get(chave_editor)
+    if not estado:
+        return
+    edited_rows = estado.get("edited_rows", {})
+    if not edited_rows:
+        return
+    cache = st.session_state.setdefault(f"_{chave_editor}_sync_cache", {})
+    mudou = False
+    for idx_str, alteracoes in edited_rows.items():
+        idx = int(idx_str)
+        if idx not in editor_base.index:
+            continue
+        up_xml = editor_base.at[idx, "up_xml"]
+        if pd.isna(up_xml) or up_xml == 0:
+            continue
+        fm_atual = alteracoes.get("FM Sugerido")
+        nova_up_atual = alteracoes.get("Nova UP")
+        fm_cache, nova_up_cache = cache.get(idx, (None, None))
+        if fm_atual is not None and fm_atual != 0 and fm_atual != fm_cache:
+            nova_up_calculada = round(up_xml / fm_atual, 6)
+            alteracoes["Nova UP"] = nova_up_calculada
+            cache[idx] = (fm_atual, nova_up_calculada)
+            mudou = True
+        elif nova_up_atual is not None and nova_up_atual != 0 and nova_up_atual != nova_up_cache:
+            fm_calculado = round(up_xml / nova_up_atual, 6)
+            alteracoes["FM Sugerido"] = fm_calculado
+            cache[idx] = (fm_calculado, nova_up_atual)
+            mudou = True
+    if mudou:
+        st.rerun()
+
+
+def render_curadoria_fm_entradas() -> None:
+    """Estágio 9 — Curadoria de Fator Multiplicador (Entradas),
+    Solicitação Técnica 2026-07-24: ferramenta de saneamento pra
+    identificar itens onde a unidade de comercialização do fornecedor
+    (XML) é um múltiplo da unidade de estoque da auditada (SPED) — ver
+    loader.gerar_curadoria_fm_entradas() pro raciocínio completo do
+    agrupamento (Descrição XML + Valor Unitário XML arredondado ao
+    inteiro mais próximo, ajuste feito após investigação real com o
+    usuário: agrupar pelo valor exato gerava 76,5% dos grupos com só 1
+    ocorrência, não atingindo "edição em massa").
+
+    Editor único (`st.data_editor`, mesmo padrão de alta densidade do
+    Estágio 8 — fonte 10px, hide_index) com checkbox "Gravar" (sempre
+    desmarcado por padrão — mesma lição da Rubrica do Produto Alvo,
+    Botão 9, 2026-07-23: "deixe como defaut 'Salvar' desmarcado") +
+    coluna "Observação" (marca grupos já confirmados antes) + colunas
+    editáveis "FM Sugerido"/"Nova UP" sincronizadas bidirecionalmente
+    via _sincronizar_fm_nova_up(). Botão "Salvar" persiste em
+    fm_entradas_curadoria (loader.salvar_curadoria_fm()), mesma
+    semântica de sincronização (universo_chaves) já usada na Rubrica —
+    desmarcar e salvar remove de fato."""
+    st.subheader("Estágio 9 — Curadoria de Fator Multiplicador (Entradas)")
+    st.caption(
+        "Agrupa itens de Entradas (Estágio 4) por Descrição XML + Valor Unitário XML "
+        "(arredondado) pra identificar em massa casos onde a unidade de comercialização do "
+        "fornecedor é um múltiplo da unidade de estoque da auditada. \"FM Sugerido\" vem do "
+        "Fator Multiplicador já calculado no Matching (Estágio 2); \"Partícula\" é uma pista de "
+        "embalagem extraída da própria descrição (ex.: \"C/12\"). Marque \"Gravar\" nos grupos "
+        "confirmados ou ajustados — a decisão alimenta o Estágio 15 (RN1)."
+    )
+
+    if "estagio9_fm_gerado" not in st.session_state:
+        st.session_state["estagio9_fm_gerado"] = loader.curadoria_fm_entradas_ja_gerado()
+
+    if st.session_state["estagio9_fm_gerado"]:
+        clicou = st.button(
+            "Regerar Estágio 9 — Curadoria de Fator Multiplicador",
+            key="btn_regerar_estagio9_fm",
+            help="Reprocessa a partir de estoque_entradas (Estágio 4) e substitui a tabela agrupada.",
+        )
+    else:
+        clicou = st.button("Gerar Estágio 9 — Curadoria de Fator Multiplicador", key="btn_gerar_estagio9_fm")
+
+    if clicou:
+        with st.spinner("Processando estoque_entradas (agrupando por Descrição XML + Valor Unitário)..."):
+            resultado = loader.persistir_curadoria_fm_entradas()
+        if resultado.get("erros"):
+            st.error(resultado["erros"][0])
+            return
+        st.session_state["estagio9_fm_gerado"] = True
+        # Widget/cache de sincronização da rodada anterior não fazem mais
+        # sentido pro novo conjunto de linhas — descarta pra não misturar
+        # índice antigo com dado novo.
+        st.session_state.pop(_CHAVE_EDITOR_FM_ENTRADAS, None)
+        st.session_state.pop(f"_{_CHAVE_EDITOR_FM_ENTRADAS}_sync_cache", None)
+        st.rerun()
+
+    if not st.session_state["estagio9_fm_gerado"]:
+        return
+
+    agrupado, total = loader.consultar_curadoria_fm_entradas_agrupado(limite=None)
+    if agrupado.empty:
+        st.info("Nenhum grupo encontrado.")
+        return
+    st.markdown(f"**{total:,} grupo(s)** de Descrição XML + Valor Unitário.".replace(",", "."))
+
+    # Grupos já confirmados antes (fm_entradas_curadoria) — pré-popula
+    # FM Sugerido/Nova UP com o valor SALVO (não o recém-sugerido, que
+    # pode ter mudado numa regeração) e marca "Observação", mesma lição
+    # da Rubrica do Produto Alvo (Botão 9): o checkbox em si NÃO
+    # pré-marca (sempre desmarcado), só a Observação sinaliza o estado.
+    curadoria_salva, _ = loader.consultar_curadoria_fm(limite=None)
+    salvos_por_chave = {}
+    if not curadoria_salva.empty:
+        for _, linha in curadoria_salva.iterrows():
+            if pd.notna(linha["UP_XML_GRUPO"]):
+                salvos_por_chave[(linha["DESC_XML"], int(linha["UP_XML_GRUPO"]))] = linha
+
+    editor_base = agrupado[_COLUNAS_PREVIEW_FM_ENTRADAS_AGRUPADO].copy()
+    editor_base.insert(0, "up_xml_grupo", agrupado["up_xml_grupo"])
+    observacoes = []
+    for idx, linha in editor_base.iterrows():
+        chave = (
+            linha["desc_xml"],
+            int(linha["up_xml_grupo"]) if pd.notna(linha["up_xml_grupo"]) else None,
+        )
+        salvo = salvos_por_chave.get(chave)
+        if salvo is not None:
+            editor_base.at[idx, "fm_sugerido"] = salvo["FM_ELEITO"]
+            editor_base.at[idx, "nova_up"] = salvo["NOVA_UP"]
+            observacoes.append("✅ Já salvo")
+        else:
+            observacoes.append("")
+
+    editor_exibicao = editor_base.drop(columns=["up_xml_grupo"]).rename(columns=loader.carregar_dicionario_campos())
+    editor_exibicao.insert(0, _COLUNA_CHECKBOX_FM_ENTRADAS, False)
+    editor_exibicao.insert(1, "Observação", observacoes)
+    colunas_travadas = [
+        c for c in editor_exibicao.columns
+        if c not in (_COLUNA_CHECKBOX_FM_ENTRADAS, "FM Sugerido", "Nova UP")
+    ]
+    with st.container(key="curadoria_fm_entradas_tabela"):
+        st.markdown(
+            "<style>.st-key-curadoria_fm_entradas_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 10px; }</style>",
+            unsafe_allow_html=True,
+        )
+        editado = st.data_editor(
+            editor_exibicao,
+            use_container_width=True,
+            hide_index=True,
+            disabled=colunas_travadas,
+            key=_CHAVE_EDITOR_FM_ENTRADAS,
+            column_config={
+                "UP XML": st.column_config.NumberColumn(format="%.4f"),
+                "FM Sugerido": st.column_config.NumberColumn(format="%.4f"),
+                "Nova UP": st.column_config.NumberColumn(format="%.4f"),
+            },
+        )
+
+    _sincronizar_fm_nova_up(_CHAVE_EDITOR_FM_ENTRADAS, editor_base)
+
+    # Universo = TODAS as combinações mostradas nesta tela (marcadas ou
+    # não) — mesma semântica de sincronização já usada na Rubrica do
+    # Produto Alvo: desmarcar "Gravar" e salvar remove de fato.
+    universo_chaves = set(
+        zip(editor_base["desc_xml"], editor_base["up_xml_grupo"].apply(lambda v: int(v) if pd.notna(v) else None))
+    )
+    if st.button("💾 Salvar Curadoria de Fator Multiplicador", key="btn_salvar_curadoria_fm"):
+        marcadas = editado[_COLUNA_CHECKBOX_FM_ENTRADAS].reindex(editor_base.index)
+        selecionadas = pd.DataFrame({
+            "DESC_XML": editor_base.loc[marcadas.fillna(False), "desc_xml"],
+            "UP_XML_GRUPO": editor_base.loc[marcadas.fillna(False), "up_xml_grupo"],
+            "FM_ELEITO": editado.loc[marcadas.fillna(False), "FM Sugerido"],
+            "NOVA_UP": editado.loc[marcadas.fillna(False), "Nova UP"],
+        })
+        resultado = loader.salvar_curadoria_fm(selecionadas, universo_chaves=universo_chaves)
+        if "erro" in resultado:
+            st.error(f"Erro: {resultado['erro']}")
+        else:
+            partes = [f"{resultado['total_salvo']} confirmado(s)"]
+            if resultado["total_removido"]:
+                partes.append(f"{resultado['total_removido']} removido(s)")
+            st.success(f"✅ Curadoria atualizada — {', '.join(partes)}.")
+            st.rerun()
+
+
+def render_pagina_estagio_9() -> None:
+    """Painel 'ESTÁGIO 9: FATOR MULTIPLICADOR (ENTRADAS)' (2026-07-24,
+    Solicitação Técnica), botão da 2ª linha do Menu Principal: ver
+    loader.gerar_curadoria_fm_entradas()/render_curadoria_fm_entradas().
+    Exige dados_carregados (mesmo padrão das outras páginas); depende
+    também de estoque_entradas (Estágio 4) já gerada, checado dentro de
+    render_curadoria_fm_entradas()."""
+    _botao_voltar_menu()
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        return
+    render_curadoria_fm_entradas()
 
 
 def _obter_criterios_cruzamento_entradas() -> dict:

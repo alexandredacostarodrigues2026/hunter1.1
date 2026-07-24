@@ -131,3 +131,9 @@ qtde_ocorrencias;Qtde. Ocorrencias
 SIMILARIDADE_DESCRICAO;Similaridade Descricao (%)
 CRITERIO;Criterio de Busca
 CHV_NFE;Chave de Acesso
+
+# Novos campos - 2026-07-24 (Estagio 9 - Curadoria de Fator Multiplicador, Entradas)
+up_xml;UP XML
+particula;Particula
+fm_sugerido;FM Sugerido
+nova_up;Nova UP

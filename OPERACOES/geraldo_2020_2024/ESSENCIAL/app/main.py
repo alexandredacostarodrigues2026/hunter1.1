@@ -42,8 +42,8 @@ def main() -> None:
         # "segregados"/"construcao"/"auditoria1"/"descricao_relevante"/
         # "cruzamento_valor"/"cruzamento_produto"/"rn1_fisica"/
         # "rn1_produto"/"rn1_simulada_30"/"estagio_8"/
-        # "produtos_alvo_salvos" = os 13 grupos de painéis navegáveis,
-        # ver interface.render_menu_principal().
+        # "produtos_alvo_salvos"/"estagio_9" = os 14 grupos de painéis
+        # navegáveis, ver interface.render_menu_principal().
         st.session_state["pagina_ativa"] = None
 
     st.title("Hunter 1.1")
@@ -76,6 +76,8 @@ def main() -> None:
         interface.render_pagina_estagio_8()
     elif pagina == "produtos_alvo_salvos":
         interface.render_pagina_produtos_alvo_salvos()
+    elif pagina == "estagio_9":
+        interface.render_pagina_estagio_9()
     else:
         interface.render_menu_principal()
 
