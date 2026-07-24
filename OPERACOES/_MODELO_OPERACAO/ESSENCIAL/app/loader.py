@@ -2684,7 +2684,7 @@ def verificar_estagio_8() -> dict:
 # calculado no Matching (Estágio 2, ver REGRAS_MATCHING.md) + regex sobre a
 # descrição do XML como pista adicional de embalagem ("C/12", "CX 6" etc.).
 #
-# Agrupamento por (Descrição XML, Valor Unitário XML) — 2026-07-24, achado
+# Agrupamento por (Descrição XML, Valor Unitário XML arredondado) — achado
 # real ao investigar com o usuário antes de implementar: agrupar pelo valor
 # EXATO (como a especificação original pedia) gera 9.036 grupos de 16.407
 # itens (76,5% dos grupos com só 1 ocorrência — ruído de arredondamento em
@@ -2694,25 +2694,39 @@ def verificar_estagio_8() -> dict:
 # ARREDONDAMENTO`), não atingindo o objetivo declarado de "edição em
 # massa". Usuário escolheu arredondar o valor unitário pro INTEIRO mais
 # próximo antes de agrupar (reduz pra 6.596 grupos, com grupos bem maiores
-# aparecendo — até 125 ocorrências): `up_xml_grupo` (inteiro, chave de
-# agrupamento/upsert) é diferente de `up_xml` (exibido como "UP XML" —
-# MÉDIA dos valores reais dentro do grupo, mais representativo que o
-# próprio limite arredondado).
+# aparecendo — até 125 ocorrências): `_valor_unit_grupo` (inteiro, chave
+# interna de agrupamento/upsert, NÃO exibida) é diferente de "UP XML".
+#
+# "UP XML" = "Unidade de Produto" (2026-07-24, correção do usuário: "up é
+# unidade de produto: cx, uind, fd" — NÃO é valor unitário, como a primeira
+# versão desta seção assumiu por engano) — vem de `fatoitemnfe_infnfe_det_
+# prod_ucom` (campo UCOM da NFe, texto: "UN", "CX", "FD", mas também formas
+# já com número embutido como "cx12"/"cx06"/"PC12" — achado real: 30
+# valores distintos na geraldo). MODA do grupo, já que o mesmo (desc_xml,
+# valor unitário arredondado) pode ter grafias ligeiramente diferentes de
+# UCOM entre notas (confirmado: "cx12" em 36 de 37 linhas do maior grupo de
+# SKOL, 1 linha "cx012" — moda escolhe a maioria). "Nova UP" (2026-07-24,
+# resposta do usuário: "deixe como default 'unid'") é só um valor PADRÃO
+# editável — não é calculada a partir de UP XML/FM (não é fórmula/divisão,
+# ao contrário do que a especificação original sugeria) — o auditor
+# corrige manualmente quando o padrão "UNID" não for o caso.
 _COLUNAS_FM_ENTRADAS_AGRUPADO = [
-    "desc_xml", "up_xml_grupo", "up_xml", "particula", "fm_sugerido", "nova_up", "qtde_ocorrencias",
+    "desc_xml", "_valor_unit_grupo", "up_xml", "particula", "fm_sugerido", "nova_up", "qtde_ocorrencias",
 ]
 
 _REGEX_PARTICULA_FM = re.compile(r"(C/\s*\d+|CX\s*\d+|FD\s*\d+|\d+\s*UNID)", re.IGNORECASE)
+
+NOVA_UP_PADRAO = "UNID"
 
 
 def _extrair_particula_fm(desc) -> str:
     """Extrai indício de embalagem/quantidade da descrição do XML via
     regex — padrões "C/N", "CX N", "FD N", "N UNID" (Solicitação
     Técnica do Estágio 9). Só um HINT informativo pro auditor
-    cross-checar contra `fm_sugerido` — não tenta decidir o fator
-    sozinho (ex.: "CX15KG" também bate no padrão "CX N", mesmo quando
-    o número é peso, não quantidade de unidades — fica a critério do
-    auditor). Vazio se não achar nenhum dos padrões."""
+    cross-checar contra `fm_sugerido`/`up_xml` — não tenta decidir o
+    fator sozinho (ex.: "CX15KG" também bate no padrão "CX N", mesmo
+    quando o número é peso, não quantidade de unidades — fica a
+    critério do auditor). Vazio se não achar nenhum dos padrões."""
     m = _REGEX_PARTICULA_FM.search(str(desc).upper())
     return m.group(1) if m else ""
 
@@ -2720,13 +2734,13 @@ def _extrair_particula_fm(desc) -> str:
 def gerar_curadoria_fm_entradas() -> dict:
     """Estágio 9 — Curadoria de Fator Multiplicador (Entradas): agrupa
     estoque_entradas (Estágio 4) por (Descrição XML, Valor Unitário XML
-    arredondado ao inteiro mais próximo — ver nota acima sobre o ajuste
-    de agrupamento) pra facilitar a revisão em massa de casos onde a
+    arredondado ao inteiro mais próximo — chave interna
+    `_valor_unit_grupo`, não exibida — ver nota acima sobre o ajuste de
+    agrupamento) pra facilitar a revisão em massa de casos onde a
     unidade de comercialização do fornecedor diverge da unidade de
     estoque da auditada. Campos calculados por grupo:
-    - up_xml_grupo: chave de agrupamento (valor unitário arredondado).
-    - up_xml: MÉDIA dos valores unitários reais dentro do grupo (não o
-      limite arredondado, usado só como chave).
+    - up_xml: "Unidade de Produto" — MODA do campo UCOM do XML ("UN",
+      "CX", "FD", "cx12" etc., ver nota acima) dentro do grupo.
     - particula: extraída via _extrair_particula_fm() da descrição
       (constante dentro do grupo, já que é parte da chave).
     - fm_sugerido: MODA do FATOR_MULTIPLICADOR_SUGERIDO (já calculado
@@ -2734,8 +2748,10 @@ def gerar_curadoria_fm_entradas() -> dict:
       grupo tiver o fator calculado (87% de cobertura na base real —
       FATOR_MULTIPLICADOR_SUGERIDO só é calculado quando VL_ITEM bate
       exato entre XML e SPED, ver REGRAS_MATCHING.md).
-    - nova_up: up_xml / fm_sugerido — NULL se fm_sugerido for NULL ou
-      zero (divisão sem sentido).
+    - nova_up: valor PADRÃO NOVA_UP_PADRAO ("UNID") — não é calculado a
+      partir de up_xml/fm_sugerido, é só o ponto de partida editável
+      pelo auditor (2026-07-24, resposta do usuário: "deixe como
+      default 'unid'").
     - qtde_ocorrencias: contagem de ID_UNICO no grupo.
     Devolve {'agrupado': DataFrame, 'erros': list} — erros não-vazio
     quando estoque_entradas (Estágio 4) ainda não foi gerada."""
@@ -2749,7 +2765,8 @@ def gerar_curadoria_fm_entradas() -> dict:
                 return {**vazio, "erros": ["Tabela estoque_entradas (Estágio 4) ainda não foi gerada."]}
             bruto = con.execute(
                 "SELECT fatoitemnfe_infnfe_det_prod_xprod AS desc_xml, "
-                "TRY_CAST(fatoitemnfe_infnfe_det_prod_vuncom AS DOUBLE) AS up_xml_bruto, "
+                "TRY_CAST(fatoitemnfe_infnfe_det_prod_vuncom AS DOUBLE) AS valor_unit_bruto, "
+                "fatoitemnfe_infnfe_det_prod_ucom AS ucom, "
                 "FATOR_MULTIPLICADOR_SUGERIDO AS fm_item, "
                 "ID_UNICO AS idunico "
                 "FROM estoque_entradas"
@@ -2758,27 +2775,22 @@ def gerar_curadoria_fm_entradas() -> dict:
         logger.exception("Erro ao gerar Estágio 9 (Curadoria de Fator Multiplicador) em %s", _BANCO_PATH)
         return {**vazio, "erros": ["Erro ao processar estoque_entradas — ver log."]}
 
-    bruto["up_xml_grupo"] = bruto["up_xml_bruto"].round(0)
+    bruto["_valor_unit_grupo"] = bruto["valor_unit_bruto"].round(0)
 
     def _moda_ou_none(serie: pd.Series):
         s = serie.dropna()
         return s.mode().iloc[0] if not s.empty else pd.NA
 
     agrupado = (
-        bruto.groupby(["desc_xml", "up_xml_grupo"], as_index=False, dropna=False)
+        bruto.groupby(["desc_xml", "_valor_unit_grupo"], as_index=False, dropna=False)
         .agg(
-            up_xml=("up_xml_bruto", "mean"),
+            up_xml=("ucom", _moda_ou_none),
             fm_sugerido=("fm_item", _moda_ou_none),
             qtde_ocorrencias=("idunico", "count"),
         )
     )
     agrupado["particula"] = agrupado["desc_xml"].apply(_extrair_particula_fm)
-    agrupado["nova_up"] = agrupado.apply(
-        lambda linha: (linha["up_xml"] / linha["fm_sugerido"])
-        if pd.notna(linha["fm_sugerido"]) and linha["fm_sugerido"] not in (0, 0.0)
-        else pd.NA,
-        axis=1,
-    )
+    agrupado["nova_up"] = NOVA_UP_PADRAO
     agrupado = (
         agrupado.sort_values("qtde_ocorrencias", ascending=False)[_COLUNAS_FM_ENTRADAS_AGRUPADO]
         .reset_index(drop=True)
@@ -2847,34 +2859,35 @@ def consultar_curadoria_fm_entradas_agrupado(limite: "int | None" = 200) -> "tup
 # "Observação" sinaliza o que já está salvo, e salvar_curadoria_fm() usa a
 # mesma semântica de SINCRONIZAÇÃO (universo_chaves) — desmarcar e salvar
 # remove de fato, não só deixa de adicionar.
-_COLUNAS_FM_ENTRADAS_CURADORIA = ["DESC_XML", "UP_XML_GRUPO", "FM_ELEITO", "NOVA_UP", "TS"]
+_COLUNAS_FM_ENTRADAS_CURADORIA = ["DESC_XML", "VALOR_UNIT_GRUPO", "FM_ELEITO", "NOVA_UP", "TS"]
 
 
 def salvar_curadoria_fm(selecionadas: pd.DataFrame, universo_chaves: "set | None" = None) -> dict:
     """Persiste em fm_entradas_curadoria as decisões do auditor sobre o
     Fator Multiplicador de grupos de Entradas (Estágio 9).
-    `selecionadas` tem as colunas DESC_XML/UP_XML_GRUPO/FM_ELEITO/
+    `selecionadas` tem as colunas DESC_XML/VALOR_UNIT_GRUPO/FM_ELEITO/
     NOVA_UP das linhas marcadas "Gravar". Mesma semântica de
     sincronização já usada em salvar_cruzamento_confirmado() (Botão 9):
     com `universo_chaves` informado (todas as combinações desc_xml+
-    up_xml_grupo mostradas na tela, marcadas ou não), o estado final
+    valor_unit_grupo mostradas na tela, marcadas ou não), o estado final
     vira exatamente `selecionadas` — desmarcar e salvar remove de fato.
     `universo_chaves=None` mantém comportamento só aditivo. Regra R07:
     DESC_XML sempre string. Devolve {'ok': True, 'total_salvo': int,
     'total_removido': int} ou {'erro': str}."""
     resultado = {}
     try:
-        novo = selecionadas[["DESC_XML", "UP_XML_GRUPO", "FM_ELEITO", "NOVA_UP"]].copy()
+        novo = selecionadas[["DESC_XML", "VALOR_UNIT_GRUPO", "FM_ELEITO", "NOVA_UP"]].copy()
         novo["DESC_XML"] = novo["DESC_XML"].astype(str)
-        novo["UP_XML_GRUPO"] = pd.to_numeric(novo["UP_XML_GRUPO"], errors="coerce").astype("Int64")
+        novo["NOVA_UP"] = novo["NOVA_UP"].astype(str)
+        novo["VALOR_UNIT_GRUPO"] = pd.to_numeric(novo["VALOR_UNIT_GRUPO"], errors="coerce").astype("Int64")
         novo["TS"] = datetime.now().isoformat(timespec="seconds")
         novo = novo[_COLUNAS_FM_ENTRADAS_CURADORIA]
 
         total_removido = 0
         existente, _ = consultar_curadoria_fm(limite=None)
         if not existente.empty:
-            chave_nova = set(zip(novo["DESC_XML"], novo["UP_XML_GRUPO"]))
-            chave_existente = list(zip(existente["DESC_XML"], existente["UP_XML_GRUPO"]))
+            chave_nova = set(zip(novo["DESC_XML"], novo["VALOR_UNIT_GRUPO"]))
+            chave_existente = list(zip(existente["DESC_XML"], existente["VALOR_UNIT_GRUPO"]))
             if universo_chaves is not None:
                 dentro_do_universo = [chave in universo_chaves for chave in chave_existente]
                 mascara_preservar = [not dentro for dentro in dentro_do_universo]
@@ -2889,9 +2902,9 @@ def salvar_curadoria_fm(selecionadas: pd.DataFrame, universo_chaves: "set | None
         else:
             combinado = novo
 
-        # Rede de segurança final: dedupe por (DESC_XML, UP_XML_GRUPO),
+        # Rede de segurança final: dedupe por (DESC_XML, VALOR_UNIT_GRUPO),
         # mesmo raciocínio de salvar_cruzamento_confirmado_detalhado().
-        combinado = combinado.drop_duplicates(subset=["DESC_XML", "UP_XML_GRUPO"])
+        combinado = combinado.drop_duplicates(subset=["DESC_XML", "VALOR_UNIT_GRUPO"])
         combinado = combinado[_COLUNAS_FM_ENTRADAS_CURADORIA].reset_index(drop=True)
 
         _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)

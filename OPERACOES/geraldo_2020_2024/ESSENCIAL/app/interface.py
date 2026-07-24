@@ -2838,54 +2838,6 @@ _COLUNAS_PREVIEW_FM_ENTRADAS_AGRUPADO = [
 ]
 
 
-def _sincronizar_fm_nova_up(chave_editor: str, editor_base: pd.DataFrame) -> None:
-    """Recalcula "Nova UP" quando "FM Sugerido" é editado, e vice-versa
-    (UP XML como âncora fixa, read-only) — Solicitação Técnica do
-    Estágio 9: "Ao alterar o FM Sugerido, o sistema deve atualizar
-    automaticamente a Nova UP (e vice-versa)". st.data_editor não tem
-    coluna calculada nativa — o padrão documentado do Streamlit pra
-    isso é mutar st.session_state[key]['edited_rows'] ANTES do próximo
-    render e forçar st.rerun(); é o que esta função faz.
-
-    Cache por linha (`_<chave_editor>_sync_cache`) guarda o último par
-    (FM, Nova UP) já sincronizado — sem ele, recalcular Nova UP a partir
-    de FM editado, e depois recalcular FM de volta a partir da própria
-    Nova UP recém-calculada (round-trip), oscilaria indefinidamente por
-    ruído de arredondamento a cada rerun. Com o cache, só reage a uma
-    mudança GENUÍNA (valor diferente do que já foi sincronizado antes),
-    convergindo em no máximo 1 rerun por edição."""
-    estado = st.session_state.get(chave_editor)
-    if not estado:
-        return
-    edited_rows = estado.get("edited_rows", {})
-    if not edited_rows:
-        return
-    cache = st.session_state.setdefault(f"_{chave_editor}_sync_cache", {})
-    mudou = False
-    for idx_str, alteracoes in edited_rows.items():
-        idx = int(idx_str)
-        if idx not in editor_base.index:
-            continue
-        up_xml = editor_base.at[idx, "up_xml"]
-        if pd.isna(up_xml) or up_xml == 0:
-            continue
-        fm_atual = alteracoes.get("FM Sugerido")
-        nova_up_atual = alteracoes.get("Nova UP")
-        fm_cache, nova_up_cache = cache.get(idx, (None, None))
-        if fm_atual is not None and fm_atual != 0 and fm_atual != fm_cache:
-            nova_up_calculada = round(up_xml / fm_atual, 6)
-            alteracoes["Nova UP"] = nova_up_calculada
-            cache[idx] = (fm_atual, nova_up_calculada)
-            mudou = True
-        elif nova_up_atual is not None and nova_up_atual != 0 and nova_up_atual != nova_up_cache:
-            fm_calculado = round(up_xml / nova_up_atual, 6)
-            alteracoes["FM Sugerido"] = fm_calculado
-            cache[idx] = (fm_calculado, nova_up_atual)
-            mudou = True
-    if mudou:
-        st.rerun()
-
-
 def render_curadoria_fm_entradas() -> None:
     """Estágio 9 — Curadoria de Fator Multiplicador (Entradas),
     Solicitação Técnica 2026-07-24: ferramenta de saneamento pra
@@ -2893,28 +2845,38 @@ def render_curadoria_fm_entradas() -> None:
     (XML) é um múltiplo da unidade de estoque da auditada (SPED) — ver
     loader.gerar_curadoria_fm_entradas() pro raciocínio completo do
     agrupamento (Descrição XML + Valor Unitário XML arredondado ao
-    inteiro mais próximo, ajuste feito após investigação real com o
-    usuário: agrupar pelo valor exato gerava 76,5% dos grupos com só 1
-    ocorrência, não atingindo "edição em massa").
+    inteiro mais próximo — chave interna, NÃO exibida — ajuste feito
+    após investigação real com o usuário: agrupar pelo valor exato
+    gerava 76,5% dos grupos com só 1 ocorrência, não atingindo "edição
+    em massa").
+
+    "UP XML" (2026-07-24, correção do usuário: "up é unidade de
+    produto: cx, uind, fd" — NÃO é valor unitário, como uma primeira
+    versão deste painel assumiu por engano) é a MODA do campo UCOM do
+    XML dentro do grupo ("UN", "CX", "FD", "cx12" etc.). "Nova UP"
+    (mesma correção: "deixe como default 'unid'") é só um valor PADRÃO
+    editável ("UNID"), sem fórmula — o auditor corrige manualmente
+    quando o padrão não for o caso; não há sincronização com "FM
+    Sugerido" (são campos independentes).
 
     Editor único (`st.data_editor`, mesmo padrão de alta densidade do
     Estágio 8 — fonte 10px, hide_index) com checkbox "Gravar" (sempre
     desmarcado por padrão — mesma lição da Rubrica do Produto Alvo,
     Botão 9, 2026-07-23: "deixe como defaut 'Salvar' desmarcado") +
     coluna "Observação" (marca grupos já confirmados antes) + colunas
-    editáveis "FM Sugerido"/"Nova UP" sincronizadas bidirecionalmente
-    via _sincronizar_fm_nova_up(). Botão "Salvar" persiste em
+    editáveis "FM Sugerido"/"Nova UP". Botão "Salvar" persiste em
     fm_entradas_curadoria (loader.salvar_curadoria_fm()), mesma
     semântica de sincronização (universo_chaves) já usada na Rubrica —
     desmarcar e salvar remove de fato."""
     st.subheader("Estágio 9 — Curadoria de Fator Multiplicador (Entradas)")
     st.caption(
         "Agrupa itens de Entradas (Estágio 4) por Descrição XML + Valor Unitário XML "
-        "(arredondado) pra identificar em massa casos onde a unidade de comercialização do "
-        "fornecedor é um múltiplo da unidade de estoque da auditada. \"FM Sugerido\" vem do "
-        "Fator Multiplicador já calculado no Matching (Estágio 2); \"Partícula\" é uma pista de "
-        "embalagem extraída da própria descrição (ex.: \"C/12\"). Marque \"Gravar\" nos grupos "
-        "confirmados ou ajustados — a decisão alimenta o Estágio 15 (RN1)."
+        "(arredondado, só como chave interna) pra identificar em massa casos onde a unidade de "
+        "comercialização do fornecedor é um múltiplo da unidade de estoque da auditada. \"UP XML\" "
+        "é a Unidade de Produto do XML (CX, UN, FD...); \"FM Sugerido\" vem do Fator Multiplicador "
+        "já calculado no Matching (Estágio 2); \"Partícula\" é uma pista de embalagem extraída da "
+        "própria descrição (ex.: \"C/12\"); \"Nova UP\" começa como \"UNID\" (ajustável). Marque "
+        "\"Gravar\" nos grupos confirmados ou ajustados — a decisão alimenta o Estágio 15 (RN1)."
     )
 
     if "estagio9_fm_gerado" not in st.session_state:
@@ -2936,11 +2898,10 @@ def render_curadoria_fm_entradas() -> None:
             st.error(resultado["erros"][0])
             return
         st.session_state["estagio9_fm_gerado"] = True
-        # Widget/cache de sincronização da rodada anterior não fazem mais
-        # sentido pro novo conjunto de linhas — descarta pra não misturar
-        # índice antigo com dado novo.
+        # Widget da rodada anterior não faz mais sentido pro novo
+        # conjunto de linhas — descarta pra não misturar índice antigo
+        # com dado novo.
         st.session_state.pop(_CHAVE_EDITOR_FM_ENTRADAS, None)
-        st.session_state.pop(f"_{_CHAVE_EDITOR_FM_ENTRADAS}_sync_cache", None)
         st.rerun()
 
     if not st.session_state["estagio9_fm_gerado"]:
@@ -2961,16 +2922,16 @@ def render_curadoria_fm_entradas() -> None:
     salvos_por_chave = {}
     if not curadoria_salva.empty:
         for _, linha in curadoria_salva.iterrows():
-            if pd.notna(linha["UP_XML_GRUPO"]):
-                salvos_por_chave[(linha["DESC_XML"], int(linha["UP_XML_GRUPO"]))] = linha
+            if pd.notna(linha["VALOR_UNIT_GRUPO"]):
+                salvos_por_chave[(linha["DESC_XML"], int(linha["VALOR_UNIT_GRUPO"]))] = linha
 
     editor_base = agrupado[_COLUNAS_PREVIEW_FM_ENTRADAS_AGRUPADO].copy()
-    editor_base.insert(0, "up_xml_grupo", agrupado["up_xml_grupo"])
+    editor_base.insert(0, "_valor_unit_grupo", agrupado["_valor_unit_grupo"])
     observacoes = []
     for idx, linha in editor_base.iterrows():
         chave = (
             linha["desc_xml"],
-            int(linha["up_xml_grupo"]) if pd.notna(linha["up_xml_grupo"]) else None,
+            int(linha["_valor_unit_grupo"]) if pd.notna(linha["_valor_unit_grupo"]) else None,
         )
         salvo = salvos_por_chave.get(chave)
         if salvo is not None:
@@ -2980,7 +2941,9 @@ def render_curadoria_fm_entradas() -> None:
         else:
             observacoes.append("")
 
-    editor_exibicao = editor_base.drop(columns=["up_xml_grupo"]).rename(columns=loader.carregar_dicionario_campos())
+    editor_exibicao = (
+        editor_base.drop(columns=["_valor_unit_grupo"]).rename(columns=loader.carregar_dicionario_campos())
+    )
     editor_exibicao.insert(0, _COLUNA_CHECKBOX_FM_ENTRADAS, False)
     editor_exibicao.insert(1, "Observação", observacoes)
     colunas_travadas = [
@@ -2999,26 +2962,23 @@ def render_curadoria_fm_entradas() -> None:
             hide_index=True,
             disabled=colunas_travadas,
             key=_CHAVE_EDITOR_FM_ENTRADAS,
-            column_config={
-                "UP XML": st.column_config.NumberColumn(format="%.4f"),
-                "FM Sugerido": st.column_config.NumberColumn(format="%.4f"),
-                "Nova UP": st.column_config.NumberColumn(format="%.4f"),
-            },
+            column_config={"FM Sugerido": st.column_config.NumberColumn(format="%.4f")},
         )
-
-    _sincronizar_fm_nova_up(_CHAVE_EDITOR_FM_ENTRADAS, editor_base)
 
     # Universo = TODAS as combinações mostradas nesta tela (marcadas ou
     # não) — mesma semântica de sincronização já usada na Rubrica do
     # Produto Alvo: desmarcar "Gravar" e salvar remove de fato.
     universo_chaves = set(
-        zip(editor_base["desc_xml"], editor_base["up_xml_grupo"].apply(lambda v: int(v) if pd.notna(v) else None))
+        zip(
+            editor_base["desc_xml"],
+            editor_base["_valor_unit_grupo"].apply(lambda v: int(v) if pd.notna(v) else None),
+        )
     )
     if st.button("💾 Salvar Curadoria de Fator Multiplicador", key="btn_salvar_curadoria_fm"):
         marcadas = editado[_COLUNA_CHECKBOX_FM_ENTRADAS].reindex(editor_base.index)
         selecionadas = pd.DataFrame({
             "DESC_XML": editor_base.loc[marcadas.fillna(False), "desc_xml"],
-            "UP_XML_GRUPO": editor_base.loc[marcadas.fillna(False), "up_xml_grupo"],
+            "VALOR_UNIT_GRUPO": editor_base.loc[marcadas.fillna(False), "_valor_unit_grupo"],
             "FM_ELEITO": editado.loc[marcadas.fillna(False), "FM Sugerido"],
             "NOVA_UP": editado.loc[marcadas.fillna(False), "Nova UP"],
         })
