@@ -46,6 +46,12 @@ Fonte original da lista: `estágios.txt` (raiz).
   dessa forma). O sub-passo 7.1 ("Fixação da Descrição Relevante") virou
   — por Solicitação Técnica explícita — botão de 6º nível PRÓPRIO no Menu
   Principal, não um sub-painel dentro de "Tabelas Entradas / Saídas /
-  Estoques" como a reserva original previa; os números 8-14 continuam
+  Estoques" como a reserva original previa; os números 8-14 continuavam
   livres pra painéis futuros, do mesmo jeito (sub-painel ou botão
-  próprio, a decidir caso a caso).
+  próprio, a decidir caso a caso). **Atualizado 2026-07-23**: o Estágio
+  8 ("Resumo de Entradas", com sub-passos `8.1`/`8.2` pro mesmo padrão
+  sobre Saídas/Estoques) usou esse espaço reservado — só **9-14**
+  continuam livres. O "Botão 9" ("Produtos Alvos Salvos", linha 9 desta
+  tabela) NÃO consome essa reserva — é numeração própria do usuário pra
+  botões novos do menu (não ligada à numeração de Estágio), só
+  compartilha a mesma linha da tabela por conveniência de registro.
