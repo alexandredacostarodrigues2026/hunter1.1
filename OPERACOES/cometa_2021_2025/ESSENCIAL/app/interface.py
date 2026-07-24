@@ -2901,7 +2901,21 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
     # "Salvar" sempre começa DESMARCADO (2026-07-23, pedido do usuário:
     # "deixe como defaut 'Salvar' desmarcado") — antes vinha pré-marcado
     # pras combinações já confirmadas em cruzamento_confirmado; removido
-    # a pedido do usuário, sem pré-marcação nenhuma.
+    # a pedido do usuário, sem pré-marcação nenhuma. Em vez disso, uma
+    # coluna "Observação" (2026-07-23, mesma sessão: "as 46 ocorrencias
+    # de skol ja foram gravadas. tem que cravar uma observação para
+    # isso na linha") informa quais linhas já estão confirmadas — sem
+    # depender do estado do checkbox, que agora é só a AÇÃO da próxima
+    # gravação/remoção, não um espelho do que já foi salvo.
+    ja_confirmadas, _ = loader.consultar_cruzamento_confirmado(descr_alvo=escolhido["DESCR_ALVO"], limite=None)
+    ja_confirmadas_entradas = (
+        ja_confirmadas[ja_confirmadas["ORIGEM"] == "entradas"] if not ja_confirmadas.empty
+        else ja_confirmadas
+    )
+    chaves_confirmadas = set(
+        zip(ja_confirmadas_entradas["codproddecl"], ja_confirmadas_entradas["desc_xml"])
+    ) if not ja_confirmadas_entradas.empty else set()
+
     editor_base = correspondentes[_COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO].copy()
     editor_base.insert(0, "Salvar", False)
     editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
@@ -2909,6 +2923,10 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
     # descrição da declaração") — editor_base mantém a coluna crua
     # (descrição_decl), exigida por loader.salvar_cruzamento_confirmado().
     editor_exibicao = editor_exibicao.drop(columns=["Descricao Declaracao"], errors="ignore")
+    editor_exibicao.insert(1, "Observação", [
+        "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
+        for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
+    ])
     colunas_travadas = [c for c in editor_exibicao.columns if c != "Salvar"]
     with st.container(key="cruzamento_entradas_tabela"):
         st.markdown(

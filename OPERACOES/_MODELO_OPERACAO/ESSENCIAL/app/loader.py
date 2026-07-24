@@ -4404,6 +4404,27 @@ _COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_ESTAGIO8_AGRUPADO + ["SIMILARID
 _COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO = _COLUNAS_ESTAGIO8_DETALHADO + ["SIMILARIDADE_DESCRICAO"]
 
 
+def _chaves_ja_atribuidas_a_outro_alvo(descr_alvo_atual: str, origem: str) -> set:
+    """Combinações `(codproddecl, desc_xml)` já confirmadas em
+    cruzamento_confirmado pra um produto alvo DIFERENTE do atual,
+    dentro da mesma `origem` — 2026-07-23, pedido do usuário: "os
+    produtos com IDs únicos não mais poderão ser utilizados em outros
+    critérios e outros cruzamentos". Uma vez que um item comprova
+    pertencer a um produto alvo, ele não pode ser oferecido como
+    candidato pra OUTRO produto alvo (evita a mesma nota/item virar
+    "evidência" em duas rubricas diferentes ao mesmo tempo). Combinações
+    já confirmadas pro PRÓPRIO alvo atual NÃO entram neste conjunto —
+    continuam aparecendo na busca desse alvo, pra ficarem visíveis/
+    gerenciáveis (o auditor precisa poder revisar e desmarcar)."""
+    todas, _ = consultar_cruzamento_confirmado(limite=None)
+    if todas.empty:
+        return set()
+    outras = todas[(todas["ORIGEM"] == origem) & (todas["DESCR_ALVO"] != str(descr_alvo_atual))]
+    if outras.empty:
+        return set()
+    return set(zip(outras["codproddecl"], outras["desc_xml"]))
+
+
 def cruzar_produto_escolhido_entradas() -> "tuple[pd.DataFrame, dict | None]":
     """Critério 1 (Entradas): compara o produto atualmente escolhido
     (consultar_produto_cruzamento_escolhido()) com estagio8_agrupado
@@ -4420,11 +4441,17 @@ def cruzar_produto_escolhido_entradas() -> "tuple[pd.DataFrame, dict | None]":
     resolve em gerar_cruzamento_valor()). Além do código, calcula
     `SIMILARIDADE_DESCRICAO` (0-100, overlap de tokens entre `desc_xml` e
     `DESCR_ALVO` do escolhido) e ordena por ela (desc) — segunda metade
-    do Critério 1, pedida em 2026-07-23. Devolve (DataFrame com as
-    combinações correspondentes, dict do produto escolhido usado na
-    comparação) — DataFrame vazio se nenhum produto foi escolhido ainda,
-    estagio8_agrupado não existir, ou nenhum match for encontrado (mesmo
-    após normalizar); escolhido=None só no primeiro caso."""
+    do Critério 1, pedida em 2026-07-23. EXCLUI combinações já
+    confirmadas na Rubrica pra OUTRO produto alvo (2026-07-23, pedido do
+    usuário: "os produtos com IDs únicos não mais poderão ser
+    utilizados em outros critérios e outros cruzamentos" — ver
+    _chaves_ja_atribuidas_a_outro_alvo()); combinações já confirmadas
+    pro PRÓPRIO alvo continuam aparecendo, pra ficarem gerenciáveis.
+    Devolve (DataFrame com as combinações correspondentes, dict do
+    produto escolhido usado na comparação) — DataFrame vazio se nenhum
+    produto foi escolhido ainda, estagio8_agrupado não existir, ou
+    nenhum match for encontrado (mesmo após normalizar/excluir);
+    escolhido=None só no primeiro caso."""
     escolhido = consultar_produto_cruzamento_escolhido()
     if not escolhido:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), None
@@ -4434,6 +4461,13 @@ def cruzar_produto_escolhido_entradas() -> "tuple[pd.DataFrame, dict | None]":
     cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
     codigos_normalizados = _normalizar_cod_item_flexivel(agrupado["codproddecl"])
     correspondentes = agrupado[codigos_normalizados == cod_item_normalizado].copy()
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "entradas")
+    if chaves_bloqueadas:
+        correspondentes = correspondentes[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(correspondentes["codproddecl"], correspondentes["desc_xml"])]
+        ]
     if correspondentes.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
     descr_alvo = escolhido["DESCR_ALVO"]
@@ -4466,6 +4500,13 @@ def cruzar_produto_escolhido_entradas_detalhado() -> "tuple[pd.DataFrame, dict |
     cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
     codigos_normalizados = _normalizar_cod_item_flexivel(detalhado["codproddecl"])
     correspondentes = detalhado[codigos_normalizados == cod_item_normalizado].copy()
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "entradas")
+    if chaves_bloqueadas:
+        correspondentes = correspondentes[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(correspondentes["codproddecl"], correspondentes["desc_xml"])]
+        ]
     if correspondentes.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
     descr_alvo = escolhido["DESCR_ALVO"]
