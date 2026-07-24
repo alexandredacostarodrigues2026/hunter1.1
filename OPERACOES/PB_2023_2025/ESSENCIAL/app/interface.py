@@ -2823,21 +2823,24 @@ def _obter_criterios_cruzamento_entradas() -> dict:
     """Mapa criterio -> (fn_agrupado, fn_detalhado) usado pelo selectbox
     de _render_cruzamento_entradas(). Construído em função (não no
     escopo do módulo) pra usar `loader.*` sem depender da ordem de
-    definição no arquivo. Critério 2 adicionado 2026-07-23 (pedido do
-    usuário: "crie o critério2: codigo de produto divergente. nesse
-    caso, apenas similaridade entre alvo e candidatos.") — motivo pelo
-    qual esta função existe: antes só havia CRITERIO_BUSCA1_MESMO_
-    CODIGO, com as funções chamadas diretamente; com 2+ critérios, a
-    tela precisa DESPACHAR pra função certa conforme o que está
-    selecionado."""
+    definição no arquivo. Critério 2 original (código divergente,
+    2026-07-23) foi RENUMERADO pra Critério 3 no mesmo dia ("transforme
+    o critério 2 em critério3") quando o Critério 2 "de verdade" (nome
+    de declaração igual ao alvo) foi definido — motivo pelo qual esta
+    função existe: com 3 critérios, a tela precisa DESPACHAR pra função
+    certa conforme o que está selecionado."""
     return {
         loader.CRITERIO_BUSCA1_MESMO_CODIGO: (
             loader.cruzar_produto_escolhido_entradas,
             loader.cruzar_produto_escolhido_entradas_detalhado,
         ),
-        loader.CRITERIO_BUSCA2_CODIGO_DIVERGENTE: (
+        loader.CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL: (
             loader.cruzar_produto_escolhido_entradas_criterio2,
             loader.cruzar_produto_escolhido_entradas_criterio2_detalhado,
+        ),
+        loader.CRITERIO_BUSCA3_CODIGO_DIVERGENTE: (
+            loader.cruzar_produto_escolhido_entradas_criterio3,
+            loader.cruzar_produto_escolhido_entradas_criterio3_detalhado,
         ),
     }
 
@@ -2847,9 +2850,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     escolhido com estagio8_agrupado (Entradas) usando o critério
     selecionado no selectbox — DESPACHA pra função diferente conforme o
     critério (2026-07-23, renomeada de `_render_cruzamento_entradas_
-    criterio1` quando o Critério 2 foi adicionado: "crie o critério2:
-    codigo de produto divergente. nesse caso, apenas similaridade entre
-    alvo e candidatos.").
+    criterio1` quando o 2º critério foi adicionado).
 
     **Critério 1** (loader.cruzar_produto_escolhido_entradas()) combina
     DUAS condições (redefinido 2026-07-23: "critério1: mesmo codigo do
@@ -2866,14 +2867,26 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
        mais de uma descrição.
 
     **Critério 2** (loader.cruzar_produto_escolhido_entradas_
-    criterio2()) cobre o caso OPOSTO: código DIVERGENTE (diferente) do
-    alvo — aqui a similaridade de descrição vira FILTRO (≥
-    LIMIAR_SIMILARIDADE_CRITERIO2=20), já que não há mais o código como
+    criterio2()), pedido 2026-07-23 ("o novo critério 2 vai ser o
+    seguinte: nome do alvo igual ao nome de declaração do candidato.
+    mantenha as similaridade entre nome do alvo e descrição xml do
+    candidato."): filtra por IGUALDADE (normalizada) entre `DESCR_ALVO`
+    e `descrição_decl` (nome que a própria auditada usa na declaração)
+    — sem exigir nenhuma relação de código. `SIMILARIDADE_DESCRICAO`
+    continua calculada (entre `desc_xml` e `DESCR_ALVO`), mas aqui só
+    ordena, não filtra.
+
+    **Critério 3** (loader.cruzar_produto_escolhido_entradas_
+    criterio3()) — era o "Critério 2" original até ser renumerado no
+    mesmo dia ("transforme o critério 2 em critério3") — cobre o caso
+    OPOSTO do Critério 1: código DIVERGENTE (diferente) do alvo — aqui
+    a similaridade de descrição vira FILTRO (≥
+    LIMIAR_SIMILARIDADE_CRITERIO3=20), já que não há mais o código como
     evidência. Motivado pelo caso real investigado nesta mesma sessão
     (FARINHA DE TRIGO ADORITA, código 20847, nunca aparece em Entradas
     com esse código).
 
-    Ambos alimentam a MESMA tabela de correspondências, com checkbox
+    Os três alimentam a MESMA tabela de correspondências, com checkbox
     "Salvar" (2026-07-23: "CRIE CAIXA PARA GRAVAR O PRODUTO QUE FARÁ
     PARTE DA RUBRICA DO PRODUTO ALVO" — rótulo encurtado de "Selecionar
     p/ Rubrica" pra "Salvar" na mesma sessão, sempre começa DESMARCADO
@@ -2907,13 +2920,21 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
             "(zero à esquerda em código numérico não conta como diferença) — ordenadas por "
             "similaridade de descrição (overlap de tokens) entre o produto do XML e a descrição do alvo."
         )
+    elif criterio_busca == loader.CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL:
+        st.caption(
+            f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) cujo nome de declaração "
+            f"(`descrição_decl` — como a própria auditada chama o item) é IGUAL (normalizado — "
+            f"maiúsculas/espaços) ao de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}), "
+            "sem exigir nenhuma relação de código. Ordenadas por similaridade de descrição (overlap "
+            "de tokens) entre o produto do XML e a descrição do alvo — aqui informativa, não filtra."
+        )
     else:
         st.caption(
             f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com código DIVERGENTE (diferente) "
             f"do de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — cobre o caso em que o "
             "produto é o mesmo fisicamente, mas o código na declaração/XML diverge do código oficial do "
             f"alvo. Só entram candidatos com similaridade de descrição ≥ "
-            f"{loader.LIMIAR_SIMILARIDADE_CRITERIO2:.0f}% (aqui a similaridade FILTRA, não é só ordenação, "
+            f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% (aqui a similaridade FILTRA, não é só ordenação, "
             "já que o código não serve de evidência), ordenados por similaridade (desc)."
         )
 
@@ -2925,10 +2946,15 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
                 "em `estagio8_agrupado`, mesmo após normalizar zero à esquerda — o produto "
                 "provavelmente não aparece nas entradas com esse código."
             )
+        elif criterio_busca == loader.CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL:
+            st.warning(
+                f"⚠️ Nenhum item declarado com o mesmo nome de **{escolhido['DESCR_ALVO']}** encontrado "
+                "em `estagio8_agrupado`."
+            )
         else:
             st.warning(
                 f"⚠️ Nenhum candidato de código divergente com similaridade ≥ "
-                f"{loader.LIMIAR_SIMILARIDADE_CRITERIO2:.0f}% encontrado pra **{escolhido['DESCR_ALVO']}** "
+                f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% encontrado pra **{escolhido['DESCR_ALVO']}** "
                 "em `estagio8_agrupado`."
             )
         return
@@ -2977,11 +3003,14 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
     ])
     colunas_travadas = [c for c in editor_exibicao.columns if c != "Salvar"]
-    # Key do editor/botão varia por critério (2026-07-23, Critério 2) —
-    # evita estado de widget "vazado" do Streamlit quando o auditor troca
-    # de critério no selectbox (a tabela muda de linhas/conteúdo, mas uma
-    # key fixa poderia reaproveitar edição em memória da tabela anterior).
-    sufixo_criterio = "1" if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO else "2"
+    # Key do editor/botão varia por critério (2026-07-23, a partir do
+    # Critério 2) — evita estado de widget "vazado" do Streamlit quando
+    # o auditor troca de critério no selectbox (a tabela muda de linhas/
+    # conteúdo, mas uma key fixa poderia reaproveitar edição em memória
+    # da tabela anterior). Extrai "1"/"2"/"3" do próprio texto do
+    # critério (`"Critério de BuscaN: ..."`) em vez de comparação
+    # explícita por critério — não precisa crescer a cada critério novo.
+    sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
     with st.container(key="cruzamento_entradas_tabela"):
         st.markdown(
             "<style>.st-key-cruzamento_entradas_tabela [data-testid='stDataFrame'] "

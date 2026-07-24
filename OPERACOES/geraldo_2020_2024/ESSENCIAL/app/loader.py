@@ -4519,33 +4519,141 @@ def cruzar_produto_escolhido_entradas_detalhado() -> "tuple[pd.DataFrame, dict |
     return correspondentes, escolhido
 
 
-# ── Cruzamento do Produto Escolhido — Critério 2 (Entradas, código divergente) ──
-# Solicitação Técnica (2026-07-23): "crie o critério2: codigo de produto
-# divergente. nesse caso, apenas similaridade entre alvo e candidatos." —
-# cobre o caso OPOSTO do Critério 1: em vez de exigir o MESMO código,
-# procura candidatos com código DIFERENTE do alvo (normalizado) e usa só a
-# similaridade de descrição pra decidir se é o mesmo produto — motivado
-# pelo caso real investigado nesta mesma sessão (FARINHA DE TRIGO ADORITA,
-# código 20847, nunca aparece em Entradas/Saídas com esse código, só em
-# Estoque — possível divergência entre o código "oficial" do alvo e o
-# código usado na declaração/XML do fornecedor).
-CRITERIO_BUSCA2_CODIGO_DIVERGENTE = "Critério de Busca2: Código de Produto Divergente"
-LIMIAR_SIMILARIDADE_CRITERIO2 = 20.0
+# ── Cruzamento do Produto Escolhido — Critério 2 (Entradas, nome de declaração igual) ──
+# Solicitação Técnica (2026-07-23): "o novo critério 2 vai ser o seguinte:
+# nome do alvo igual ao nome de declaração do candidato. mantenha as
+# similaridade entre nome do alvo e descrição xml do candidato." — diferente
+# do Critério 1 (código igual) e do Critério 3 (código divergente): aqui o
+# FILTRO é igualdade (normalizada) entre `DESCR_ALVO` e `descrição_decl`
+# (nome que a PRÓPRIA auditada usa na declaração/Matching pra este item) —
+# não olha código nenhum. `SIMILARIDADE_DESCRICAO` continua calculada do
+# mesmo jeito de sempre (entre `desc_xml` e `DESCR_ALVO`), só que aqui é
+# informativa/ordenação (a igualdade do nome de declaração já é o filtro).
+
+
+def _normalizar_nome_para_igualdade(texto) -> str:
+    """Normaliza nome/descrição pra comparação de IGUALDADE (não fuzzy):
+    maiúsculas, remove espaços nas pontas, colapsa espaços internos
+    múltiplos num só. Usado no Critério 2 (nome de declaração == alvo)
+    — achado real que motivou colapsar espaços: `descrição_decl` de
+    "FARINHA DE TRIGO ADORITA  C/ FERMENTO 50KG" tem espaço duplo depois
+    de "ADORITA"; sem colapsar, um `DESCR_ALVO` com espaço simples no
+    mesmo ponto nunca bateria igual, mesmo sendo o mesmo nome — mesmo
+    tipo de armadilha já visto com zero à esquerda no Critério 1 (ver
+    _normalizar_cod_item_flexivel())."""
+    return re.sub(r"\s+", " ", str(texto).strip().upper())
+
+
+CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL = "Critério de Busca2: Nome de Declaração Igual ao Alvo"
 
 
 def cruzar_produto_escolhido_entradas_criterio2() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 2 (Entradas): candidatos com código DIVERGENTE do alvo
+    """Critério 2 (Entradas): candidatos cujo `descrição_decl` (nome que
+    a AUDITADA usa na própria declaração/Matching pra aquele item) é
+    IGUAL (normalizado — maiúsculas, espaços colapsados, ver
+    _normalizar_nome_para_igualdade()) ao `DESCR_ALVO` do produto
+    escolhido — não exige nenhuma relação de código (nem igual, nem
+    divergente): é possível que o código também bata (redundante com o
+    Critério 1) ou não. Mesma exclusão cross-alvo de
+    _chaves_ja_atribuidas_a_outro_alvo() dos outros critérios.
+    `SIMILARIDADE_DESCRICAO` (entre `desc_xml` e `DESCR_ALVO`) continua
+    calculada e usada pra ORDENAR (desc, depois qtde_ocorrencias desc) —
+    aqui ela é informativa, quem filtra é a igualdade do nome de
+    declaração. Devolve (DataFrame, dict do produto escolhido usado na
+    comparação) — DataFrame vazio se nenhum produto foi escolhido
+    ainda, estagio8_agrupado não existir, ou nenhum `descrição_decl`
+    bater com o `DESCR_ALVO`; escolhido=None só no primeiro caso."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), None
+    agrupado, _ = consultar_estagio8_agrupado(limite=None)
+    if agrupado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    nome_alvo_normalizado = _normalizar_nome_para_igualdade(escolhido["DESCR_ALVO"])
+    nomes_decl_normalizados = agrupado["descrição_decl"].apply(_normalizar_nome_para_igualdade)
+    candidatos = agrupado[nomes_decl_normalizados == nome_alvo_normalizado].copy()
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "entradas")
+    if chaves_bloqueadas:
+        candidatos = candidatos[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(candidatos["codproddecl"], candidatos["desc_xml"])]
+        ]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    candidatos = candidatos.sort_values(
+        ["SIMILARIDADE_DESCRICAO", "qtde_ocorrencias"], ascending=[False, False]
+    )[_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO].reset_index(drop=True)
+    return candidatos, escolhido
+
+
+def cruzar_produto_escolhido_entradas_criterio2_detalhado() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 2 (Entradas) — tabela DETALHADA, mesma lógica de
+    cruzar_produto_escolhido_entradas_criterio2() (nome de declaração
+    igual ao alvo), mas contra estagio8_detalhado (uma linha por item
+    do XML, com idunico) em vez de estagio8_agrupado. Mesmas regras de
+    vazio/None."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), None
+    detalhado, _ = consultar_estagio8_detalhado(limite=None)
+    if detalhado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    nome_alvo_normalizado = _normalizar_nome_para_igualdade(escolhido["DESCR_ALVO"])
+    nomes_decl_normalizados = detalhado["descrição_decl"].apply(_normalizar_nome_para_igualdade)
+    candidatos = detalhado[nomes_decl_normalizados == nome_alvo_normalizado].copy()
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "entradas")
+    if chaves_bloqueadas:
+        candidatos = candidatos[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(candidatos["codproddecl"], candidatos["desc_xml"])]
+        ]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    candidatos = candidatos.sort_values(
+        "SIMILARIDADE_DESCRICAO", ascending=False
+    )[_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO].reset_index(drop=True)
+    return candidatos, escolhido
+
+
+# ── Cruzamento do Produto Escolhido — Critério 3 (Entradas, código divergente) ──
+# Solicitação Técnica (2026-07-23): "crie o critério2: codigo de produto
+# divergente. nesse caso, apenas similaridade entre alvo e candidatos." —
+# RENUMERADO pra Critério 3 no mesmo dia ("transforme o critério 2 em
+# critério3") quando o Critério 2 "de verdade" (nome de declaração igual,
+# acima) foi definido. Cobre o caso OPOSTO do Critério 1: em vez de exigir
+# o MESMO código, procura candidatos com código DIFERENTE do alvo
+# (normalizado) e usa só a similaridade de descrição pra decidir se é o
+# mesmo produto — motivado pelo caso real investigado nesta mesma sessão
+# (FARINHA DE TRIGO ADORITA, código 20847, nunca aparece em Entradas/
+# Saídas com esse código, só em Estoque — possível divergência entre o
+# código "oficial" do alvo e o código usado na declaração/XML do
+# fornecedor).
+CRITERIO_BUSCA3_CODIGO_DIVERGENTE = "Critério de Busca3: Código de Produto Divergente"
+LIMIAR_SIMILARIDADE_CRITERIO3 = 20.0
+
+
+def cruzar_produto_escolhido_entradas_criterio3() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 3 (Entradas): candidatos com código DIVERGENTE do alvo
     (normalizado — mesmo tratamento de zero à esquerda do Critério 1,
     mas invertido: só entra quem NÃO bate), filtrados por
-    `SIMILARIDADE_DESCRICAO >= LIMIAR_SIMILARIDADE_CRITERIO2` (=20,
+    `SIMILARIDADE_DESCRICAO >= LIMIAR_SIMILARIDADE_CRITERIO3` (=20,
     mesmo piso do app antigo — matching/criterio_descricao.py,
     `min_score=20` — sem esse piso, o resultado seria a base inteira de
     estagio8_agrupado ordenada por similaridade, praticamente toda com
     0%). Diferente do Critério 1: aqui a similaridade FILTRA (não é só
     ordenação), porque não há mais o código como evidência — é o único
     sinal disponível. Mesma exclusão cross-alvo de
-    _chaves_ja_atribuidas_a_outro_alvo() do Critério 1 (um item já
-    confirmado pra outro produto alvo não aparece aqui também).
+    _chaves_ja_atribuidas_a_outro_alvo() dos outros critérios.
     Ordenado por SIMILARIDADE_DESCRICAO desc, qtde_ocorrencias desc.
     Devolve (DataFrame, dict do produto escolhido usado na comparação)
     — DataFrame vazio se nenhum produto foi escolhido ainda,
@@ -4574,7 +4682,7 @@ def cruzar_produto_escolhido_entradas_criterio2() -> "tuple[pd.DataFrame, dict |
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
-    candidatos = candidatos[candidatos["SIMILARIDADE_DESCRICAO"] >= LIMIAR_SIMILARIDADE_CRITERIO2]
+    candidatos = candidatos[candidatos["SIMILARIDADE_DESCRICAO"] >= LIMIAR_SIMILARIDADE_CRITERIO3]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
     candidatos = candidatos.sort_values(
@@ -4583,9 +4691,9 @@ def cruzar_produto_escolhido_entradas_criterio2() -> "tuple[pd.DataFrame, dict |
     return candidatos, escolhido
 
 
-def cruzar_produto_escolhido_entradas_criterio2_detalhado() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 2 (Entradas) — tabela DETALHADA, mesma lógica de
-    cruzar_produto_escolhido_entradas_criterio2() (código divergente +
+def cruzar_produto_escolhido_entradas_criterio3_detalhado() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 3 (Entradas) — tabela DETALHADA, mesma lógica de
+    cruzar_produto_escolhido_entradas_criterio3() (código divergente +
     piso de similaridade), mas contra estagio8_detalhado (uma linha por
     item do XML, com idunico) em vez de estagio8_agrupado. Mesmas
     regras de vazio/None."""
@@ -4611,7 +4719,7 @@ def cruzar_produto_escolhido_entradas_criterio2_detalhado() -> "tuple[pd.DataFra
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
-    candidatos = candidatos[candidatos["SIMILARIDADE_DESCRICAO"] >= LIMIAR_SIMILARIDADE_CRITERIO2]
+    candidatos = candidatos[candidatos["SIMILARIDADE_DESCRICAO"] >= LIMIAR_SIMILARIDADE_CRITERIO3]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
     candidatos = candidatos.sort_values(
