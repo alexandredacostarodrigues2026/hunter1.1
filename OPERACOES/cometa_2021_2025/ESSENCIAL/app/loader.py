@@ -4519,6 +4519,107 @@ def cruzar_produto_escolhido_entradas_detalhado() -> "tuple[pd.DataFrame, dict |
     return correspondentes, escolhido
 
 
+# ── Cruzamento do Produto Escolhido — Critério 2 (Entradas, código divergente) ──
+# Solicitação Técnica (2026-07-23): "crie o critério2: codigo de produto
+# divergente. nesse caso, apenas similaridade entre alvo e candidatos." —
+# cobre o caso OPOSTO do Critério 1: em vez de exigir o MESMO código,
+# procura candidatos com código DIFERENTE do alvo (normalizado) e usa só a
+# similaridade de descrição pra decidir se é o mesmo produto — motivado
+# pelo caso real investigado nesta mesma sessão (FARINHA DE TRIGO ADORITA,
+# código 20847, nunca aparece em Entradas/Saídas com esse código, só em
+# Estoque — possível divergência entre o código "oficial" do alvo e o
+# código usado na declaração/XML do fornecedor).
+CRITERIO_BUSCA2_CODIGO_DIVERGENTE = "Critério de Busca2: Código de Produto Divergente"
+LIMIAR_SIMILARIDADE_CRITERIO2 = 20.0
+
+
+def cruzar_produto_escolhido_entradas_criterio2() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 2 (Entradas): candidatos com código DIVERGENTE do alvo
+    (normalizado — mesmo tratamento de zero à esquerda do Critério 1,
+    mas invertido: só entra quem NÃO bate), filtrados por
+    `SIMILARIDADE_DESCRICAO >= LIMIAR_SIMILARIDADE_CRITERIO2` (=20,
+    mesmo piso do app antigo — matching/criterio_descricao.py,
+    `min_score=20` — sem esse piso, o resultado seria a base inteira de
+    estagio8_agrupado ordenada por similaridade, praticamente toda com
+    0%). Diferente do Critério 1: aqui a similaridade FILTRA (não é só
+    ordenação), porque não há mais o código como evidência — é o único
+    sinal disponível. Mesma exclusão cross-alvo de
+    _chaves_ja_atribuidas_a_outro_alvo() do Critério 1 (um item já
+    confirmado pra outro produto alvo não aparece aqui também).
+    Ordenado por SIMILARIDADE_DESCRICAO desc, qtde_ocorrencias desc.
+    Devolve (DataFrame, dict do produto escolhido usado na comparação)
+    — DataFrame vazio se nenhum produto foi escolhido ainda,
+    estagio8_agrupado não existir, todos os candidatos tiverem o MESMO
+    código (nada divergente pra checar), ou nenhum passar do limiar de
+    similaridade; escolhido=None só no primeiro caso."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), None
+    agrupado, _ = consultar_estagio8_agrupado(limite=None)
+    if agrupado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    codigos_normalizados = _normalizar_cod_item_flexivel(agrupado["codproddecl"])
+    candidatos = agrupado[codigos_normalizados != cod_item_normalizado].copy()
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "entradas")
+    if chaves_bloqueadas:
+        candidatos = candidatos[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(candidatos["codproddecl"], candidatos["desc_xml"])]
+        ]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    candidatos = candidatos[candidatos["SIMILARIDADE_DESCRICAO"] >= LIMIAR_SIMILARIDADE_CRITERIO2]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    candidatos = candidatos.sort_values(
+        ["SIMILARIDADE_DESCRICAO", "qtde_ocorrencias"], ascending=[False, False]
+    )[_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO].reset_index(drop=True)
+    return candidatos, escolhido
+
+
+def cruzar_produto_escolhido_entradas_criterio2_detalhado() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 2 (Entradas) — tabela DETALHADA, mesma lógica de
+    cruzar_produto_escolhido_entradas_criterio2() (código divergente +
+    piso de similaridade), mas contra estagio8_detalhado (uma linha por
+    item do XML, com idunico) em vez de estagio8_agrupado. Mesmas
+    regras de vazio/None."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), None
+    detalhado, _ = consultar_estagio8_detalhado(limite=None)
+    if detalhado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    codigos_normalizados = _normalizar_cod_item_flexivel(detalhado["codproddecl"])
+    candidatos = detalhado[codigos_normalizados != cod_item_normalizado].copy()
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "entradas")
+    if chaves_bloqueadas:
+        candidatos = candidatos[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(candidatos["codproddecl"], candidatos["desc_xml"])]
+        ]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    candidatos = candidatos[candidatos["SIMILARIDADE_DESCRICAO"] >= LIMIAR_SIMILARIDADE_CRITERIO2]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    candidatos = candidatos.sort_values(
+        "SIMILARIDADE_DESCRICAO", ascending=False
+    )[_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO].reset_index(drop=True)
+    return candidatos, escolhido
+
+
 # ── Rubrica do Produto Alvo (confirmação manual do cruzamento) ───────────
 # Solicitação Técnica (2026-07-23): "CRIE CAIXA PARA GRAVAR O PRODUTO QUE
 # FARÁ PARTE DA RUBRICA DO PRODUTO ALVO. GERE 1 OPÇÃO DE 'CRITÉRIO DE

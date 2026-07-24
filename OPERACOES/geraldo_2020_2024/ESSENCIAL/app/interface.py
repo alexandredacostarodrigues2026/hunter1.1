@@ -2532,8 +2532,8 @@ _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO = ["codproddecl", "desc_xml", "descrição_de
 # exige a coluna), mas sai só da EXIBIÇÃO do editor (2026-07-23, pedido do
 # usuário: "retire descrição da declaração" — já aparece só uma vez, no
 # cabeçalho/caption da seção, repetir em toda linha é redundante aqui; a
-# tabela detalhada de baixo mantém a coluna) — ver _COLUNA_OCULTA_EDITOR_
-# CRUZAMENTO_ENTRADAS em _render_cruzamento_entradas_criterio1().
+# tabela detalhada de baixo mantém a coluna) — ver _render_cruzamento_
+# entradas().
 _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
 
 # Tabela "Itens individuais (com ID Único)" persistida (cruzamento_confirmado_detalhado,
@@ -2819,69 +2819,118 @@ def render_pagina_estagio_8() -> None:
     render_estagio_8()
 
 
-def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
-    """Aba 'Entradas' do cruzamento (Botão 9, Critério 1): compara o
-    produto escolhido com estagio8_agrupado (Entradas) — ver loader.
-    cruzar_produto_escolhido_entradas(). Critério 1 combina DUAS
-    condições (redefinido 2026-07-23: "critério1: mesmo codigo do
+def _obter_criterios_cruzamento_entradas() -> dict:
+    """Mapa criterio -> (fn_agrupado, fn_detalhado) usado pelo selectbox
+    de _render_cruzamento_entradas(). Construído em função (não no
+    escopo do módulo) pra usar `loader.*` sem depender da ordem de
+    definição no arquivo. Critério 2 adicionado 2026-07-23 (pedido do
+    usuário: "crie o critério2: codigo de produto divergente. nesse
+    caso, apenas similaridade entre alvo e candidatos.") — motivo pelo
+    qual esta função existe: antes só havia CRITERIO_BUSCA1_MESMO_
+    CODIGO, com as funções chamadas diretamente; com 2+ critérios, a
+    tela precisa DESPACHAR pra função certa conforme o que está
+    selecionado."""
+    return {
+        loader.CRITERIO_BUSCA1_MESMO_CODIGO: (
+            loader.cruzar_produto_escolhido_entradas,
+            loader.cruzar_produto_escolhido_entradas_detalhado,
+        ),
+        loader.CRITERIO_BUSCA2_CODIGO_DIVERGENTE: (
+            loader.cruzar_produto_escolhido_entradas_criterio2,
+            loader.cruzar_produto_escolhido_entradas_criterio2_detalhado,
+        ),
+    }
+
+
+def _render_cruzamento_entradas(escolhido: dict) -> None:
+    """Aba 'Entradas' do cruzamento (Botão 9): compara o produto
+    escolhido com estagio8_agrupado (Entradas) usando o critério
+    selecionado no selectbox — DESPACHA pra função diferente conforme o
+    critério (2026-07-23, renomeada de `_render_cruzamento_entradas_
+    criterio1` quando o Critério 2 foi adicionado: "crie o critério2:
+    codigo de produto divergente. nesse caso, apenas similaridade entre
+    alvo e candidatos.").
+
+    **Critério 1** (loader.cruzar_produto_escolhido_entradas()) combina
+    DUAS condições (redefinido 2026-07-23: "critério1: mesmo codigo do
     produto e similaridade entre descricao do produto xml buscado e e
     descrição do alvo"):
     1. MESMO código de produto (normalizado — zero à esquerda não conta
        como diferença): achado real confirmado com o usuário 2026-07-23
        — sem normalizar, "CERV SKOL LATA 350ML" dava zero
        correspondências por causa só do padding (`7891149200504` vs
-       `07891149200504`), mesmo sendo o mesmo produto/código. Zero
-       correspondências MESMO após normalizar continua sendo resultado
-       válido (produto genuinamente sem correspondência nas entradas com
-       esse código).
-    2. SIMILARIDADE_DESCRICAO (overlap de tokens entre `desc_xml` e a
-       descrição do alvo, mesma fórmula do app antigo) — não filtra
-       nenhuma linha, só ordena (desc) e é exibida como coluna, pra
-       ajudar a decidir qual descrição de XML é de fato o mesmo produto
-       quando o código aparece associado a mais de uma descrição.
-    A tabela de correspondências ganhou checkbox "Salvar" (2026-07-23:
-    "CRIE CAIXA PARA GRAVAR O PRODUTO QUE FARÁ PARTE DA RUBRICA DO
-    PRODUTO ALVO" — rótulo encurtado de "Selecionar p/ Rubrica" pra
-    "Salvar" na mesma sessão, sempre começa DESMARCADO — "deixe como
-    defaut 'Salvar' desmarcado", sem pré-marcação do que já foi
-    confirmado antes) + botão "Salvar na Rubrica", persistindo em
-    loader.salvar_cruzamento_confirmado(). Termina com uma tabela
-    inferior ("CRIE UMA TABELA INFERIOR COM OS PRODUTOS E RESPECTIVOS
-    IDS ÚNICOS") — mesma comparação, mas contra estagio8_detalhado (uma
-    linha por item do XML, com idunico) via loader.cruzar_produto_
-    escolhido_entradas_detalhado(), pra localizar a nota fiscal exata de
-    cada item — FILTRADA (2026-07-23, mesma sessão: "ao salvar o
-    produto buscado, atribuir os mesmos ao alvo, assim como atualizar a
-    tabela com ids únicos") só pelas combinações (codproddecl, desc_xml)
-    já CONFIRMADAS na Rubrica pra este alvo+origem, não mais todo item
-    com o mesmo código — antes de qualquer confirmação, a tabela fica
-    vazia com aviso orientando a marcar "Salvar" primeiro.
+       `07891149200504`), mesmo sendo o mesmo produto/código.
+    2. SIMILARIDADE_DESCRICAO (overlap de tokens) — não filtra nenhuma
+       linha, só ordena (desc) e ajuda a decidir qual descrição de XML
+       é de fato o mesmo produto quando o código aparece associado a
+       mais de uma descrição.
 
-    Selectbox "Critério de busca" (2026-07-23, pedido do usuário:
-    "escolha do critério dever ser antes do cruzamento" — antes ficava
-    ABAIXO da tabela de correspondências, só pra etiquetar o que ia ser
-    salvo; agora vem primeiro, antes de rodar a comparação, já que a
-    escolha do critério é o que DEFINE qual comparação roda — hoje só
-    existe CRITERIO_BUSCA1_MESMO_CODIGO, mas a estrutura já fica pronta
-    pra despachar pra uma função diferente quando entrar um Critério 2)."""
+    **Critério 2** (loader.cruzar_produto_escolhido_entradas_
+    criterio2()) cobre o caso OPOSTO: código DIVERGENTE (diferente) do
+    alvo — aqui a similaridade de descrição vira FILTRO (≥
+    LIMIAR_SIMILARIDADE_CRITERIO2=20), já que não há mais o código como
+    evidência. Motivado pelo caso real investigado nesta mesma sessão
+    (FARINHA DE TRIGO ADORITA, código 20847, nunca aparece em Entradas
+    com esse código).
+
+    Ambos alimentam a MESMA tabela de correspondências, com checkbox
+    "Salvar" (2026-07-23: "CRIE CAIXA PARA GRAVAR O PRODUTO QUE FARÁ
+    PARTE DA RUBRICA DO PRODUTO ALVO" — rótulo encurtado de "Selecionar
+    p/ Rubrica" pra "Salvar" na mesma sessão, sempre começa DESMARCADO
+    — "deixe como defaut 'Salvar' desmarcado") + coluna "Observação"
+    (2026-07-23: "cravar uma observação" pro que já foi salvo) + botão
+    "Salvar na Rubrica", persistindo em loader.salvar_cruzamento_
+    confirmado() (agregado) e loader.salvar_cruzamento_confirmado_
+    detalhado() (item-a-item, idunico — 2026-07-23: "é importante que
+    os produtos com ids fiquem gravado no produto alvo"). Termina com a
+    tabela "Itens individuais (com ID Único)" — lê direto de
+    cruzamento_confirmado_detalhado (persistido, cumulativo entre
+    critérios — cresce conforme o auditor confirma mais combinações,
+    de qualquer critério), não recalculada ao vivo.
+
+    Selectbox "Critério de busca" (2026-07-23: "escolha do critério
+    dever ser antes do cruzamento") vem ANTES de rodar a comparação, já
+    que a escolha do critério é o que DEFINE qual comparação roda — ver
+    _obter_criterios_cruzamento_entradas() pro despacho."""
+    criterios = _obter_criterios_cruzamento_entradas()
     criterio_busca = st.selectbox(
         "Critério de busca",
-        options=[loader.CRITERIO_BUSCA1_MESMO_CODIGO],
+        options=list(criterios.keys()),
         key="select_criterio_busca_entradas",
     )
-    st.caption(
-        f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com o MESMO código de produto "
-        f"de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — comparação normalizada "
-        "(zero à esquerda em código numérico não conta como diferença) — ordenadas por "
-        "similaridade de descrição (overlap de tokens) entre o produto do XML e a descrição do alvo."
-    )
-    correspondentes, _ = loader.cruzar_produto_escolhido_entradas()
-    if correspondentes.empty:
-        st.warning(
-            f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
-            "em `estagio8_agrupado`, mesmo após normalizar zero à esquerda — o produto "
-            "provavelmente não aparece nas entradas com esse código."
+    fn_agrupado, fn_detalhado = criterios[criterio_busca]
+
+    if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
+        st.caption(
+            f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com o MESMO código de produto "
+            f"de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — comparação normalizada "
+            "(zero à esquerda em código numérico não conta como diferença) — ordenadas por "
+            "similaridade de descrição (overlap de tokens) entre o produto do XML e a descrição do alvo."
         )
+    else:
+        st.caption(
+            f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com código DIVERGENTE (diferente) "
+            f"do de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — cobre o caso em que o "
+            "produto é o mesmo fisicamente, mas o código na declaração/XML diverge do código oficial do "
+            f"alvo. Só entram candidatos com similaridade de descrição ≥ "
+            f"{loader.LIMIAR_SIMILARIDADE_CRITERIO2:.0f}% (aqui a similaridade FILTRA, não é só ordenação, "
+            "já que o código não serve de evidência), ordenados por similaridade (desc)."
+        )
+
+    correspondentes, _ = fn_agrupado()
+    if correspondentes.empty:
+        if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
+            st.warning(
+                f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
+                "em `estagio8_agrupado`, mesmo após normalizar zero à esquerda — o produto "
+                "provavelmente não aparece nas entradas com esse código."
+            )
+        else:
+            st.warning(
+                f"⚠️ Nenhum candidato de código divergente com similaridade ≥ "
+                f"{loader.LIMIAR_SIMILARIDADE_CRITERIO2:.0f}% encontrado pra **{escolhido['DESCR_ALVO']}** "
+                "em `estagio8_agrupado`."
+            )
         return
     st.success(
         f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
@@ -2928,6 +2977,11 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
         for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
     ])
     colunas_travadas = [c for c in editor_exibicao.columns if c != "Salvar"]
+    # Key do editor/botão varia por critério (2026-07-23, Critério 2) —
+    # evita estado de widget "vazado" do Streamlit quando o auditor troca
+    # de critério no selectbox (a tabela muda de linhas/conteúdo, mas uma
+    # key fixa poderia reaproveitar edição em memória da tabela anterior).
+    sufixo_criterio = "1" if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO else "2"
     with st.container(key="cruzamento_entradas_tabela"):
         st.markdown(
             "<style>.st-key-cruzamento_entradas_tabela [data-testid='stDataFrame'] "
@@ -2939,7 +2993,7 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
             use_container_width=True,
             hide_index=True,
             disabled=colunas_travadas,
-            key="editor_cruzamento_entradas",
+            key=f"editor_cruzamento_entradas_{sufixo_criterio}",
         )
 
     # Universo = TODAS as combinações mostradas nesta busca (marcadas ou
@@ -2952,7 +3006,7 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
     # estado final da Rubrica pra estas combinações — desmarcar e salvar
     # remove de fato.
     universo_chaves = set(zip(editor_base["codproddecl"], editor_base["desc_xml"]))
-    if st.button("💾 Salvar na Rubrica do Produto Alvo", key="btn_salvar_rubrica_entradas"):
+    if st.button("💾 Salvar na Rubrica do Produto Alvo", key=f"btn_salvar_rubrica_entradas_{sufixo_criterio}"):
         marcadas = editado["Salvar"].reindex(editor_base.index)
         selecionadas = editor_base.loc[marcadas.fillna(False), _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO]
         resultado = loader.salvar_cruzamento_confirmado(
@@ -2965,7 +3019,11 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
         # idunicos possíveis desta busca (todas as combinações,
         # marcadas ou não); itens a salvar = só os que pertencem às
         # combinações marcadas AGORA — mesma sincronização do agregado.
-        detalhado_completo, _ = loader.cruzar_produto_escolhido_entradas_detalhado()
+        # fn_detalhado (não sempre cruzar_produto_escolhido_entradas_
+        # detalhado()) — bug em potencial corrigido ao adicionar o
+        # Critério 2: usar sempre a função do Critério 1 aqui teria
+        # calculado o universo de idunicos errado pra buscas do Critério 2.
+        detalhado_completo, _ = fn_detalhado()
         universo_idunicos = set(detalhado_completo["idunico"])
         chaves_marcadas = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
         itens_marcados = detalhado_completo[
@@ -3122,7 +3180,7 @@ def render_produtos_alvo_salvos() -> None:
     else:
         (aba_cruzamento_entradas,) = st.tabs(["📥 Entradas"])
         with aba_cruzamento_entradas:
-            _render_cruzamento_entradas_criterio1(escolhido_atual)
+            _render_cruzamento_entradas(escolhido_atual)
 
 
 def render_pagina_produtos_alvo_salvos() -> None:
