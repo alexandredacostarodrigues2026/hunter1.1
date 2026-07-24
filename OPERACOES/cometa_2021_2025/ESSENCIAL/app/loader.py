@@ -4898,10 +4898,22 @@ def salvar_cruzamento_confirmado_detalhado(
     (mesmo raciocínio: desmarcar uma combinação precisa remover também
     os itens individuais dela, não só deixar de adicionar).
     `universo_idunicos=None` mantém comportamento só aditivo. Regra R07:
-    DESCR_ALVO/COD_ITEM/codproddecl/idunico sempre string. Devolve
+    DESCR_ALVO/COD_ITEM/codproddecl/idunico sempre string.
+
+    Deduplicado por `idunico` (2026-07-23, achado real na geraldo: 2
+    pares de linhas apareciam DUPLICADAS na tabela de Itens
+    Individuais, "produtos duplicados") — a causa raiz é uma
+    duplicação genuína em `estoque_entradas` (2 linhas idênticas,
+    mesma CHV_NFE/NUM_ITEM/descrição, não colisão de hash do
+    `_gerar_id_unico()`), mas o INVARIANTE da Rubrica é 1 linha por
+    `idunico` — a duplicação de origem não deveria se propagar pra cá.
+    `.drop_duplicates(subset=["idunico"])` aplicado em `itens` antes de
+    persistir; não corrige `estoque_entradas` (fora do escopo desta
+    função), só garante que a Rubrica em si fique limpa. Devolve
     {'ok': True, 'total_salvo': int} ou {'erro': str}."""
     resultado = {}
     try:
+        itens = itens.drop_duplicates(subset=["idunico"])
         novo = itens[["codproddecl", "desc_xml", "idunico"]].copy()
         novo["DESCR_ALVO"] = str(escolhido["DESCR_ALVO"])
         novo["COD_ITEM"] = str(escolhido["COD_ITEM"])
@@ -4926,6 +4938,12 @@ def salvar_cruzamento_confirmado_detalhado(
             combinado = pd.concat([preservar, novo], ignore_index=True)
         else:
             combinado = novo
+        # Rede de segurança final: `preservar` pode carregar duplicatas
+        # antigas (de antes desta correção) que o filtro acima não
+        # tocou — dedupe por (DESCR_ALVO, ORIGEM, idunico) garante que
+        # NENHUMA duplicata sobrevive na tabela persistida, venha ela
+        # de `itens` ou de `preservar`.
+        combinado = combinado.drop_duplicates(subset=["DESCR_ALVO", "ORIGEM", "idunico"])
 
         combinado = _forcar_colunas_string(
             combinado, ["DESCR_ALVO", "COD_ITEM", "codproddecl", "idunico", "ORIGEM", "CRITERIO"],
