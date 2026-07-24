@@ -4980,6 +4980,43 @@ def consultar_cruzamento_confirmado_detalhado(
         return pd.DataFrame(columns=colunas), 0
 
 
+def consultar_chv_nfe_por_idunico(idunicos: "set | list") -> pd.DataFrame:
+    """Busca a CHV_NFE (chave de acesso da NFe, campo `fatoitemnfe_
+    infprot_chnfe` de estoque_entradas) pra um conjunto de `idunico` —
+    2026-07-23, pedido do usuário: "traga tb a chave de acesso" na
+    tabela "Itens individuais (com ID Único)" (cruzamento_confirmado_
+    detalhado). Não persiste a CHV_NFE junto com a Rubrica — busca ao
+    vivo em estoque_entradas por ID_UNICO, porque o idunico já É
+    derivado de CHV_NFE+NUM_ITEM (_gerar_id_unico()), então a chave
+    associada a um idunico específico não muda mesmo que o Estágio 8
+    seja regerado depois; enriquecer só na exibição evita duplicar essa
+    informação (que já está implícita no idunico) na tabela persistida.
+    Devolve DataFrame com colunas ID_UNICO/CHV_NFE (ambas string) —
+    vazio se `idunicos` vazio, banco não existir, ou estoque_entradas
+    ainda não ter sido gerada."""
+    colunas = ["ID_UNICO", "CHV_NFE"]
+    if not idunicos or not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas)
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estoque_entradas" not in tabelas:
+                return pd.DataFrame(columns=colunas)
+            con.register("_idunicos_busca_chv", pd.DataFrame({"ID_UNICO": list(idunicos)}))
+            df = con.execute(
+                "SELECT DISTINCT e.ID_UNICO, e.fatoitemnfe_infprot_chnfe AS CHV_NFE "
+                "FROM estoque_entradas e "
+                "INNER JOIN _idunicos_busca_chv b ON e.ID_UNICO = b.ID_UNICO"
+            ).df()
+            con.unregister("_idunicos_busca_chv")
+        df["ID_UNICO"] = df["ID_UNICO"].astype(str)
+        df["CHV_NFE"] = df["CHV_NFE"].astype(str)
+        return df
+    except Exception:
+        logger.exception("Erro ao consultar CHV_NFE por idunico em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas)
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio

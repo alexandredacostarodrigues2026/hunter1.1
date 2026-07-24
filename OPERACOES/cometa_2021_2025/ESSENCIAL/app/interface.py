@@ -2537,8 +2537,10 @@ _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO = ["codproddecl", "desc_xml", "descrição_de
 _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
 
 # Tabela "Itens individuais (com ID Único)" persistida (cruzamento_confirmado_detalhado,
-# 2026-07-23) — ver loader.consultar_cruzamento_confirmado_detalhado().
-_COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO = ["codproddecl", "desc_xml", "idunico", "CRITERIO", "TS"]
+# 2026-07-23) — ver loader.consultar_cruzamento_confirmado_detalhado(). CHV_NFE
+# (chave de acesso) enriquecida ao vivo via loader.consultar_chv_nfe_por_idunico()
+# (2026-07-23, pedido do usuário: "traga tb a chave de acesso"), não persistida.
+_COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO = ["codproddecl", "desc_xml", "idunico", "CHV_NFE", "CRITERIO", "TS"]
 
 
 _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_DETALHADO = ["codproddecl", "desc_xml", "idunico"]
@@ -3095,6 +3097,12 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
             "clique em \"Salvar na Rubrica do Produto Alvo\" pra ver os itens individuais aqui."
         )
         return
+    # Chave de acesso (CHV_NFE) — 2026-07-23, pedido do usuário: "traga
+    # tb a chave de acesso" — buscada ao vivo por idunico (não persistida
+    # junto com a Rubrica, ver loader.consultar_chv_nfe_por_idunico()),
+    # já que o idunico já é derivado da própria CHV_NFE e não muda.
+    chv_por_idunico = loader.consultar_chv_nfe_por_idunico(set(detalhado["idunico"]))
+    detalhado = detalhado.merge(chv_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
     st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
     with st.container(key="cruzamento_entradas_detalhado_tabela"):
         st.markdown(
