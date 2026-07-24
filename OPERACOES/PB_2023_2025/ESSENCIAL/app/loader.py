@@ -4499,6 +4499,7 @@ CRITERIO_BUSCA1_MESMO_CODIGO = "Critério de Busca1: Mesmo Código de Produto"
 
 def salvar_cruzamento_confirmado(
     escolhido: dict, origem: str, criterio: str, linhas: pd.DataFrame,
+    universo_chaves: "set | None" = None,
 ) -> dict:
     """Persiste em cruzamento_confirmado as linhas que o auditor marcou
     (checkbox) como pertencentes à rubrica do produto alvo `escolhido`,
@@ -4509,8 +4510,28 @@ def salvar_cruzamento_confirmado(
     agrupado). Upsert por (DESCR_ALVO, ORIGEM, codproddecl, desc_xml) —
     reconfirmar a mesma linha atualiza TS/CRITERIO em vez de duplicar;
     linhas de outros produtos/origens ficam intocadas. Regra R07:
-    DESCR_ALVO/COD_ITEM/codproddecl sempre string. Devolve {'ok': True,
-    'total_salvo': int} ou {'erro': str}."""
+    DESCR_ALVO/COD_ITEM/codproddecl sempre string.
+
+    `universo_chaves` (2026-07-23, achado real: o auditor salvou só a
+    combinação de 60% de similaridade, mas a tabela de IDs Únicos
+    continuava mostrando também as duas variações de 11% — porque elas
+    já tinham sido confirmadas ANTES nesta mesma sessão de testes, e
+    desmarcar o checkbox nunca removia nada, só deixava de adicionar) —
+    conjunto de TODAS as chaves `(codproddecl, desc_xml)` mostradas na
+    busca atual (marcadas ou não). Quando informado, a função passa a
+    ter semântica de SINCRONIZAÇÃO, não só adição: dentro de
+    `(DESCR_ALVO, ORIGEM)` e restrito às chaves do universo, o estado
+    final é EXATAMENTE `linhas` — qualquer chave do universo que estava
+    confirmada antes mas não veio em `linhas` desta vez (foi desmarcada)
+    é removida. Chaves confirmadas fora do universo (de outra
+    busca/critério) e de outros produtos/origens ficam sempre intocadas.
+    `universo_chaves=None` mantém o comportamento antigo (só adiciona/
+    atualiza, nunca remove) — usado por chamadores que ainda não
+    conhecem o universo completo da busca. Devolve {'ok': True,
+    'total_salvo': int (linhas confirmadas AGORA), 'total_removido':
+    int (linhas que estavam confirmadas e saíram por terem sido
+    desmarcadas — sempre 0 se `universo_chaves` não for informado)} ou
+    {'erro': str}."""
     resultado = {}
     try:
         novo = linhas[["codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias"]].copy()
@@ -4521,6 +4542,7 @@ def salvar_cruzamento_confirmado(
         novo["TS"] = datetime.now().isoformat(timespec="seconds")
         novo = novo[_COLUNAS_CRUZAMENTO_CONFIRMADO]
 
+        total_removido = 0
         existente, _ = consultar_cruzamento_confirmado(limite=None)
         if not existente.empty:
             chave_nova = set(
@@ -4529,7 +4551,22 @@ def salvar_cruzamento_confirmado(
             chave_existente = list(
                 zip(existente["DESCR_ALVO"], existente["ORIGEM"], existente["codproddecl"], existente["desc_xml"])
             )
-            mascara_preservar = [chave not in chave_nova for chave in chave_existente]
+            descr_alvo_str = str(escolhido["DESCR_ALVO"])
+            if universo_chaves is not None:
+                dentro_do_universo = [
+                    da == descr_alvo_str and org == origem and (cp, dx) in universo_chaves
+                    for (da, org, cp, dx) in chave_existente
+                ]
+                # Dentro do universo desta busca: NUNCA preserva a linha antiga —
+                # se ainda estiver marcada, ela volta via `novo` (com TS fresco);
+                # se foi desmarcada, simplesmente não retorna (removida de fato).
+                mascara_preservar = [not dentro for dentro in dentro_do_universo]
+                total_removido = sum(
+                    1 for dentro, chave in zip(dentro_do_universo, chave_existente)
+                    if dentro and chave not in chave_nova
+                )
+            else:
+                mascara_preservar = [chave not in chave_nova for chave in chave_existente]
             preservar = existente[mascara_preservar]
             combinado = pd.concat([preservar, novo], ignore_index=True)
         else:
@@ -4547,6 +4584,7 @@ def salvar_cruzamento_confirmado(
             con.unregister("_df_cruzamento_confirmado")
         resultado["ok"] = True
         resultado["total_salvo"] = len(novo)
+        resultado["total_removido"] = total_removido
     except Exception as exc:
         logger.exception("Erro ao salvar cruzamento_confirmado: %s", exc)
         resultado["erro"] = str(exc)

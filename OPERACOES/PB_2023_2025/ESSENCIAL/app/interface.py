@@ -2921,20 +2921,30 @@ def _render_cruzamento_entradas_criterio1(escolhido: dict) -> None:
             key="editor_cruzamento_entradas",
         )
 
+    # Universo = TODAS as combinações mostradas nesta busca (marcadas ou
+    # não) — 2026-07-23, achado real: o auditor salvou só a combinação
+    # de 60% de similaridade, mas a tabela de IDs Únicos continuava
+    # trazendo também as duas de 11% ("SKOL BEATS..."), já confirmadas
+    # de uma sessão anterior — desmarcar o checkbox nunca removia nada,
+    # só deixava de adicionar. Passando o universo, salvar_cruzamento_
+    # confirmado() passa a SINCRONIZAR: o que está marcado AGORA vira o
+    # estado final da Rubrica pra estas combinações — desmarcar e salvar
+    # remove de fato.
+    universo_chaves = set(zip(editor_base["codproddecl"], editor_base["desc_xml"]))
     if st.button("💾 Salvar na Rubrica do Produto Alvo", key="btn_salvar_rubrica_entradas"):
         marcadas = editado["Salvar"].reindex(editor_base.index)
         selecionadas = editor_base.loc[marcadas.fillna(False), _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO]
-        if selecionadas.empty:
-            st.warning("Nenhuma linha marcada — marque ao menos uma combinação antes de salvar.")
+        resultado = loader.salvar_cruzamento_confirmado(
+            escolhido, "entradas", criterio_busca, selecionadas, universo_chaves=universo_chaves,
+        )
+        if "erro" in resultado:
+            st.error(f"Erro: {resultado['erro']}")
         else:
-            resultado = loader.salvar_cruzamento_confirmado(
-                escolhido, "entradas", criterio_busca, selecionadas,
-            )
-            if "erro" in resultado:
-                st.error(f"Erro: {resultado['erro']}")
-            else:
-                st.success(f"✅ {resultado['total_salvo']} combinação(ões) salva(s) na rubrica.")
-                st.rerun()
+            partes = [f"{resultado['total_salvo']} confirmada(s)"]
+            if resultado["total_removido"]:
+                partes.append(f"{resultado['total_removido']} removida(s)")
+            st.success(f"✅ Rubrica atualizada — {', '.join(partes)}.")
+            st.rerun()
 
     # Tabela inferior (2026-07-23, pedido do usuário: "CRIE UMA TABELA
     # INFERIOR COM OS PRODUTOS E RESPECTIVOS IDS ÚNICOS") — mesma
