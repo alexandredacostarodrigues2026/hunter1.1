@@ -4544,7 +4544,10 @@ def _normalizar_nome_para_igualdade(texto) -> str:
     return re.sub(r"\s+", " ", str(texto).strip().upper())
 
 
-CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL = "Critério de Busca2: Nome de Declaração Igual ao Alvo"
+# Rótulo renomeado 2026-07-23 (mesma sessão): "mude os nomes dos
+# criterios: ... 2-nome_prod_decl do alvo = nome_prod_decl do
+# candidato" — era "Nome de Declaração Igual ao Alvo".
+CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL = "Critério de Busca2: nome_prod_decl do alvo = nome_prod_decl do candidato"
 
 
 def cruzar_produto_escolhido_entradas_criterio2() -> "tuple[pd.DataFrame, dict | None]":
@@ -4638,7 +4641,10 @@ def cruzar_produto_escolhido_entradas_criterio2_detalhado() -> "tuple[pd.DataFra
 # Saídas com esse código, só em Estoque — possível divergência entre o
 # código "oficial" do alvo e o código usado na declaração/XML do
 # fornecedor).
-CRITERIO_BUSCA3_CODIGO_DIVERGENTE = "Critério de Busca3: Código de Produto Divergente"
+# Rótulo renomeado 2026-07-23 (mesma sessão): "mude os nomes dos
+# criterios: ... 3-sem correspondência com declaração" — era "Código de
+# Produto Divergente".
+CRITERIO_BUSCA3_CODIGO_DIVERGENTE = "Critério de Busca3: sem correspondência com declaração"
 LIMIAR_SIMILARIDADE_CRITERIO3 = 20.0
 
 
@@ -4744,7 +4750,7 @@ _COLUNAS_CRUZAMENTO_CONFIRMADO = [
     "DESCR_ALVO", "COD_ITEM", "ORIGEM", "codproddecl", "desc_xml",
     "descrição_decl", "qtde_ocorrencias", "CRITERIO", "TS",
 ]
-CRITERIO_BUSCA1_MESMO_CODIGO = "Critério de Busca1: Mesmo Código de Produto"
+CRITERIO_BUSCA1_MESMO_CODIGO = "Critério de Busca1: cod_prod_decl do alvo = cod_prod_decl do candidato"
 
 
 def salvar_cruzamento_confirmado(
