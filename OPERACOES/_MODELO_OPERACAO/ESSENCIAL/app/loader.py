@@ -9,6 +9,7 @@ seguindo o padrão público da EFD ICMS/IPI (ver GUIA PRÁTICO DA ESCRITURAÇÃO
 FISCAL DIGITAL - EFD.pdf em 2-DECLARACAO/) — vale conferência pontual contra
 o guia antes de uso em produção.
 """
+import calendar
 import hashlib
 import json
 import logging
@@ -6275,6 +6276,127 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
     except Exception:
         logger.exception("Erro ao consultar atributos de estoque por idunico em %s", _BANCO_PATH)
         return pd.DataFrame(columns=colunas)
+
+
+_COLUNAS_ATRIBUTOS_ESTOQUE_ESTOQUE_POR_IDUNICO = [
+    "ID_UNICO", "ncm4", "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod", "ano_ef", "ano_ei", "dt_decl",
+]
+
+
+def consultar_atributos_estoque_estoque_por_idunico(idunicos: "set | list") -> pd.DataFrame:
+    """Enriquecimento fiscal da tabela "Itens individuais" do Estoque
+    (Botão 9/Estágio 9) — 2026-07-25, pedido do usuário: "inclua aqui
+    os campos: ncm4|unid_prod|vl_unit_prod|qte_prod|vl_total_prod|
+    ano_ef|ano_ei|dt_decl" (mesmos nomes usados no enriquecimento de
+    Entradas/Saídas onde já existe equivalente — `qtde_prod`/`vl_prod`
+    — pra manter consistência de nomenclatura/Dicionário de Campos).
+    Mirror de consultar_atributos_estoque_por_idunico(), mas pra
+    origem="estoque": diferente das outras 2, o idunico do Estoque é
+    SINTÉTICO (hash de ANO_REFERENCIA+COD_ITEM_DECLARACAO+DESCR_ITEM_
+    DECLARACAO+QUANTIDADE_INICIAL+QUANTIDADE_FINAL, ver
+    gerar_estagio_8_estoque()) — não existe nenhuma tabela persistida
+    com esses idunicos já ligados aos atributos fiscais brutos. Recompõe
+    o hash a partir de estoque_anual_consolidado (mesmo filtro
+    QUANTIDADE_FINAL IS NOT NULL do Estágio 8.2/9) e cruza com o H010
+    bruto (load_declaracao_estoque()) + cadastro de produtos
+    (load_declaracao_produtos(), registro 0200, campo COD_NCM).
+
+    Campos, nos moldes do Excel de referência do usuário
+    (ESTOQUE(...).xlsx — colunas NCM/VlUnit/VlItem/EstFinal/EstInicial/
+    DT_DECL, ver achado de 2026-07-25 sobre a diferença 7×6 do Estágio
+    8.2):
+    - ncm4: 4 primeiros dígitos do COD_NCM (cadastro de produtos, por
+      COD_ITEM).
+    - unid_prod/vl_unit_prod/qtde_prod/vl_prod/dt_decl: vêm da MESMA
+      linha H010 que gerou QUANTIDADE_FINAL (ano da declaração ==
+      ANO_REFERENCIA) — UNID/VL_UNIT/QTD/VL_ITEM/DT_INV brutos.
+      `qtde_prod` bate com QUANTIDADE_FINAL (mesma origem/linha) —
+      mantido mesmo assim pra ficar no mesmo formato das outras 2
+      origens. Se houver mais de uma linha H010 pro mesmo (COD_ITEM,
+      ano) — achado real já documentado, 18 pares duplicados na
+      geraldo — usa a PRIMEIRA, sem desempate adicional (limite já
+      conhecido do dado, fora do escopo daqui).
+    - ano_ef: ANO_REFERENCIA (alias, nome espelhando "EstFinal" da
+      referência externa).
+    - ano_ei: ANO_REFERENCIA + 1 (mesma regra de continuidade do
+      Estágio 5 — "EstInicial" na referência externa).
+    - dt_decl: NÃO é o DT_INV bruto do H010 (data do inventário em
+      si) — achado real confirmado contra o Excel de referência do
+      usuário: DT_DECL lá bate exato com o ÚLTIMO DIA DE FEVEREIRO do
+      ano_ei (ex.: DT_INV=31/12/2019 → DT_DECL=29/02/2020, ano
+      bissexto; DT_INV=31/12/2020 → DT_DECL=28/02/2021), o prazo legal
+      de entrega do Bloco H (SPED Fiscal) do ano de referência — não
+      um campo bruto do SPED, é uma data CALCULADA (validado nos 6
+      anos do CERV SKOL LATA 350ML, todos batendo exato, inclusive os
+      2 anos bissextos).
+    Devolve DataFrame com as colunas de
+    _COLUNAS_ATRIBUTOS_ESTOQUE_ESTOQUE_POR_IDUNICO — vazio se
+    `idunicos` vazio, banco não existir, ou estoque_anual_consolidado
+    não existir."""
+    colunas = _COLUNAS_ATRIBUTOS_ESTOQUE_ESTOQUE_POR_IDUNICO
+    if not idunicos or not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas)
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estoque_anual_consolidado" not in tabelas:
+                return pd.DataFrame(columns=colunas)
+            base = con.execute(
+                "SELECT ANO_REFERENCIA, COD_ITEM_DECLARACAO, DESCR_ITEM_DECLARACAO, "
+                "QUANTIDADE_INICIAL, QUANTIDADE_FINAL FROM estoque_anual_consolidado "
+                "WHERE QUANTIDADE_FINAL IS NOT NULL"
+            ).df()
+    except Exception:
+        logger.exception("Erro ao consultar estoque_anual_consolidado em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas)
+    if base.empty:
+        return pd.DataFrame(columns=colunas)
+
+    for col in ("QUANTIDADE_INICIAL", "QUANTIDADE_FINAL"):
+        base[col] = base[col].fillna(-1)
+    base = _gerar_id_unico(base, _COLUNAS_CHAVE_ID_UNICO_ESTOQUE, nome_coluna="ID_UNICO")
+    base = base[base["ID_UNICO"].astype(str).isin({str(i) for i in idunicos})].copy()
+    if base.empty:
+        return pd.DataFrame(columns=colunas)
+    base["ano_inv"] = pd.to_numeric(base["ANO_REFERENCIA"], errors="coerce").astype("Int64")
+
+    df_est, _ = load_declaracao_estoque()
+    if not df_est.empty and "DT_INV" in df_est.columns:
+        h010 = df_est.copy()
+        ano_str = h010["DT_INV"].str[4:8]
+        h010 = h010[ano_str.str.fullmatch(r"\d{4}", na=False)].copy()
+        h010["ano_inv"] = ano_str[ano_str.str.fullmatch(r"\d{4}", na=False)].astype(int)
+        h010 = h010.drop_duplicates(subset=["COD_ITEM", "ano_inv"], keep="first")
+        base = base.merge(
+            h010[["COD_ITEM", "ano_inv", "UNID", "VL_UNIT", "QTD", "VL_ITEM", "DT_INV"]],
+            left_on=["COD_ITEM_DECLARACAO", "ano_inv"], right_on=["COD_ITEM", "ano_inv"], how="left",
+        )
+    else:
+        for col in ("UNID", "VL_UNIT", "QTD", "VL_ITEM", "DT_INV"):
+            base[col] = pd.NA
+
+    df_prod, _ = load_declaracao_produtos()
+    if not df_prod.empty and "COD_NCM" in df_prod.columns:
+        cadastro = df_prod[["COD_ITEM", "COD_NCM"]].drop_duplicates("COD_ITEM")
+        base = base.merge(
+            cadastro, left_on="COD_ITEM_DECLARACAO", right_on="COD_ITEM", how="left", suffixes=("", "_cad"),
+        )
+    else:
+        base["COD_NCM"] = pd.NA
+
+    base["ID_UNICO"] = base["ID_UNICO"].astype(str)
+    base["ncm4"] = base["COD_NCM"].astype(str).str.slice(0, 4).where(base["COD_NCM"].notna(), "")
+    base["unid_prod"] = base["UNID"]
+    base["vl_unit_prod"] = _numero_decimal_br(base["VL_UNIT"])
+    base["qtde_prod"] = _numero_decimal_br(base["QTD"])
+    base["vl_prod"] = _numero_decimal_br(base["VL_ITEM"])
+    base["ano_ef"] = base["ANO_REFERENCIA"].astype(str)
+    ano_ei_num = base["ano_inv"] + 1
+    base["ano_ei"] = ano_ei_num.astype(str)
+    base["dt_decl"] = ano_ei_num.apply(
+        lambda ano: f"{calendar.monthrange(int(ano), 2)[1]:02d}/02/{int(ano)}" if pd.notna(ano) else ""
+    )
+    return base[colunas].reset_index(drop=True)
 
 
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────

@@ -3945,7 +3945,15 @@ def _obter_criterios_cruzamento_estoque() -> dict:
 # ver gerar_estagio_8_estoque()) e não existe em nenhuma das duas tabelas
 # — não faz sentido tentar enriquecer com CHV_NFE/ANO_ELEITO/NCM/etc.,
 # que só existem pra itens de movimentação física (XML).
-_COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE = ["codproddecl", "desc_xml", "CRITERIO", "TS", "idunico"]
+# Ordem 2026-07-25 (pedido do usuário: "inclua aqui os campos: ncm4|
+# unid_prod|vl_unit_prod|qte_prod|vl_total_prod|ano_ef|ano_ei|dt_decl" —
+# nomes normalizados pros já usados em Entradas/Saídas, qtde_prod/vl_prod)
+# — enriquecimento ao vivo por idunico sintético, ver loader.consultar_
+# atributos_estoque_estoque_por_idunico().
+_COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE = [
+    "codproddecl", "desc_xml", "ncm4", "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod",
+    "ano_ef", "ano_ei", "dt_decl", "CRITERIO", "TS", "idunico",
+]
 
 
 def _render_cruzamento_estoque(escolhido: dict) -> None:
@@ -4117,6 +4125,20 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
             "clique em \"Salvar na Rubrica do Produto Alvo\" pra ver os itens individuais aqui."
         )
         return
+    # Enriquecimento fiscal (2026-07-25, pedido do usuário: "inclua aqui
+    # os campos: ncm4|unid_prod|vl_unit_prod|qte_prod|vl_total_prod|
+    # ano_ef|ano_ei|dt_decl") — busca ao vivo por idunico SINTÉTICO
+    # (recompõe o hash a partir de estoque_anual_consolidado e cruza com
+    # H010/cadastro de produtos, ver loader.consultar_atributos_estoque_
+    # estoque_por_idunico()); validado contra ESTOQUE(...).xlsx (Excel
+    # de referência do usuário) — os 6 anos do CERV SKOL LATA 350ML
+    # batem exato, inclusive dt_decl (último dia de fevereiro do ano_ei,
+    # não um campo bruto do SPED).
+    atributos_por_idunico = loader.consultar_atributos_estoque_estoque_por_idunico(set(detalhado["idunico"]))
+    detalhado = detalhado.merge(atributos_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
+    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod"):
+        if _col in detalhado.columns:
+            detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
     st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
     with st.container(key="cruzamento_estoque_detalhado_tabela"):
         st.markdown(

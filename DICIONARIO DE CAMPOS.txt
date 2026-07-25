@@ -147,3 +147,8 @@ unid_prod;Unidade do Produto
 vl_unit_prod;Valor Unitario Item
 qtde_prod;Quantidade Item
 vl_prod;Valor Total Item
+
+# Novos campos - 2026-07-25 (Botao 9 - Enriquecimento da tabela de Itens Individuais, Estoque)
+ano_ef;Ano Estoque Final
+ano_ei;Ano Estoque Inicial
+dt_decl;Data da Declaracao
