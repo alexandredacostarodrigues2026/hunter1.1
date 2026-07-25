@@ -2945,6 +2945,48 @@ def consultar_curadoria_fm(limite: "int | None" = 200) -> "tuple[pd.DataFrame, i
         return pd.DataFrame(columns=colunas), 0
 
 
+def consultar_curadoria_fm_entradas_detalhado(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Junta fm_entradas_curadoria (decisões salvas do Estágio 9) com
+    estoque_entradas pela mesma chave de agrupamento (Descrição XML +
+    Valor Unitário arredondado ao inteiro), trazendo o ID_UNICO de cada
+    item individual coberto por um grupo já salvo — 2026-07-24, pedido
+    do usuário: "tabela deve estar vinckada à tabela com id único"
+    (mesmo espírito da tabela "Itens individuais (com ID Único)" do
+    Botão 9/Rubrica do Produto Alvo). Devolve (DataFrame com colunas
+    desc_xml/idunico/FM_ELEITO/NOVA_UP, total) — vazio se
+    fm_entradas_curadoria ainda não tiver nenhuma linha salva, ou
+    estoque_entradas não existir."""
+    colunas = ["desc_xml", "idunico", "FM_ELEITO", "NOVA_UP"]
+    curadoria, _ = consultar_curadoria_fm(limite=None)
+    if curadoria.empty or not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estoque_entradas" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            con.register("_curadoria_fm_join", curadoria)
+            base_query = (
+                "SELECT e.fatoitemnfe_infnfe_det_prod_xprod AS desc_xml, "
+                "e.ID_UNICO AS idunico, c.FM_ELEITO, c.NOVA_UP "
+                "FROM estoque_entradas e "
+                "INNER JOIN _curadoria_fm_join c "
+                "ON e.fatoitemnfe_infnfe_det_prod_xprod = c.DESC_XML "
+                "AND ROUND(TRY_CAST(e.fatoitemnfe_infnfe_det_prod_vuncom AS DOUBLE), 0) = c.VALOR_UNIT_GRUPO"
+            )
+            total = con.execute(f"SELECT COUNT(*) FROM ({base_query})").fetchone()[0]
+            query = base_query
+            if limite is not None:
+                query += f" LIMIT {limite}"
+            df = con.execute(query).df()
+            con.unregister("_curadoria_fm_join")
+        df["idunico"] = df["idunico"].astype(str)
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar detalhado do Estágio 9 em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
 # ── Estágio 8.1 — Resumo de Saídas ───────────────────────────────────────────
 # Solicitação Técnica (2026-07-23): mesma mecânica do Estágio 8 (Resumo de
 # Entradas), agora sobre estoque_saidas (Estágio 4) — só 2 colunas de vínculo

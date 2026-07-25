@@ -137,3 +137,5 @@ up_xml;UP XML
 particula;Particula
 fm_sugerido;FM Sugerido
 nova_up;Nova UP
+FM_ELEITO;FM Sugerido
+NOVA_UP;Nova UP

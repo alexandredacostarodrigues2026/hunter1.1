@@ -2831,11 +2831,11 @@ def render_pagina_estagio_8() -> None:
     render_estagio_8()
 
 
-_COLUNA_CHECKBOX_FM_ENTRADAS = "Gravar"
 _CHAVE_EDITOR_FM_ENTRADAS = "editor_curadoria_fm_entradas"
 _COLUNAS_PREVIEW_FM_ENTRADAS_AGRUPADO = [
     "desc_xml", "up_xml", "particula", "fm_sugerido", "nova_up", "qtde_ocorrencias",
 ]
+_COLUNAS_PREVIEW_FM_ENTRADAS_DETALHADO = ["desc_xml", "idunico", "FM_ELEITO", "NOVA_UP"]
 
 
 def render_curadoria_fm_entradas() -> None:
@@ -2860,14 +2860,19 @@ def render_curadoria_fm_entradas() -> None:
     Sugerido" (são campos independentes).
 
     Editor único (`st.data_editor`, mesmo padrão de alta densidade do
-    Estágio 8 — fonte 10px, hide_index) com checkbox "Gravar" (sempre
-    desmarcado por padrão — mesma lição da Rubrica do Produto Alvo,
-    Botão 9, 2026-07-23: "deixe como defaut 'Salvar' desmarcado") +
-    coluna "Observação" (marca grupos já confirmados antes) + colunas
-    editáveis "FM Sugerido"/"Nova UP". Botão "Salvar" persiste em
-    fm_entradas_curadoria (loader.salvar_curadoria_fm()), mesma
-    semântica de sincronização (universo_chaves) já usada na Rubrica —
-    desmarcar e salvar remove de fato."""
+    Estágio 8 — fonte 10px, hide_index), SEM checkbox de seleção nem
+    coluna "Observação" (2026-07-24, pedido do usuário: "retire a
+    coluna 'gravar' e observação'" — diferente da Rubrica do Produto
+    Alvo, Botão 9, que exige marcar linha a linha, aqui TODA a tabela
+    fica editável e "Salvar" grava o estado atual de TODOS os grupos de
+    uma vez, edição em massa de verdade). FM Sugerido exibido sem zeros
+    à direita (2026-07-24: "transforme fm sugerido 12.000 em 12" —
+    `format="%g"`). Termina com "Itens individuais (com ID Único)"
+    (2026-07-24: "tabela deve estar vinckada à tabela com id único") —
+    junta fm_entradas_curadoria com estoque_entradas pela mesma chave
+    de agrupamento, trazendo o ID_UNICO de cada item coberto por um
+    grupo já salvo (loader.consultar_curadoria_fm_entradas_detalhado()),
+    mesmo espírito da tabela homônima do Botão 9."""
     st.subheader("Estágio 9 — Curadoria de Fator Multiplicador (Entradas)")
     st.caption(
         "Agrupa itens de Entradas (Estágio 4) por Descrição XML + Valor Unitário XML "
@@ -2875,8 +2880,8 @@ def render_curadoria_fm_entradas() -> None:
         "comercialização do fornecedor é um múltiplo da unidade de estoque da auditada. \"UP XML\" "
         "é a Unidade de Produto do XML (CX, UN, FD...); \"FM Sugerido\" vem do Fator Multiplicador "
         "já calculado no Matching (Estágio 2); \"Partícula\" é uma pista de embalagem extraída da "
-        "própria descrição (ex.: \"C/12\"); \"Nova UP\" começa como \"UNID\" (ajustável). Marque "
-        "\"Gravar\" nos grupos confirmados ou ajustados — a decisão alimenta o Estágio 15 (RN1)."
+        "própria descrição (ex.: \"C/12\"); \"Nova UP\" começa como \"UNID\" (ajustável). Ajuste os "
+        "grupos que precisar e clique em \"Salvar\" — a decisão alimenta o Estágio 15 (RN1)."
     )
 
     if "estagio9_fm_gerado" not in st.session_state:
@@ -2915,9 +2920,11 @@ def render_curadoria_fm_entradas() -> None:
 
     # Grupos já confirmados antes (fm_entradas_curadoria) — pré-popula
     # FM Sugerido/Nova UP com o valor SALVO (não o recém-sugerido, que
-    # pode ter mudado numa regeração) e marca "Observação", mesma lição
-    # da Rubrica do Produto Alvo (Botão 9): o checkbox em si NÃO
-    # pré-marca (sempre desmarcado), só a Observação sinaliza o estado.
+    # pode ter mudado numa regeração). Sem checkbox "Gravar" nem coluna
+    # "Observação" (2026-07-24, pedido do usuário: "retire a coluna
+    # 'gravar' e observação'") — toda a tabela fica sempre editável, e
+    # "Salvar" grava o estado ATUAL de todas as linhas de uma vez (edição
+    # em massa de verdade, sem passo de marcação linha a linha).
     curadoria_salva, _ = loader.consultar_curadoria_fm(limite=None)
     salvos_por_chave = {}
     if not curadoria_salva.empty:
@@ -2927,7 +2934,6 @@ def render_curadoria_fm_entradas() -> None:
 
     editor_base = agrupado[_COLUNAS_PREVIEW_FM_ENTRADAS_AGRUPADO].copy()
     editor_base.insert(0, "_valor_unit_grupo", agrupado["_valor_unit_grupo"])
-    observacoes = []
     for idx, linha in editor_base.iterrows():
         chave = (
             linha["desc_xml"],
@@ -2937,19 +2943,11 @@ def render_curadoria_fm_entradas() -> None:
         if salvo is not None:
             editor_base.at[idx, "fm_sugerido"] = salvo["FM_ELEITO"]
             editor_base.at[idx, "nova_up"] = salvo["NOVA_UP"]
-            observacoes.append("✅ Já salvo")
-        else:
-            observacoes.append("")
 
     editor_exibicao = (
         editor_base.drop(columns=["_valor_unit_grupo"]).rename(columns=loader.carregar_dicionario_campos())
     )
-    editor_exibicao.insert(0, _COLUNA_CHECKBOX_FM_ENTRADAS, False)
-    editor_exibicao.insert(1, "Observação", observacoes)
-    colunas_travadas = [
-        c for c in editor_exibicao.columns
-        if c not in (_COLUNA_CHECKBOX_FM_ENTRADAS, "FM Sugerido", "Nova UP")
-    ]
+    colunas_travadas = [c for c in editor_exibicao.columns if c not in ("FM Sugerido", "Nova UP")]
     with st.container(key="curadoria_fm_entradas_tabela"):
         st.markdown(
             "<style>.st-key-curadoria_fm_entradas_tabela [data-testid='stDataFrame'] "
@@ -2962,35 +2960,56 @@ def render_curadoria_fm_entradas() -> None:
             hide_index=True,
             disabled=colunas_travadas,
             key=_CHAVE_EDITOR_FM_ENTRADAS,
-            column_config={"FM Sugerido": st.column_config.NumberColumn(format="%.4f")},
+            # "%g" (formato geral) em vez de "%.4f" — 2026-07-24, pedido
+            # do usuário: "transforme fm sugerido 12.000 em 12" — remove
+            # zeros à direita sem esconder casas decimais quando existem
+            # de verdade (12.0 -> "12", 0.499107 -> "0.499107").
+            column_config={"FM Sugerido": st.column_config.NumberColumn(format="%g")},
         )
 
-    # Universo = TODAS as combinações mostradas nesta tela (marcadas ou
-    # não) — mesma semântica de sincronização já usada na Rubrica do
-    # Produto Alvo: desmarcar "Gravar" e salvar remove de fato.
-    universo_chaves = set(
-        zip(
+    if st.button("💾 Salvar Curadoria de Fator Multiplicador", key="btn_salvar_curadoria_fm"):
+        selecionadas = pd.DataFrame({
+            "DESC_XML": editor_base["desc_xml"],
+            "VALOR_UNIT_GRUPO": editor_base["_valor_unit_grupo"],
+            "FM_ELEITO": editado["FM Sugerido"],
+            "NOVA_UP": editado["Nova UP"],
+        })
+        universo_chaves = set(zip(
             editor_base["desc_xml"],
             editor_base["_valor_unit_grupo"].apply(lambda v: int(v) if pd.notna(v) else None),
-        )
-    )
-    if st.button("💾 Salvar Curadoria de Fator Multiplicador", key="btn_salvar_curadoria_fm"):
-        marcadas = editado[_COLUNA_CHECKBOX_FM_ENTRADAS].reindex(editor_base.index)
-        selecionadas = pd.DataFrame({
-            "DESC_XML": editor_base.loc[marcadas.fillna(False), "desc_xml"],
-            "VALOR_UNIT_GRUPO": editor_base.loc[marcadas.fillna(False), "_valor_unit_grupo"],
-            "FM_ELEITO": editado.loc[marcadas.fillna(False), "FM Sugerido"],
-            "NOVA_UP": editado.loc[marcadas.fillna(False), "Nova UP"],
-        })
+        ))
         resultado = loader.salvar_curadoria_fm(selecionadas, universo_chaves=universo_chaves)
         if "erro" in resultado:
             st.error(f"Erro: {resultado['erro']}")
         else:
-            partes = [f"{resultado['total_salvo']} confirmado(s)"]
-            if resultado["total_removido"]:
-                partes.append(f"{resultado['total_removido']} removido(s)")
-            st.success(f"✅ Curadoria atualizada — {', '.join(partes)}.")
+            st.success(f"✅ Curadoria salva — {resultado['total_salvo']} grupo(s) atualizado(s).")
             st.rerun()
+
+    # Itens individuais (com ID Único) — 2026-07-24, pedido do usuário:
+    # "tabela deve estar vinckada à tabela com id único". Junta a
+    # curadoria salva (fm_entradas_curadoria) com estoque_entradas pela
+    # mesma chave de agrupamento (Descrição XML + Valor Unitário
+    # arredondado), trazendo o ID_UNICO de cada item individual coberto
+    # por um grupo já salvo — mesmo espírito da tabela "Itens individuais
+    # (com ID Único)" do Botão 9 (Rubrica do Produto Alvo).
+    st.divider()
+    st.markdown("**Itens individuais (com ID Único)**")
+    detalhado, total_detalhado = loader.consultar_curadoria_fm_entradas_detalhado(limite=200)
+    if detalhado.empty:
+        st.info("Nenhum grupo salvo ainda — clique em \"Salvar Curadoria de Fator Multiplicador\" acima.")
+        return
+    st.markdown(f"Prévia limitada a 200 linhas de {total_detalhado:,}".replace(",", "."))
+    with st.container(key="curadoria_fm_entradas_detalhado_tabela"):
+        st.markdown(
+            "<style>.st-key-curadoria_fm_entradas_detalhado_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 12px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            _preparar_preview(detalhado, _COLUNAS_PREVIEW_FM_ENTRADAS_DETALHADO),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 def render_pagina_estagio_9() -> None:
