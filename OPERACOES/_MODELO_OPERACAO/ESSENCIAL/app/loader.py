@@ -456,10 +456,40 @@ def _classificar_itens_nfe() -> dict:
         default="",
     )
 
+    # Duplicidade cross-pasta em notas de autoemissão — achado real
+    # 2026-07-25, operação geraldo (CERV SKOL LATA 350ML, BATATA CONG TRAD
+    # COOL MIND 2KG, SOPAO COSTELA CARNE E LEGUMES 196GR, TRIDENT MINTS
+    # MORANGO 22,5G): notas de transferência entre estabelecimentos
+    # próprios do auditado (emit_cnpj==dest_cnpj==cnpj_auditada) às vezes
+    # chegam como arquivo FISICAMENTE DUPLICADO nas duas subpastas ("ET" e
+    # "EP") — o mesmo CHV_NFE+NUM_ITEM aparece 2x em `combined` (uma cópia
+    # por pasta). Como auditada_destinataria/auditada_emitente dependem só
+    # do CNPJ da nota (não de PASTA_ORIGEM), as DUAS cópias passam igual
+    # em mask_entrada_real E em mask_saida_real, duplicando o item nos
+    # dois lados — inflava estoque_saidas do CERV SKOL de 171 (controle
+    # interno do usuário) pra 173. Diferente do achado de 2026-07-17
+    # (mask_baixa_estoque_autoemissao_ep, acima) — aquele é sobre o item
+    # aparecer nos DOIS papéis (entrada E saída) ao mesmo tempo, sabidamente
+    # correto pra transferência física; este é sobre o mesmo papel aparecer
+    # DUAS VEZES só por causa da cópia extra do arquivo. ID_UNICO (hash de
+    # CHV_NFE+NUM_ITEM, calculado em `combined` sem depender de pasta) já
+    # identifica as duas cópias como o MESMO item — dedupe por ID_UNICO
+    # restrito às linhas de autoemissão (únicas onde a duplicidade
+    # cross-pasta ocorre; achado real: 0 casos fora de autoemissão).
+    mask_autoemissao_cross_pasta = auditada_destinataria & auditada_emitente
+
+    def _dedupe_autoemissao(df: pd.DataFrame) -> pd.DataFrame:
+        m = mask_autoemissao_cross_pasta.loc[df.index]
+        return pd.concat(
+            [df[~m], df[m].drop_duplicates(subset=["ID_UNICO"])]
+        ).sort_index().reset_index(drop=True)
+
     df_entradas_real = combined[mask_entrada_real].copy()
     df_entradas_real["ORIGEM_DADOS"] = "ENTRADAS_REAL"
+    df_entradas_real = _dedupe_autoemissao(df_entradas_real)
     df_saidas_real = combined[mask_saida_real].copy()
     df_saidas_real["ORIGEM_DADOS"] = "SAIDAS_REAL"
+    df_saidas_real = _dedupe_autoemissao(df_saidas_real)
 
     return {
         "entradas": df_entradas, "saidas": df_saidas,
@@ -5204,6 +5234,179 @@ def cruzar_produto_escolhido_saidas_criterio3_detalhado() -> "tuple[pd.DataFrame
     candidatos = candidatos.sort_values(
         "SIMILARIDADE_DESCRICAO", ascending=False
     )[_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO].reset_index(drop=True)
+    return candidatos, escolhido
+
+
+# ── Cruzamento do Produto Escolhido — Critérios 1 e 2 (Estoque) ──────────
+# Solicitação Técnica (2026-07-25): "BUSCA DE CORRESPONDENTES NO ESTOQUE
+# (BOTÃO 9)" — replica a mecânica de Entradas pro Estoque (Bloco H,
+# Estágio 8.2), sobre estagio8_estoque_agrupado/estagio8_estoque_detalhado
+# em vez de estagio8_agrupado/estagio8_detalhado. Critério 1 (mesmo
+# código) + Critério 2 (nome de declaração igual ao alvo) — mesmos dois
+# critérios de Entradas, SEM o Critério 3 (código divergente): não pedido
+# na Solicitação Técnica. Diferença estrutural: estagio8_estoque_agrupado/
+# _detalhado não tem `desc_xml` (o Bloco H só declara UMA descrição por
+# item, `descrição_decl` — não existe uma "descrição do XML" separada da
+# declaração, diferente de Entradas/Saídas). `desc_xml` é preenchido AQUI
+# como alias de `descrição_decl` (mesmo valor nas duas colunas) só pra
+# caber no mesmo esquema de persistência de cruzamento_confirmado/
+# cruzamento_confirmado_detalhado (chave codproddecl+desc_xml) sem exigir
+# nenhuma mudança em salvar_cruzamento_confirmado()/_detalhado() — ambas
+# continuam funcionando sem saber que a origem é Estoque.
+_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO = ["codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias", "SIMILARIDADE_DESCRICAO"]
+_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO = ["codproddecl", "desc_xml", "descrição_decl", "idunico", "SIMILARIDADE_DESCRICAO"]
+
+
+def cruzar_produto_escolhido_estoque() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 1 (Estoque): mesma lógica de
+    cruzar_produto_escolhido_entradas(), mas contra estagio8_estoque_
+    agrupado — MESMO código de produto (normalizado via
+    _normalizar_cod_item_flexivel()). `SIMILARIDADE_DESCRICAO` calculada
+    entre `descrição_decl` (única descrição disponível no Bloco H) e
+    `DESCR_ALVO` — diferente de Entradas/Saídas, que comparam `desc_xml`
+    (não existe aqui). Exclusão cross-alvo com `origem="estoque"` (ver
+    _chaves_ja_atribuidas_a_outro_alvo()). Devolve (DataFrame, dict do
+    produto escolhido) — mesmas regras de vazio/None do Critério 1 de
+    Entradas."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), None
+    agrupado, _ = consultar_estagio8_estoque_agrupado(limite=None)
+    if agrupado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
+    agrupado = agrupado.copy()
+    agrupado["desc_xml"] = agrupado["descrição_decl"]
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    codigos_normalizados = _normalizar_cod_item_flexivel(agrupado["codproddecl"])
+    correspondentes = agrupado[codigos_normalizados == cod_item_normalizado].copy()
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "estoque")
+    if chaves_bloqueadas:
+        correspondentes = correspondentes[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(correspondentes["codproddecl"], correspondentes["desc_xml"])]
+        ]
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["descrição_decl"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    correspondentes = correspondentes.sort_values(
+        ["SIMILARIDADE_DESCRICAO", "qtde_ocorrencias"], ascending=[False, False]
+    )[_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO].reset_index(drop=True)
+    return correspondentes, escolhido
+
+
+def cruzar_produto_escolhido_estoque_detalhado() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 1 (Estoque) — tabela DETALHADA, mesma lógica de
+    cruzar_produto_escolhido_estoque(), mas contra estagio8_estoque_
+    detalhado (uma linha por item, com o idunico SINTÉTICO do Estágio
+    8.2 — hash de ANO_REFERENCIA+COD_ITEM_DECLARACAO+DESCR_ITEM_
+    DECLARACAO+QUANTIDADE_INICIAL+QUANTIDADE_FINAL, preservado pra
+    auditoria física futura). Mesmas regras de vazio/None."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), None
+    detalhado, _ = consultar_estagio8_estoque_detalhado(limite=None)
+    if detalhado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
+    detalhado = detalhado.copy()
+    detalhado["desc_xml"] = detalhado["descrição_decl"]
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    codigos_normalizados = _normalizar_cod_item_flexivel(detalhado["codproddecl"])
+    correspondentes = detalhado[codigos_normalizados == cod_item_normalizado].copy()
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "estoque")
+    if chaves_bloqueadas:
+        correspondentes = correspondentes[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(correspondentes["codproddecl"], correspondentes["desc_xml"])]
+        ]
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["descrição_decl"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    correspondentes = correspondentes.sort_values(
+        "SIMILARIDADE_DESCRICAO", ascending=False
+    )[_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO].reset_index(drop=True)
+    return correspondentes, escolhido
+
+
+def cruzar_produto_escolhido_estoque_criterio2() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 2 (Estoque): mesma lógica de
+    cruzar_produto_escolhido_entradas_criterio2() — candidatos cujo
+    `descrição_decl` é IGUAL (normalizado, ver
+    _normalizar_nome_para_igualdade()) ao `DESCR_ALVO` do produto
+    escolhido, sem exigir relação de código. `SIMILARIDADE_DESCRICAO`
+    (entre `descrição_decl` e `DESCR_ALVO`) usada só pra ORDENAR. Mesma
+    exclusão cross-alvo com `origem="estoque"`. Devolve (DataFrame, dict
+    do produto escolhido) — mesmas regras de vazio/None do Critério 2 de
+    Entradas."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), None
+    agrupado, _ = consultar_estagio8_estoque_agrupado(limite=None)
+    if agrupado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
+    agrupado = agrupado.copy()
+    agrupado["desc_xml"] = agrupado["descrição_decl"]
+    nome_alvo_normalizado = _normalizar_nome_para_igualdade(escolhido["DESCR_ALVO"])
+    nomes_decl_normalizados = agrupado["descrição_decl"].apply(_normalizar_nome_para_igualdade)
+    candidatos = agrupado[nomes_decl_normalizados == nome_alvo_normalizado].copy()
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "estoque")
+    if chaves_bloqueadas:
+        candidatos = candidatos[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(candidatos["codproddecl"], candidatos["desc_xml"])]
+        ]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["descrição_decl"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    candidatos = candidatos.sort_values(
+        ["SIMILARIDADE_DESCRICAO", "qtde_ocorrencias"], ascending=[False, False]
+    )[_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO].reset_index(drop=True)
+    return candidatos, escolhido
+
+
+def cruzar_produto_escolhido_estoque_criterio2_detalhado() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 2 (Estoque) — tabela DETALHADA, mesma lógica de
+    cruzar_produto_escolhido_estoque_criterio2(), mas contra
+    estagio8_estoque_detalhado (uma linha por item, idunico sintético).
+    Mesmas regras de vazio/None."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), None
+    detalhado, _ = consultar_estagio8_estoque_detalhado(limite=None)
+    if detalhado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
+    detalhado = detalhado.copy()
+    detalhado["desc_xml"] = detalhado["descrição_decl"]
+    nome_alvo_normalizado = _normalizar_nome_para_igualdade(escolhido["DESCR_ALVO"])
+    nomes_decl_normalizados = detalhado["descrição_decl"].apply(_normalizar_nome_para_igualdade)
+    candidatos = detalhado[nomes_decl_normalizados == nome_alvo_normalizado].copy()
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "estoque")
+    if chaves_bloqueadas:
+        candidatos = candidatos[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(candidatos["codproddecl"], candidatos["desc_xml"])]
+        ]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["descrição_decl"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    candidatos = candidatos.sort_values(
+        "SIMILARIDADE_DESCRICAO", ascending=False
+    )[_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO].reset_index(drop=True)
     return candidatos, escolhido
 
 

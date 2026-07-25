@@ -2577,6 +2577,19 @@ _COLUNAS_PREVIEW_CRUZAMENTO_SAIDAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_A
 _COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_DETALHADO = ["codproddecl", "descrição_decl", "idunico"]
 _COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_AGRUPADO = ["codproddecl", "descrição_decl", "qtde_ocorrencias"]
 
+# Estoque (2026-07-25, Solicitação Técnica "BUSCA DE CORRESPONDENTES NO
+# ESTOQUE") — mesma ideia do cruzamento de Entradas/Saídas, mas sobre
+# estagio8_estoque_agrupado (Estágio 8.2, Bloco H). Só Critério 1 (mesmo
+# código) e Critério 2 (nome de declaração igual), sem Critério 3 (não
+# pedido na Solicitação Técnica). `desc_xml` não aparece na EXIBIÇÃO —
+# Estoque só tem "descrição_decl" (ver loader._COLUNAS_CRUZAMENTO_
+# ESTOQUE_AGRUPADO); `desc_xml` existe só internamente, como alias de
+# descrição_decl, pra caber no mesmo esquema de persistência de
+# cruzamento_confirmado usado por Entradas/Saídas, sem exigir mudança
+# nenhuma em salvar_cruzamento_confirmado()/_detalhado().
+_COLUNAS_BASE_CRUZAMENTO_ESTOQUE_AGRUPADO = ["codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias"]
+_COLUNAS_PREVIEW_CRUZAMENTO_ESTOQUE_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
+
 
 def _render_bloco_estagio8(
     *,
@@ -3594,6 +3607,216 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
         )
 
 
+def _obter_criterios_cruzamento_estoque() -> dict:
+    """Mapa criterio -> (fn_agrupado, fn_detalhado) usado pelo selectbox de
+    _render_cruzamento_estoque() — mirror de _obter_criterios_cruzamento_
+    entradas() (2026-07-25, Solicitação Técnica "BUSCA DE CORRESPONDENTES
+    NO ESTOQUE"), com Critério 1 (mesmo código) e Critério 2 (nome de
+    declaração igual) — mesmos dois critérios de Entradas. SEM Critério 3
+    (código divergente): não pedido na Solicitação Técnica."""
+    return {
+        loader.CRITERIO_BUSCA1_MESMO_CODIGO: (
+            loader.cruzar_produto_escolhido_estoque,
+            loader.cruzar_produto_escolhido_estoque_detalhado,
+        ),
+        loader.CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL: (
+            loader.cruzar_produto_escolhido_estoque_criterio2,
+            loader.cruzar_produto_escolhido_estoque_criterio2_detalhado,
+        ),
+    }
+
+
+# "Itens individuais" do Estoque não passa pelo enriquecimento fiscal
+# (loader.consultar_atributos_estoque_por_idunico()) — esse enriquecimento
+# busca em estoque_entradas/estoque_saidas por ID_UNICO real de item de
+# XML; o idunico do Estoque é SINTÉTICO (hash de ANO_REFERENCIA+COD_ITEM_
+# DECLARACAO+DESCR_ITEM_DECLARACAO+QUANTIDADE_INICIAL+QUANTIDADE_FINAL,
+# ver gerar_estagio_8_estoque()) e não existe em nenhuma das duas tabelas
+# — não faz sentido tentar enriquecer com CHV_NFE/ANO_ELEITO/NCM/etc.,
+# que só existem pra itens de movimentação física (XML).
+_COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE = ["codproddecl", "desc_xml", "CRITERIO", "TS", "idunico"]
+
+
+def _render_cruzamento_estoque(escolhido: dict) -> None:
+    """Aba 'Estoque' do cruzamento (Botão 9) — mirror de
+    _render_cruzamento_entradas(), 2026-07-25, Solicitação Técnica "BUSCA
+    DE CORRESPONDENTES NO ESTOQUE": compara o produto escolhido com
+    estagio8_estoque_agrupado (Estágio 8.2, Bloco H) usando o critério
+    selecionado no selectbox.
+
+    Dois critérios (sem Critério 3 — ver
+    _obter_criterios_cruzamento_estoque()):
+
+    **Critério 1** (loader.cruzar_produto_escolhido_estoque()) — MESMO
+    código de produto (normalizado) + SIMILARIDADE_DESCRICAO (entre
+    `descrição_decl` — única descrição disponível no Bloco H — e
+    `DESCR_ALVO`) só pra ordenar.
+
+    **Critério 2** (loader.cruzar_produto_escolhido_estoque_criterio2())
+    — `descrição_decl` IGUAL (normalizado) ao `DESCR_ALVO`, sem exigir
+    relação de código — captura itens que a empresa declara com o nome
+    correto mas com código interno que não bate com as notas fiscais
+    (comum em cadastros legados, conforme a Solicitação Técnica).
+
+    Mesma UI de Entradas/Saídas: checkbox "Salvar"/"Desfazer", botão
+    "Salvar na Rubrica" (persiste com origem="estoque" em
+    loader.salvar_cruzamento_confirmado()/salvar_cruzamento_confirmado_
+    detalhado(), preservando o idunico SINTÉTICO do Estágio 8.2 pra
+    auditoria física futura) e tabela "Itens individuais" ao final —
+    aqui SEM o enriquecimento fiscal (não se aplica ao idunico
+    sintético, ver _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_
+    ESTOQUE). Todas as keys de widget/container levam sufixo "_estoque"
+    pra não colidir com as abas de Entradas/Saídas — as três abas de
+    st.tabs() rodam no MESMO script run do Streamlit."""
+    criterios = _obter_criterios_cruzamento_estoque()
+    criterio_busca = st.selectbox(
+        "Critério de busca",
+        options=list(criterios.keys()),
+        key="select_criterio_busca_estoque",
+    )
+    fn_agrupado, fn_detalhado = criterios[criterio_busca]
+
+    if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
+        st.caption(
+            f"Combinações em `estagio8_estoque_agrupado` (Estoque, Estágio 8.2) com o MESMO código de produto "
+            f"de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — comparação normalizada "
+            "(zero à esquerda em código numérico não conta como diferença) — ordenadas por "
+            "similaridade de descrição (overlap de tokens) entre a descrição declarada e a do alvo."
+        )
+    else:
+        st.caption(
+            f"Combinações em `estagio8_estoque_agrupado` (Estoque, Estágio 8.2) cujo nome de declaração "
+            f"(`descrição_decl`) é IGUAL (normalizado — maiúsculas/espaços) ao de **{escolhido['DESCR_ALVO']}** "
+            f"({escolhido['COD_ITEM']}), sem exigir nenhuma relação de código — captura itens com nome "
+            "correto mas código interno divergente (comum em cadastros legados)."
+        )
+
+    correspondentes, _ = fn_agrupado()
+    if correspondentes.empty:
+        if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
+            st.warning(
+                f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
+                "em `estagio8_estoque_agrupado`, mesmo após normalizar zero à esquerda."
+            )
+        else:
+            st.warning(
+                f"⚠️ Nenhum item declarado com o mesmo nome de **{escolhido['DESCR_ALVO']}** encontrado "
+                "em `estagio8_estoque_agrupado`."
+            )
+        return
+    st.success(
+        f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
+    )
+
+    ja_confirmadas, _ = loader.consultar_cruzamento_confirmado(descr_alvo=escolhido["DESCR_ALVO"], limite=None)
+    ja_confirmadas_estoque = (
+        ja_confirmadas[ja_confirmadas["ORIGEM"] == "estoque"] if not ja_confirmadas.empty
+        else ja_confirmadas
+    )
+    chaves_confirmadas = set(
+        zip(ja_confirmadas_estoque["codproddecl"], ja_confirmadas_estoque["desc_xml"])
+    ) if not ja_confirmadas_estoque.empty else set()
+
+    editor_base = correspondentes[_COLUNAS_BASE_CRUZAMENTO_ESTOQUE_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]].copy()
+    editor_base.insert(0, "Salvar", False)
+    editor_base.insert(1, "Desfazer", False)
+    editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
+    # "desc_xml" não aparece na EXIBIÇÃO (Estoque só tem "descrição_decl",
+    # desc_xml é só um alias interno pro esquema de persistência — ver
+    # loader._COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO).
+    editor_exibicao = editor_exibicao.drop(columns=["Descricao XML"], errors="ignore")
+    editor_exibicao.insert(2, "Observação", [
+        "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
+        for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
+    ])
+    colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
+    sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
+    with st.container(key="cruzamento_estoque_tabela"):
+        st.markdown(
+            "<style>.st-key-cruzamento_estoque_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 10px; }</style>",
+            unsafe_allow_html=True,
+        )
+        editado = st.data_editor(
+            editor_exibicao,
+            use_container_width=True,
+            hide_index=True,
+            disabled=colunas_travadas,
+            key=f"editor_cruzamento_estoque_{sufixo_criterio}",
+        )
+
+    st.caption(
+        "Marque \"Salvar\" pra confirmar uma combinação na Rubrica; marque \"Desfazer\" pra "
+        "remover uma combinação já salva (coluna \"Observação\")."
+    )
+    if st.button("💾 Salvar na Rubrica do Produto Alvo", key=f"btn_salvar_rubrica_estoque_{sufixo_criterio}"):
+        marcadas_salvar = editado["Salvar"].reindex(editor_base.index).fillna(False)
+        marcadas_desfazer = editado["Desfazer"].reindex(editor_base.index).fillna(False)
+        selecionadas = editor_base.loc[
+            marcadas_salvar & ~marcadas_desfazer, _COLUNAS_BASE_CRUZAMENTO_ESTOQUE_AGRUPADO
+        ]
+        chaves_desfazer = set(zip(
+            editor_base.loc[marcadas_desfazer, "codproddecl"],
+            editor_base.loc[marcadas_desfazer, "desc_xml"],
+        ))
+        chaves_salvar = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
+        universo_chaves = chaves_salvar | chaves_desfazer
+        resultado = loader.salvar_cruzamento_confirmado(
+            escolhido, "estoque", criterio_busca, selecionadas, universo_chaves=universo_chaves,
+        )
+        detalhado_completo, _ = fn_detalhado()
+        mask_universo = [
+            (c, d) in universo_chaves
+            for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
+        ]
+        universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
+        mask_salvar = [
+            (c, d) in chaves_salvar
+            for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
+        ]
+        itens_marcados = detalhado_completo.loc[mask_salvar, ["codproddecl", "desc_xml", "idunico"]]
+        resultado_detalhado = loader.salvar_cruzamento_confirmado_detalhado(
+            escolhido, "estoque", criterio_busca, itens_marcados, universo_idunicos=universo_idunicos,
+        )
+        if "erro" in resultado:
+            st.error(f"Erro: {resultado['erro']}")
+        elif "erro" in resultado_detalhado:
+            st.error(f"Erro ao gravar itens individuais: {resultado_detalhado['erro']}")
+        else:
+            partes = [f"{resultado['total_salvo']} confirmada(s)"]
+            if resultado["total_removido"]:
+                partes.append(f"{resultado['total_removido']} removida(s)")
+            st.success(
+                f"✅ Rubrica atualizada — {', '.join(partes)} "
+                f"({resultado_detalhado['total_salvo']} item(ns) individual(is) gravado(s))."
+            )
+            st.rerun()
+
+    st.divider()
+    st.markdown("**Itens individuais (com ID Único) — já atribuídos ao alvo**")
+    detalhado, total_detalhado = loader.consultar_cruzamento_confirmado_detalhado(
+        descr_alvo=escolhido["DESCR_ALVO"], origem="estoque", limite=None,
+    )
+    if detalhado.empty:
+        st.info(
+            "Nenhuma combinação confirmada na Rubrica ainda — marque \"Salvar\" na tabela acima e "
+            "clique em \"Salvar na Rubrica do Produto Alvo\" pra ver os itens individuais aqui."
+        )
+        return
+    st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
+    with st.container(key="cruzamento_estoque_detalhado_tabela"):
+        st.markdown(
+            "<style>.st-key-cruzamento_estoque_detalhado_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 12px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            _preparar_preview(detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
 _COLUNAS_PRODUTOS_ALVO_SALVOS = ["DESCR_ALVO", "COD_ITEM"]
 _COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS = "🎯 Escolher p/ Cruzamento"
 
@@ -3692,9 +3915,13 @@ def render_produtos_alvo_salvos() -> None:
     if not escolhido_atual:
         st.info("Escolha um produto acima pra ver o cruzamento com o Estágio 8.")
     else:
-        aba_cruzamento_entradas, aba_cruzamento_saidas = st.tabs(["📥 Entradas", "📤 Saídas"])
+        aba_cruzamento_entradas, aba_cruzamento_saidas, aba_cruzamento_estoque = st.tabs(
+            ["📥 Entradas", "📤 Saídas", "📦 Estoque"]
+        )
         with aba_cruzamento_entradas:
             _render_cruzamento_entradas(escolhido_atual)
+        with aba_cruzamento_estoque:
+            _render_cruzamento_estoque(escolhido_atual)
         with aba_cruzamento_saidas:
             _render_cruzamento_saidas(escolhido_atual)
 
