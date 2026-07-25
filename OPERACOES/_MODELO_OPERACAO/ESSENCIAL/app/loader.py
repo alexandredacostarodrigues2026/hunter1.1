@@ -3258,7 +3258,23 @@ def gerar_estagio_8_estoque() -> dict:
     "agrupado" por (codproddecl, descrição_decl), dropna=False. Devolve
     {'detalhado': DataFrame, 'agrupado': DataFrame, 'erros': list} —
     erros não-vazio quando estoque_anual_consolidado (Estágio 5) ainda
-    não foi gerada."""
+    não foi gerada.
+
+    Exclui linhas com QUANTIDADE_FINAL NULL (achado real 2026-07-25,
+    usuário confirmando contra ESTOQUE(...).xlsx — o mesmo Excel de
+    referência do achado de 2026-07-17, ver montar_estoque_anual_
+    consolidado()): a regra de continuidade do Estágio 5 sempre
+    materializa uma linha adicional de QUANTIDADE_INICIAL pro ano
+    SEGUINTE ao último inventário declarado (ex.: inventário de
+    31/12/2024 vira EF(2024) E EI(2025), mesmo sem nenhum inventário de
+    encerramento de 2025 ainda existir) — essa linha final, sem
+    QUANTIDADE_FINAL, representa um ano AINDA NÃO FECHADO. O Excel de
+    referência do usuário só lista anos com fechamento (EstFinal)
+    efetivamente declarado — pra CERV SKOL LATA 350ML, 6 anos
+    (2019-2024) no Excel contra 7 (2019-2025) sem este filtro, a 7ª
+    sendo exatamente esse saldo inicial em aberto (QI=9, sem QF).
+    Mesmo critério prático da Auditoria de Divergência de Estoque
+    (que já restringe ao Período de Auditoria configurado)."""
     vazio = {
         "detalhado": pd.DataFrame(columns=_COLUNAS_ESTAGIO8_ESTOQUE_DETALHADO),
         "agrupado": pd.DataFrame(columns=_COLUNAS_ESTAGIO8_ESTOQUE_AGRUPADO),
@@ -3272,7 +3288,8 @@ def gerar_estagio_8_estoque() -> dict:
                 return {**vazio, "erros": ["Tabela estoque_anual_consolidado (Estágio 5) ainda não foi gerada."]}
             base = con.execute(
                 "SELECT ANO_REFERENCIA, COD_ITEM_DECLARACAO, DESCR_ITEM_DECLARACAO, "
-                "QUANTIDADE_INICIAL, QUANTIDADE_FINAL FROM estoque_anual_consolidado"
+                "QUANTIDADE_INICIAL, QUANTIDADE_FINAL FROM estoque_anual_consolidado "
+                "WHERE QUANTIDADE_FINAL IS NOT NULL"
             ).df()
     except Exception:
         logger.exception("Erro ao gerar Estágio 8.2 (Resumo de Estoques) em %s", _BANCO_PATH)
