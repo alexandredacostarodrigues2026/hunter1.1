@@ -2553,9 +2553,12 @@ _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_AGRUPA
 # (2026-07-23: "traga tb a chave de acesso"; 2026-07-25, Solicitação Técnica
 # "ENRIQUECIMENTO DA TABELA DE ITENS INDIVIDUAIS": os 6 campos fiscais), nada
 # persistido — enriquecimento só na exibição.
+# Ordem 2026-07-25 (pedido do usuário: "coloque chave após valor total
+# do item e id único na ultima coluna"): CHV_NFE logo após vl_prod;
+# idunico vira a ÚLTIMA coluna (depois até de CRITERIO/TS).
 _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO = [
-    "codproddecl", "desc_xml", "idunico", "CHV_NFE", "ANO_ELEITO", "ncm4",
-    "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod", "CRITERIO", "TS",
+    "codproddecl", "desc_xml", "ANO_ELEITO", "ncm4", "unid_prod",
+    "vl_unit_prod", "qtde_prod", "vl_prod", "CHV_NFE", "CRITERIO", "TS", "idunico",
 ]
 
 
