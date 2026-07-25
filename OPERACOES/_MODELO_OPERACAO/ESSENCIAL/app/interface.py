@@ -3056,6 +3056,37 @@ def render_pagina_estagio_9() -> None:
     render_curadoria_fm_entradas()
 
 
+def _ampliar_universo_idunicos_com_persistido(
+    escolhido: dict, origem: str, universo_chaves: set, universo_idunicos: set,
+) -> set:
+    """Amplia `universo_idunicos` (calculado a partir da busca AO VIVO,
+    `fn_detalhado()`) com qualquer idunico JÁ PERSISTIDO em
+    cruzamento_confirmado_detalhado pras mesmas `universo_chaves`
+    (codproddecl, desc_xml), mesmo que esse idunico não apareça mais na
+    busca atual — achado real 2026-07-25: um item confirmado na Rubrica
+    do Estoque (idunico de um ano "ainda não fechado") ficou ÓRFÃO depois
+    que o filtro de QUANTIDADE_FINAL do Estágio 8.2 passou a excluir
+    aquele ano da busca — o usuário marcou "Desfazer" na combinação
+    inteira, mas o idunico órfão nunca aparecia mais em `fn_detalhado()`,
+    então nunca entrava no `universo_idunicos` calculado só a partir da
+    busca ao vivo, e a linha ficava PRA SEMPRE travada em
+    cruzamento_confirmado_detalhado, inalcançável pelo Desfazer normal.
+    Sem essa ampliação, qualquer mudança futura na fonte (Estágio 4/5/8,
+    regeneração de dados) que remova um idunico anteriormente confirmado
+    pode orfanizar aquela confirmação da mesma forma — a ampliação evita
+    isso em qualquer origem (entradas/saídas/estoque)."""
+    ja_persistido, _ = loader.consultar_cruzamento_confirmado_detalhado(
+        descr_alvo=escolhido["DESCR_ALVO"], origem=origem, limite=None,
+    )
+    if ja_persistido.empty:
+        return universo_idunicos
+    mask_persistido = [
+        (c, d) in universo_chaves
+        for c, d in zip(ja_persistido["codproddecl"], ja_persistido["desc_xml"])
+    ]
+    return universo_idunicos | set(ja_persistido.loc[mask_persistido, "idunico"])
+
+
 def _obter_criterios_cruzamento_entradas() -> dict:
     """Mapa criterio -> (fn_agrupado, fn_detalhado) usado pelo selectbox
     de _render_cruzamento_entradas(). Construído em função (não no
@@ -3333,6 +3364,9 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
             for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
         ]
         universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
+        universo_idunicos = _ampliar_universo_idunicos_com_persistido(
+            escolhido, "entradas", universo_chaves, universo_idunicos,
+        )
         mask_salvar = [
             (c, d) in chaves_salvar
             for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
@@ -3551,6 +3585,9 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
             for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
         ]
         universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
+        universo_idunicos = _ampliar_universo_idunicos_com_persistido(
+            escolhido, "saidas", universo_chaves, universo_idunicos,
+        )
         mask_salvar = [
             (c, d) in chaves_salvar
             for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
@@ -3770,6 +3807,9 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
             for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
         ]
         universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
+        universo_idunicos = _ampliar_universo_idunicos_com_persistido(
+            escolhido, "estoque", universo_chaves, universo_idunicos,
+        )
         mask_salvar = [
             (c, d) in chaves_salvar
             for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
