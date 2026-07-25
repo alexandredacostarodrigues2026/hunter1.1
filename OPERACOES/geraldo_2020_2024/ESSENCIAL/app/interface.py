@@ -3042,18 +3042,292 @@ def render_curadoria_fm_entradas() -> None:
         )
 
 
+_CHAVE_EDITOR_FM_SAIDAS = "editor_curadoria_fm_saidas"
+_COLUNAS_PREVIEW_FM_SAIDAS_AGRUPADO = [
+    "desc_xml", "up_xml", "particula", "fm_sugerido", "nova_up", "qtde_ocorrencias",
+]
+_COLUNAS_PREVIEW_FM_SAIDAS_DETALHADO = ["desc_xml", "idunico", "FM_ELEITO", "NOVA_UP"]
+
+
+def render_curadoria_fm_saidas() -> None:
+    """Estágio 9 — Curadoria de Fator Multiplicador (Saídas), 2026-07-25,
+    Solicitação Técnica "crie tb fator para descrição de saídas e
+    estoques nos moldes das entradas" — mirror de
+    render_curadoria_fm_entradas(), mesmo agrupamento (Descrição XML +
+    Valor Unitário XML arredondado) sobre estoque_saidas (Estágio 4).
+    `fm_sugerido` fica NULL na quase totalidade dos grupos (achado
+    real: só 0,3% de estoque_saidas tem FATOR_MULTIPLICADOR_SUGERIDO —
+    Matching/BC3 só cobre Entradas), mantida mesmo assim por decisão
+    explícita do usuário — o auditor digita o FM_ELEITO manualmente."""
+    st.subheader("Estágio 9 — Curadoria de Fator Multiplicador (Saídas)")
+    st.caption(
+        "Agrupa itens de Saídas (Estágio 4) por Descrição XML + Valor Unitário XML "
+        "(arredondado, só como chave interna). \"UP XML\" é a Unidade de Produto do XML "
+        "(CX, UN, FD...); \"FM Sugerido\" vem do Fator Multiplicador do Matching (Estágio 2), mas "
+        "cobre só ~0,3% dos itens de Saídas (o Matching só liga Entradas de terceiros) — na maioria "
+        "das linhas o auditor digita o FM_ELEITO do zero; \"Partícula\" é uma pista de embalagem "
+        "extraída da própria descrição; \"Nova UP\" começa como \"UNID\" (ajustável)."
+    )
+
+    if "estagio9_fm_saidas_gerado" not in st.session_state:
+        st.session_state["estagio9_fm_saidas_gerado"] = loader.curadoria_fm_saidas_ja_gerado()
+
+    if st.session_state["estagio9_fm_saidas_gerado"]:
+        clicou = st.button(
+            "Regerar Estágio 9 — Curadoria de Fator Multiplicador (Saídas)",
+            key="btn_regerar_estagio9_fm_saidas",
+            help="Reprocessa a partir de estoque_saidas (Estágio 4) e substitui a tabela agrupada.",
+        )
+    else:
+        clicou = st.button(
+            "Gerar Estágio 9 — Curadoria de Fator Multiplicador (Saídas)", key="btn_gerar_estagio9_fm_saidas",
+        )
+
+    if clicou:
+        with st.spinner("Processando estoque_saidas (agrupando por Descrição XML + Valor Unitário)..."):
+            resultado = loader.persistir_curadoria_fm_saidas()
+        if resultado.get("erros"):
+            st.error(resultado["erros"][0])
+            return
+        st.session_state["estagio9_fm_saidas_gerado"] = True
+        st.session_state.pop(_CHAVE_EDITOR_FM_SAIDAS, None)
+        st.rerun()
+
+    if not st.session_state["estagio9_fm_saidas_gerado"]:
+        return
+
+    agrupado, total = loader.consultar_curadoria_fm_saidas_agrupado(limite=None)
+    if agrupado.empty:
+        st.info("Nenhum grupo encontrado.")
+        return
+    st.markdown(f"**{total:,} grupo(s)** de Descrição XML + Valor Unitário.".replace(",", "."))
+
+    curadoria_salva, _ = loader.consultar_curadoria_fm_saidas(limite=None)
+    salvos_por_chave = {}
+    if not curadoria_salva.empty:
+        for _, linha in curadoria_salva.iterrows():
+            if pd.notna(linha["VALOR_UNIT_GRUPO"]):
+                salvos_por_chave[(linha["DESC_XML"], int(linha["VALOR_UNIT_GRUPO"]))] = linha
+
+    editor_base = agrupado[_COLUNAS_PREVIEW_FM_SAIDAS_AGRUPADO].copy()
+    editor_base.insert(0, "_valor_unit_grupo", agrupado["_valor_unit_grupo"])
+    for idx, linha in editor_base.iterrows():
+        chave = (
+            linha["desc_xml"],
+            int(linha["_valor_unit_grupo"]) if pd.notna(linha["_valor_unit_grupo"]) else None,
+        )
+        salvo = salvos_por_chave.get(chave)
+        if salvo is not None:
+            editor_base.at[idx, "fm_sugerido"] = salvo["FM_ELEITO"]
+            editor_base.at[idx, "nova_up"] = salvo["NOVA_UP"]
+
+    editor_exibicao = (
+        editor_base.drop(columns=["_valor_unit_grupo"]).rename(columns=loader.carregar_dicionario_campos())
+    )
+    colunas_travadas = [c for c in editor_exibicao.columns if c not in ("FM Sugerido", "Nova UP")]
+    with st.container(key="curadoria_fm_saidas_tabela"):
+        st.markdown(
+            "<style>.st-key-curadoria_fm_saidas_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 10px; }</style>",
+            unsafe_allow_html=True,
+        )
+        editado = st.data_editor(
+            editor_exibicao,
+            use_container_width=True,
+            hide_index=True,
+            disabled=colunas_travadas,
+            key=_CHAVE_EDITOR_FM_SAIDAS,
+            column_config={"FM Sugerido": st.column_config.NumberColumn(format="%g")},
+        )
+
+    if st.button("💾 Salvar Curadoria de Fator Multiplicador", key="btn_salvar_curadoria_fm_saidas"):
+        selecionadas = pd.DataFrame({
+            "DESC_XML": editor_base["desc_xml"],
+            "VALOR_UNIT_GRUPO": editor_base["_valor_unit_grupo"],
+            "FM_ELEITO": editado["FM Sugerido"],
+            "NOVA_UP": editado["Nova UP"],
+        })
+        universo_chaves = set(zip(
+            editor_base["desc_xml"],
+            editor_base["_valor_unit_grupo"].apply(lambda v: int(v) if pd.notna(v) else None),
+        ))
+        resultado = loader.salvar_curadoria_fm_saidas(selecionadas, universo_chaves=universo_chaves)
+        if "erro" in resultado:
+            st.error(f"Erro: {resultado['erro']}")
+        else:
+            st.success(f"✅ Curadoria salva — {resultado['total_salvo']} grupo(s) atualizado(s).")
+            st.rerun()
+
+    st.divider()
+    st.markdown("**Itens individuais (com ID Único)**")
+    detalhado, total_detalhado = loader.consultar_curadoria_fm_saidas_detalhado(limite=200)
+    if detalhado.empty:
+        st.info("Nenhum grupo salvo ainda — clique em \"Salvar Curadoria de Fator Multiplicador\" acima.")
+        return
+    st.markdown(f"Prévia limitada a 200 linhas de {total_detalhado:,}".replace(",", "."))
+    with st.container(key="curadoria_fm_saidas_detalhado_tabela"):
+        st.markdown(
+            "<style>.st-key-curadoria_fm_saidas_detalhado_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 12px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            _preparar_preview(detalhado, _COLUNAS_PREVIEW_FM_SAIDAS_DETALHADO),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+_CHAVE_EDITOR_FM_ESTOQUE = "editor_curadoria_fm_estoque"
+_COLUNAS_PREVIEW_FM_ESTOQUE_AGRUPADO = ["descrição_decl", "up_estoque", "particula", "nova_up", "qtde_ocorrencias"]
+_COLUNAS_PREVIEW_FM_ESTOQUE_DETALHADO = ["descrição_decl", "idunico", "FM_ELEITO", "NOVA_UP"]
+
+
+def render_curadoria_fm_estoque() -> None:
+    """Estágio 9 — Curadoria de Fator Multiplicador (Estoque), 2026-07-25,
+    Solicitação Técnica — mirror de render_curadoria_fm_entradas(), mas
+    sobre estoque_anual_consolidado (Bloco H, Estágio 5). Diferença
+    estrutural real confirmada com o usuário ANTES de implementar: essa
+    tabela não tem valor unitário nem UCOM — agrupa só por Descrição
+    Declarada (sem "_valor_unit_grupo"); "UP Estoque" vem da MODA do
+    campo UNIDADE (único campo de unidade do Bloco H); SEM "FM
+    Sugerido" pré-calculado (Bloco H não tem ligação com Matching/BC3)
+    — o auditor digita o "FM Eleito" do zero, coluna em branco por
+    padrão (só populada de novo quando já houver curadoria salva)."""
+    st.subheader("Estágio 9 — Curadoria de Fator Multiplicador (Estoque)")
+    st.caption(
+        "Agrupa itens de Estoque (Estágio 5, Bloco H) por Descrição Declarada — sem valor "
+        "unitário (o Bloco H não declara valor por item, só quantidade por ano). \"UP Estoque\" "
+        "é a Unidade declarada no Bloco H (moda do grupo); \"FM Eleito\" fica em branco por "
+        "padrão (Bloco H não tem ligação com Matching/BC3) — o auditor digita manualmente; "
+        "\"Partícula\" é uma pista de embalagem extraída da própria descrição; \"Nova UP\" "
+        "começa como \"UNID\" (ajustável)."
+    )
+
+    if "estagio9_fm_estoque_gerado" not in st.session_state:
+        st.session_state["estagio9_fm_estoque_gerado"] = loader.curadoria_fm_estoque_ja_gerado()
+
+    if st.session_state["estagio9_fm_estoque_gerado"]:
+        clicou = st.button(
+            "Regerar Estágio 9 — Curadoria de Fator Multiplicador (Estoque)",
+            key="btn_regerar_estagio9_fm_estoque",
+            help="Reprocessa a partir de estoque_anual_consolidado (Estágio 5) e substitui a tabela agrupada.",
+        )
+    else:
+        clicou = st.button(
+            "Gerar Estágio 9 — Curadoria de Fator Multiplicador (Estoque)", key="btn_gerar_estagio9_fm_estoque",
+        )
+
+    if clicou:
+        with st.spinner("Processando estoque_anual_consolidado (agrupando por Descrição Declarada)..."):
+            resultado = loader.persistir_curadoria_fm_estoque()
+        if resultado.get("erros"):
+            st.error(resultado["erros"][0])
+            return
+        st.session_state["estagio9_fm_estoque_gerado"] = True
+        st.session_state.pop(_CHAVE_EDITOR_FM_ESTOQUE, None)
+        st.rerun()
+
+    if not st.session_state["estagio9_fm_estoque_gerado"]:
+        return
+
+    agrupado, total = loader.consultar_curadoria_fm_estoque_agrupado(limite=None)
+    if agrupado.empty:
+        st.info("Nenhum grupo encontrado.")
+        return
+    st.markdown(f"**{total:,} grupo(s)** de Descrição Declarada.".replace(",", "."))
+
+    curadoria_salva, _ = loader.consultar_curadoria_fm_estoque(limite=None)
+    salvos_por_chave = {}
+    if not curadoria_salva.empty:
+        for _, linha in curadoria_salva.iterrows():
+            salvos_por_chave[linha["DESCR_ITEM_DECL"]] = linha
+
+    editor_base = agrupado[_COLUNAS_PREVIEW_FM_ESTOQUE_AGRUPADO].copy()
+    # "fm_eleito" não vem de estagio9_fm_estoque_agrupado (não existe
+    # fm_sugerido no Bloco H) — coluna editável em branco, só populada
+    # de volta quando já houver curadoria salva pra essa descrição.
+    editor_base.insert(
+        editor_base.columns.get_loc("nova_up"), "fm_eleito",
+        pd.array([pd.NA] * len(editor_base), dtype="Float64"),
+    )
+    for idx, linha in editor_base.iterrows():
+        salvo = salvos_por_chave.get(linha["descrição_decl"])
+        if salvo is not None:
+            editor_base.at[idx, "fm_eleito"] = salvo["FM_ELEITO"]
+            editor_base.at[idx, "nova_up"] = salvo["NOVA_UP"]
+
+    editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
+    colunas_travadas = [c for c in editor_exibicao.columns if c not in ("FM Eleito", "Nova UP")]
+    with st.container(key="curadoria_fm_estoque_tabela"):
+        st.markdown(
+            "<style>.st-key-curadoria_fm_estoque_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 10px; }</style>",
+            unsafe_allow_html=True,
+        )
+        editado = st.data_editor(
+            editor_exibicao,
+            use_container_width=True,
+            hide_index=True,
+            disabled=colunas_travadas,
+            key=_CHAVE_EDITOR_FM_ESTOQUE,
+            column_config={"FM Eleito": st.column_config.NumberColumn(format="%g")},
+        )
+
+    if st.button("💾 Salvar Curadoria de Fator Multiplicador", key="btn_salvar_curadoria_fm_estoque"):
+        selecionadas = pd.DataFrame({
+            "DESCR_ITEM_DECL": editor_base["descrição_decl"],
+            "FM_ELEITO": editado["FM Eleito"],
+            "NOVA_UP": editado["Nova UP"],
+        })
+        universo_chaves = set(editor_base["descrição_decl"])
+        resultado = loader.salvar_curadoria_fm_estoque(selecionadas, universo_chaves=universo_chaves)
+        if "erro" in resultado:
+            st.error(f"Erro: {resultado['erro']}")
+        else:
+            st.success(f"✅ Curadoria salva — {resultado['total_salvo']} grupo(s) atualizado(s).")
+            st.rerun()
+
+    st.divider()
+    st.markdown("**Itens individuais (com ID Único)**")
+    detalhado, total_detalhado = loader.consultar_curadoria_fm_estoque_detalhado(limite=200)
+    if detalhado.empty:
+        st.info("Nenhum grupo salvo ainda — clique em \"Salvar Curadoria de Fator Multiplicador\" acima.")
+        return
+    st.markdown(f"Prévia limitada a 200 linhas de {total_detalhado:,}".replace(",", "."))
+    with st.container(key="curadoria_fm_estoque_detalhado_tabela"):
+        st.markdown(
+            "<style>.st-key-curadoria_fm_estoque_detalhado_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 12px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            _preparar_preview(detalhado, _COLUNAS_PREVIEW_FM_ESTOQUE_DETALHADO),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
 def render_pagina_estagio_9() -> None:
-    """Painel 'ESTÁGIO 9: FATOR MULTIPLICADOR (ENTRADAS)' (2026-07-24,
-    Solicitação Técnica), botão da 2ª linha do Menu Principal: ver
-    loader.gerar_curadoria_fm_entradas()/render_curadoria_fm_entradas().
-    Exige dados_carregados (mesmo padrão das outras páginas); depende
-    também de estoque_entradas (Estágio 4) já gerada, checado dentro de
-    render_curadoria_fm_entradas()."""
+    """Painel 'ESTÁGIO 9: FATOR MULTIPLICADOR' (2026-07-24, Solicitação
+    Técnica original — só Entradas; expandido 2026-07-25 pra Saídas e
+    Estoque, "nos moldes das entradas"), botão da 2ª linha do Menu
+    Principal: 3 abas, mesmo padrão de nível superior do Estágio 8
+    ("📥 Entradas"/"📤 Saídas"/"📦 Estoque"). Exige dados_carregados
+    (mesmo padrão das outras páginas); cada aba checa sua própria
+    tabela de origem (estoque_entradas/estoque_saidas/estoque_anual_
+    consolidado) dentro da respectiva render_curadoria_fm_*()."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
-    render_curadoria_fm_entradas()
+    aba_entradas, aba_saidas, aba_estoque = st.tabs(["📥 Entradas", "📤 Saídas", "📦 Estoque"])
+    with aba_entradas:
+        render_curadoria_fm_entradas()
+    with aba_saidas:
+        render_curadoria_fm_saidas()
+    with aba_estoque:
+        render_curadoria_fm_estoque()
 
 
 def _ampliar_universo_idunicos_com_persistido(

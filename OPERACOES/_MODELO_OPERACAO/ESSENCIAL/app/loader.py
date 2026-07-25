@@ -3017,6 +3017,497 @@ def consultar_curadoria_fm_entradas_detalhado(limite: "int | None" = 200) -> "tu
         return pd.DataFrame(columns=colunas), 0
 
 
+# ── Estágio 9 — Curadoria de Fator Multiplicador (Saídas) ────────────────
+# Solicitação Técnica (2026-07-25): "crie tb fator para descrição de saídas e
+# estoques nos moldes das entradas" — mirror de gerar_curadoria_fm_entradas()
+# sobre estoque_saidas (Estágio 4). Mesma chave de agrupamento (Descrição XML
+# + Valor Unitário XML arredondado ao inteiro — `_valor_unit_grupo`, chave
+# interna) e mesmos campos calculados (up_xml=moda(ucom), particula,
+# fm_sugerido=moda(FATOR_MULTIPLICADOR_SUGERIDO), nova_up=NOVA_UP_PADRAO).
+# Diferença real confirmada com o usuário ANTES de implementar: `FATOR_
+# MULTIPLICADOR_SUGERIDO` só é calculado pelo Matching/BC3 (Estágio 2), que
+# só cobre ENTRADAS de terceiros — em `estoque_saidas` só 153 de 60.382
+# linhas (0,3%) têm esse campo preenchido (achado real na geraldo).
+# Confirmado explicitamente: mantém a coluna "fm_sugerido" mesmo quase
+# sempre vazia — o auditor ainda digita o FM_ELEITO manualmente, mesmos
+# moldes de Entradas, só que quase sem sugestão pronta.
+_COLUNAS_FM_SAIDAS_AGRUPADO = [
+    "desc_xml", "_valor_unit_grupo", "up_xml", "particula", "fm_sugerido", "nova_up", "qtde_ocorrencias",
+]
+
+
+def gerar_curadoria_fm_saidas() -> dict:
+    """Estágio 9 — Curadoria de Fator Multiplicador (Saídas): mirror de
+    gerar_curadoria_fm_entradas(), mesma lógica de agrupamento e campos
+    calculados, mas sobre estoque_saidas (Estágio 4) em vez de
+    estoque_entradas. `fm_sugerido` fica NULL na quase totalidade dos
+    grupos (achado real: só 0,3% das linhas de estoque_saidas têm
+    FATOR_MULTIPLICADOR_SUGERIDO — Matching/BC3 só cobre Entradas de
+    terceiros), mantida mesmo assim por decisão explícita do usuário —
+    o auditor digita o FM_ELEITO manualmente na curadoria, sem depender
+    de sugestão pronta. Devolve {'agrupado': DataFrame, 'erros': list}
+    — erros não-vazio quando estoque_saidas (Estágio 4) ainda não foi
+    gerada."""
+    vazio = {"agrupado": pd.DataFrame(columns=_COLUNAS_FM_SAIDAS_AGRUPADO)}
+    if not _BANCO_PATH.exists():
+        return {**vazio, "erros": ["Tabela estoque_saidas (Estágio 4) ainda não foi gerada."]}
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estoque_saidas" not in tabelas:
+                return {**vazio, "erros": ["Tabela estoque_saidas (Estágio 4) ainda não foi gerada."]}
+            bruto = con.execute(
+                "SELECT fatoitemnfe_infnfe_det_prod_xprod AS desc_xml, "
+                "TRY_CAST(fatoitemnfe_infnfe_det_prod_vuncom AS DOUBLE) AS valor_unit_bruto, "
+                "fatoitemnfe_infnfe_det_prod_ucom AS ucom, "
+                "FATOR_MULTIPLICADOR_SUGERIDO AS fm_item, "
+                "ID_UNICO AS idunico "
+                "FROM estoque_saidas"
+            ).df()
+    except Exception:
+        logger.exception("Erro ao gerar Estágio 9 (Curadoria de Fator Multiplicador, Saídas) em %s", _BANCO_PATH)
+        return {**vazio, "erros": ["Erro ao processar estoque_saidas — ver log."]}
+
+    bruto["_valor_unit_grupo"] = bruto["valor_unit_bruto"].round(0)
+
+    def _moda_ou_none(serie: pd.Series):
+        s = serie.dropna()
+        return s.mode().iloc[0] if not s.empty else pd.NA
+
+    agrupado = (
+        bruto.groupby(["desc_xml", "_valor_unit_grupo"], as_index=False, dropna=False)
+        .agg(
+            up_xml=("ucom", _moda_ou_none),
+            fm_sugerido=("fm_item", _moda_ou_none),
+            qtde_ocorrencias=("idunico", "count"),
+        )
+    )
+    agrupado["particula"] = agrupado["desc_xml"].apply(_extrair_particula_fm)
+    agrupado["nova_up"] = NOVA_UP_PADRAO
+    agrupado = (
+        agrupado.sort_values("qtde_ocorrencias", ascending=False)[_COLUNAS_FM_SAIDAS_AGRUPADO]
+        .reset_index(drop=True)
+    )
+    return {"agrupado": agrupado, "erros": []}
+
+
+def persistir_curadoria_fm_saidas(callback=None) -> dict:
+    """Estágio 9 (Saídas): persiste estagio9_fm_saidas_agrupado no
+    DuckDB, ver gerar_curadoria_fm_saidas(). callback(etapa, n) chamado
+    ao final."""
+    resultado = gerar_curadoria_fm_saidas()
+    if resultado["erros"]:
+        return resultado
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with duckdb.connect(str(_BANCO_PATH)) as con:
+        con.register("_df_estagio9_fm_saidas_agrupado", resultado["agrupado"])
+        con.execute(
+            "CREATE OR REPLACE TABLE estagio9_fm_saidas_agrupado AS SELECT * FROM _df_estagio9_fm_saidas_agrupado"
+        )
+        con.unregister("_df_estagio9_fm_saidas_agrupado")
+    if callback:
+        callback("agrupado", len(resultado["agrupado"]))
+    return resultado
+
+
+def curadoria_fm_saidas_ja_gerado() -> bool:
+    """True se estagio9_fm_saidas_agrupado já foi persistida."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+        return "estagio9_fm_saidas_agrupado" in tabelas
+    except Exception:
+        return False
+
+
+def consultar_curadoria_fm_saidas_agrupado(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê estagio9_fm_saidas_agrupado já persistida (sem reprocessar),
+    ordenada por qtde_ocorrencias decrescente. limite=None devolve
+    tudo."""
+    colunas = _COLUNAS_FM_SAIDAS_AGRUPADO
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estagio9_fm_saidas_agrupado" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            total = con.execute("SELECT COUNT(*) FROM estagio9_fm_saidas_agrupado").fetchone()[0]
+            query = "SELECT * FROM estagio9_fm_saidas_agrupado ORDER BY qtde_ocorrencias DESC"
+            if limite is not None:
+                query += f" LIMIT {limite}"
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar estagio9_fm_saidas_agrupado em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
+_COLUNAS_FM_SAIDAS_CURADORIA = ["DESC_XML", "VALOR_UNIT_GRUPO", "FM_ELEITO", "NOVA_UP", "TS"]
+
+
+def salvar_curadoria_fm_saidas(selecionadas: pd.DataFrame, universo_chaves: "set | None" = None) -> dict:
+    """Persiste em fm_saidas_curadoria as decisões do auditor sobre o
+    Fator Multiplicador de grupos de Saídas (Estágio 9) — mirror de
+    salvar_curadoria_fm(), mesma semântica de sincronização
+    (`universo_chaves`). Devolve {'ok': True, 'total_salvo': int,
+    'total_removido': int} ou {'erro': str}."""
+    resultado = {}
+    try:
+        novo = selecionadas[["DESC_XML", "VALOR_UNIT_GRUPO", "FM_ELEITO", "NOVA_UP"]].copy()
+        novo["DESC_XML"] = novo["DESC_XML"].astype(str)
+        novo["NOVA_UP"] = novo["NOVA_UP"].astype(str)
+        novo["VALOR_UNIT_GRUPO"] = pd.to_numeric(novo["VALOR_UNIT_GRUPO"], errors="coerce").astype("Int64")
+        novo["TS"] = datetime.now().isoformat(timespec="seconds")
+        novo = novo[_COLUNAS_FM_SAIDAS_CURADORIA]
+
+        total_removido = 0
+        existente, _ = consultar_curadoria_fm_saidas(limite=None)
+        if not existente.empty:
+            chave_nova = set(zip(novo["DESC_XML"], novo["VALOR_UNIT_GRUPO"]))
+            chave_existente = list(zip(existente["DESC_XML"], existente["VALOR_UNIT_GRUPO"]))
+            if universo_chaves is not None:
+                dentro_do_universo = [chave in universo_chaves for chave in chave_existente]
+                mascara_preservar = [not dentro for dentro in dentro_do_universo]
+                total_removido = sum(
+                    1 for dentro, chave in zip(dentro_do_universo, chave_existente)
+                    if dentro and chave not in chave_nova
+                )
+            else:
+                mascara_preservar = [chave not in chave_nova for chave in chave_existente]
+            preservar = existente[mascara_preservar]
+            combinado = pd.concat([preservar, novo], ignore_index=True)
+        else:
+            combinado = novo
+
+        combinado = combinado.drop_duplicates(subset=["DESC_XML", "VALOR_UNIT_GRUPO"])
+        combinado = combinado[_COLUNAS_FM_SAIDAS_CURADORIA].reset_index(drop=True)
+
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            con.register("_df_fm_saidas_curadoria", combinado)
+            con.execute(
+                "CREATE OR REPLACE TABLE fm_saidas_curadoria AS SELECT * FROM _df_fm_saidas_curadoria"
+            )
+            con.unregister("_df_fm_saidas_curadoria")
+        resultado["ok"] = True
+        resultado["total_salvo"] = len(novo)
+        resultado["total_removido"] = total_removido
+    except Exception as exc:
+        logger.exception("Erro ao salvar fm_saidas_curadoria: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def consultar_curadoria_fm_saidas(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê fm_saidas_curadoria já persistida (sem reprocessar).
+    limite=None devolve tudo."""
+    colunas = _COLUNAS_FM_SAIDAS_CURADORIA
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "fm_saidas_curadoria" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            total = con.execute("SELECT COUNT(*) FROM fm_saidas_curadoria").fetchone()[0]
+            query = "SELECT * FROM fm_saidas_curadoria"
+            if limite is not None:
+                query += f" LIMIT {limite}"
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar fm_saidas_curadoria em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
+def consultar_curadoria_fm_saidas_detalhado(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Junta fm_saidas_curadoria (decisões salvas do Estágio 9, Saídas)
+    com estoque_saidas pela mesma chave de agrupamento (Descrição XML +
+    Valor Unitário arredondado ao inteiro), trazendo o ID_UNICO de cada
+    item individual coberto por um grupo já salvo — mirror de
+    consultar_curadoria_fm_entradas_detalhado(). Devolve (DataFrame com
+    colunas desc_xml/idunico/FM_ELEITO/NOVA_UP, total) — vazio se
+    fm_saidas_curadoria ainda não tiver nenhuma linha salva, ou
+    estoque_saidas não existir."""
+    colunas = ["desc_xml", "idunico", "FM_ELEITO", "NOVA_UP"]
+    curadoria, _ = consultar_curadoria_fm_saidas(limite=None)
+    if curadoria.empty or not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estoque_saidas" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            con.register("_curadoria_fm_saidas_join", curadoria)
+            base_query = (
+                "SELECT e.fatoitemnfe_infnfe_det_prod_xprod AS desc_xml, "
+                "e.ID_UNICO AS idunico, c.FM_ELEITO, c.NOVA_UP "
+                "FROM estoque_saidas e "
+                "INNER JOIN _curadoria_fm_saidas_join c "
+                "ON e.fatoitemnfe_infnfe_det_prod_xprod = c.DESC_XML "
+                "AND ROUND(TRY_CAST(e.fatoitemnfe_infnfe_det_prod_vuncom AS DOUBLE), 0) = c.VALOR_UNIT_GRUPO"
+            )
+            total = con.execute(f"SELECT COUNT(*) FROM ({base_query})").fetchone()[0]
+            query = base_query
+            if limite is not None:
+                query += f" LIMIT {limite}"
+            df = con.execute(query).df()
+            con.unregister("_curadoria_fm_saidas_join")
+        df["idunico"] = df["idunico"].astype(str)
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar detalhado do Estágio 9 (Saídas) em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
+# ── Estágio 9 — Curadoria de Fator Multiplicador (Estoque) ───────────────
+# Solicitação Técnica (2026-07-25): mesmo pedido acima, agora sobre
+# estoque_anual_consolidado (Bloco H, Estágio 5). Diferença estrutural real
+# confirmada com o usuário ANTES de implementar: essa tabela não tem valor
+# unitário nem UCOM (schema: ANO_REFERENCIA, COD_ITEM_DECLARACAO,
+# DESCR_ITEM_DECLARACAO, UNIDADE, QUANTIDADE_INICIAL, QUANTIDADE_FINAL) — não
+# dá pra agrupar por (descrição + valor unitário) como em Entradas/Saídas.
+# Confirmado explicitamente: agrupa só por DESCR_ITEM_DECLARACAO; "up_estoque"
+# vem da MODA do campo UNIDADE (único campo de unidade que o Bloco H tem,
+# pode variar de grafia entre anos do mesmo item); SEM fm_sugerido (Bloco H
+# não tem nenhuma ligação com Matching/BC3 — o auditor digita o FM_ELEITO do
+# zero, sem sugestão nenhuma, diferente até de Saídas que ao menos tem 0,3%
+# de cobertura). Fonte de `idunico` no detalhado: reaproveita
+# estagio8_estoque_detalhado (já filtrado por QUANTIDADE_FINAL IS NOT NULL,
+# ver gerar_estagio_8_estoque()) em vez de recalcular o hash sintético aqui.
+_COLUNAS_FM_ESTOQUE_AGRUPADO = ["descrição_decl", "up_estoque", "particula", "nova_up", "qtde_ocorrencias"]
+
+
+def gerar_curadoria_fm_estoque() -> dict:
+    """Estágio 9 — Curadoria de Fator Multiplicador (Estoque): agrupa
+    estoque_anual_consolidado (Estágio 5) só por DESCR_ITEM_DECLARACAO
+    (sem valor unitário, que não existe no Bloco H — ver nota acima).
+    Campos calculados por grupo:
+    - up_estoque: MODA do campo UNIDADE (único campo de unidade
+      disponível no Bloco H) dentro do grupo.
+    - particula: extraída via _extrair_particula_fm() da descrição.
+    - nova_up: valor PADRÃO NOVA_UP_PADRAO ("UNID"), mesmo raciocínio
+      de Entradas/Saídas.
+    - qtde_ocorrencias: contagem de linhas (ANO_REFERENCIA) no grupo.
+    SEM fm_sugerido: Bloco H não tem ligação nenhuma com Matching/BC3.
+    Exclui linhas com QUANTIDADE_FINAL NULL (mesmo filtro de
+    gerar_estagio_8_estoque(), achado real 2026-07-25 — ano ainda não
+    fechado, saldo inicial carregado do último inventário mas sem
+    encerramento declarado; sem o filtro aqui, `qtde_ocorrencias`
+    ficaria inconsistente com o Estágio 8.2/Botão 9, ex.: CERV SKOL
+    LATA 350ML mostraria 7 aqui contra 6 nos outros dois). Devolve
+    {'agrupado': DataFrame, 'erros': list} — erros não-vazio quando
+    estoque_anual_consolidado (Estágio 5) ainda não foi gerada."""
+    vazio = {"agrupado": pd.DataFrame(columns=_COLUNAS_FM_ESTOQUE_AGRUPADO)}
+    if not _BANCO_PATH.exists():
+        return {**vazio, "erros": ["Tabela estoque_anual_consolidado (Estágio 5) ainda não foi gerada."]}
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estoque_anual_consolidado" not in tabelas:
+                return {**vazio, "erros": ["Tabela estoque_anual_consolidado (Estágio 5) ainda não foi gerada."]}
+            bruto = con.execute(
+                "SELECT DESCR_ITEM_DECLARACAO AS descrição_decl, UNIDADE AS unidade "
+                "FROM estoque_anual_consolidado WHERE QUANTIDADE_FINAL IS NOT NULL"
+            ).df()
+    except Exception:
+        logger.exception("Erro ao gerar Estágio 9 (Curadoria de Fator Multiplicador, Estoque) em %s", _BANCO_PATH)
+        return {**vazio, "erros": ["Erro ao processar estoque_anual_consolidado — ver log."]}
+
+    def _moda_ou_none(serie: pd.Series):
+        s = serie.dropna()
+        return s.mode().iloc[0] if not s.empty else pd.NA
+
+    agrupado = (
+        bruto.groupby(["descrição_decl"], as_index=False, dropna=False)
+        .agg(
+            up_estoque=("unidade", _moda_ou_none),
+            qtde_ocorrencias=("unidade", "size"),
+        )
+    )
+    agrupado["particula"] = agrupado["descrição_decl"].apply(_extrair_particula_fm)
+    agrupado["nova_up"] = NOVA_UP_PADRAO
+    agrupado = (
+        agrupado.sort_values("qtde_ocorrencias", ascending=False)[_COLUNAS_FM_ESTOQUE_AGRUPADO]
+        .reset_index(drop=True)
+    )
+    return {"agrupado": agrupado, "erros": []}
+
+
+def persistir_curadoria_fm_estoque(callback=None) -> dict:
+    """Estágio 9 (Estoque): persiste estagio9_fm_estoque_agrupado no
+    DuckDB, ver gerar_curadoria_fm_estoque(). callback(etapa, n)
+    chamado ao final."""
+    resultado = gerar_curadoria_fm_estoque()
+    if resultado["erros"]:
+        return resultado
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with duckdb.connect(str(_BANCO_PATH)) as con:
+        con.register("_df_estagio9_fm_estoque_agrupado", resultado["agrupado"])
+        con.execute(
+            "CREATE OR REPLACE TABLE estagio9_fm_estoque_agrupado AS SELECT * FROM _df_estagio9_fm_estoque_agrupado"
+        )
+        con.unregister("_df_estagio9_fm_estoque_agrupado")
+    if callback:
+        callback("agrupado", len(resultado["agrupado"]))
+    return resultado
+
+
+def curadoria_fm_estoque_ja_gerado() -> bool:
+    """True se estagio9_fm_estoque_agrupado já foi persistida."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+        return "estagio9_fm_estoque_agrupado" in tabelas
+    except Exception:
+        return False
+
+
+def consultar_curadoria_fm_estoque_agrupado(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê estagio9_fm_estoque_agrupado já persistida (sem
+    reprocessar), ordenada por qtde_ocorrencias decrescente. limite=None
+    devolve tudo."""
+    colunas = _COLUNAS_FM_ESTOQUE_AGRUPADO
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estagio9_fm_estoque_agrupado" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            total = con.execute("SELECT COUNT(*) FROM estagio9_fm_estoque_agrupado").fetchone()[0]
+            query = "SELECT * FROM estagio9_fm_estoque_agrupado ORDER BY qtde_ocorrencias DESC"
+            if limite is not None:
+                query += f" LIMIT {limite}"
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar estagio9_fm_estoque_agrupado em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
+_COLUNAS_FM_ESTOQUE_CURADORIA = ["DESCR_ITEM_DECL", "FM_ELEITO", "NOVA_UP", "TS"]
+
+
+def salvar_curadoria_fm_estoque(selecionadas: pd.DataFrame, universo_chaves: "set | None" = None) -> dict:
+    """Persiste em fm_estoque_curadoria as decisões do auditor sobre o
+    Fator Multiplicador de grupos de Estoque (Estágio 9) — mirror de
+    salvar_curadoria_fm(), mesma semântica de sincronização
+    (`universo_chaves`), mas chave de agrupamento é só
+    DESCR_ITEM_DECL (sem valor unitário, que não existe no Bloco H).
+    Devolve {'ok': True, 'total_salvo': int, 'total_removido': int} ou
+    {'erro': str}."""
+    resultado = {}
+    try:
+        novo = selecionadas[["DESCR_ITEM_DECL", "FM_ELEITO", "NOVA_UP"]].copy()
+        novo["DESCR_ITEM_DECL"] = novo["DESCR_ITEM_DECL"].astype(str)
+        novo["NOVA_UP"] = novo["NOVA_UP"].astype(str)
+        novo["TS"] = datetime.now().isoformat(timespec="seconds")
+        novo = novo[_COLUNAS_FM_ESTOQUE_CURADORIA]
+
+        total_removido = 0
+        existente, _ = consultar_curadoria_fm_estoque(limite=None)
+        if not existente.empty:
+            chave_nova = set(novo["DESCR_ITEM_DECL"])
+            chave_existente = list(existente["DESCR_ITEM_DECL"])
+            if universo_chaves is not None:
+                dentro_do_universo = [chave in universo_chaves for chave in chave_existente]
+                mascara_preservar = [not dentro for dentro in dentro_do_universo]
+                total_removido = sum(
+                    1 for dentro, chave in zip(dentro_do_universo, chave_existente)
+                    if dentro and chave not in chave_nova
+                )
+            else:
+                mascara_preservar = [chave not in chave_nova for chave in chave_existente]
+            preservar = existente[mascara_preservar]
+            combinado = pd.concat([preservar, novo], ignore_index=True)
+        else:
+            combinado = novo
+
+        combinado = combinado.drop_duplicates(subset=["DESCR_ITEM_DECL"])
+        combinado = combinado[_COLUNAS_FM_ESTOQUE_CURADORIA].reset_index(drop=True)
+
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            con.register("_df_fm_estoque_curadoria", combinado)
+            con.execute(
+                "CREATE OR REPLACE TABLE fm_estoque_curadoria AS SELECT * FROM _df_fm_estoque_curadoria"
+            )
+            con.unregister("_df_fm_estoque_curadoria")
+        resultado["ok"] = True
+        resultado["total_salvo"] = len(novo)
+        resultado["total_removido"] = total_removido
+    except Exception as exc:
+        logger.exception("Erro ao salvar fm_estoque_curadoria: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def consultar_curadoria_fm_estoque(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê fm_estoque_curadoria já persistida (sem reprocessar).
+    limite=None devolve tudo."""
+    colunas = _COLUNAS_FM_ESTOQUE_CURADORIA
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "fm_estoque_curadoria" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            total = con.execute("SELECT COUNT(*) FROM fm_estoque_curadoria").fetchone()[0]
+            query = "SELECT * FROM fm_estoque_curadoria"
+            if limite is not None:
+                query += f" LIMIT {limite}"
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar fm_estoque_curadoria em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
+def consultar_curadoria_fm_estoque_detalhado(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Junta fm_estoque_curadoria (decisões salvas do Estágio 9,
+    Estoque) com estagio8_estoque_detalhado (já filtrado por
+    QUANTIDADE_FINAL IS NOT NULL, ver gerar_estagio_8_estoque()) pela
+    descrição declarada, trazendo o idunico SINTÉTICO de cada item
+    individual coberto por um grupo já salvo. Devolve (DataFrame com
+    colunas descrição_decl/idunico/FM_ELEITO/NOVA_UP, total) — vazio se
+    fm_estoque_curadoria ainda não tiver nenhuma linha salva, ou
+    estagio8_estoque_detalhado não existir."""
+    colunas = ["descrição_decl", "idunico", "FM_ELEITO", "NOVA_UP"]
+    curadoria, _ = consultar_curadoria_fm_estoque(limite=None)
+    if curadoria.empty or not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estagio8_estoque_detalhado" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            con.register("_curadoria_fm_estoque_join", curadoria)
+            base_query = (
+                "SELECT e.descrição_decl, e.idunico, c.FM_ELEITO, c.NOVA_UP "
+                "FROM estagio8_estoque_detalhado e "
+                "INNER JOIN _curadoria_fm_estoque_join c "
+                "ON e.descrição_decl = c.DESCR_ITEM_DECL"
+            )
+            total = con.execute(f"SELECT COUNT(*) FROM ({base_query})").fetchone()[0]
+            query = base_query
+            if limite is not None:
+                query += f" LIMIT {limite}"
+            df = con.execute(query).df()
+            con.unregister("_curadoria_fm_estoque_join")
+        df["idunico"] = df["idunico"].astype(str)
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar detalhado do Estágio 9 (Estoque) em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
 # ── Estágio 8.1 — Resumo de Saídas ───────────────────────────────────────────
 # Solicitação Técnica (2026-07-23): mesma mecânica do Estágio 8 (Resumo de
 # Entradas), agora sobre estoque_saidas (Estágio 4) — só 2 colunas de vínculo
