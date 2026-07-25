@@ -3097,16 +3097,25 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     "Salvar" (2026-07-23: "CRIE CAIXA PARA GRAVAR O PRODUTO QUE FARÁ
     PARTE DA RUBRICA DO PRODUTO ALVO" — rótulo encurtado de "Selecionar
     p/ Rubrica" pra "Salvar" na mesma sessão, sempre começa DESMARCADO
-    — "deixe como defaut 'Salvar' desmarcado") + coluna "Observação"
+    — "deixe como defaut 'Salvar' desmarcado") + checkbox "Desfazer"
+    (2026-07-24: "aqui abrir a oportunidade de desfazer" — ação
+    dedicada e EXPLÍCITA pra remover uma combinação já salva, separada
+    de "Salvar"; antes, remover dependia de deixar "Salvar" desmarcado
+    numa linha já confirmada — funcionava via sincronização, mas não
+    era uma ação visível/deliberada na tela) + coluna "Observação"
     (2026-07-23: "cravar uma observação" pro que já foi salvo) + botão
     "Salvar na Rubrica", persistindo em loader.salvar_cruzamento_
     confirmado() (agregado) e loader.salvar_cruzamento_confirmado_
     detalhado() (item-a-item, idunico — 2026-07-23: "é importante que
-    os produtos com ids fiquem gravado no produto alvo"). Termina com a
-    tabela "Itens individuais (com ID Único)" — lê direto de
-    cruzamento_confirmado_detalhado (persistido, cumulativo entre
-    critérios — cresce conforme o auditor confirma mais combinações,
-    de qualquer critério), não recalculada ao vivo.
+    os produtos com ids fiquem gravado no produto alvo") — universo de
+    sincronização restrito às combinações efetivamente marcadas
+    (Salvar OU Desfazer), não mais TODAS as linhas da busca, evitando
+    remover por engano uma combinação já salva mas simplesmente não
+    tocada nesta rodada. Termina com a tabela "Itens individuais (com
+    ID Único)" — lê direto de cruzamento_confirmado_detalhado
+    (persistido, cumulativo entre critérios — cresce conforme o
+    auditor confirma mais combinações, de qualquer critério), não
+    recalculada ao vivo.
 
     Selectbox "Critério de busca" (2026-07-23: "escolha do critério
     dever ser antes do cruzamento") vem ANTES de rodar a comparação, já
@@ -3200,16 +3209,29 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
 
     editor_base = correspondentes[_COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO].copy()
     editor_base.insert(0, "Salvar", False)
+    # "Desfazer" (2026-07-24, pedido do usuário: "aqui abrir a
+    # oportunidade de desfazer") — checkbox dedicado pra REMOVER uma
+    # combinação já confirmada, separado de "Salvar" (que só adiciona).
+    # Antes, remover dependia de deixar "Salvar" desmarcado numa
+    # combinação já salva e clicar salvar — funcionava (sincronização já
+    # implementada), mas não era uma ação EXPLÍCITA/visível na tela; só
+    # fazia sentido descobrir isso lendo o código. Com "Desfazer"
+    # dedicado, o universo de sincronização passa a ser só as
+    # combinações efetivamente marcadas (Salvar OU Desfazer) em vez de
+    # TODAS as linhas da busca — uma combinação já salva que não for
+    # tocada (nem Salvar nem Desfazer marcados) fica intocada, sem risco
+    # de remoção acidental só por estar desmarcada.
+    editor_base.insert(1, "Desfazer", False)
     editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
     # "Descricao Declaracao" sai só da EXIBIÇÃO (2026-07-23: "retire
     # descrição da declaração") — editor_base mantém a coluna crua
     # (descrição_decl), exigida por loader.salvar_cruzamento_confirmado().
     editor_exibicao = editor_exibicao.drop(columns=["Descricao Declaracao"], errors="ignore")
-    editor_exibicao.insert(1, "Observação", [
+    editor_exibicao.insert(2, "Observação", [
         "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
         for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
     ])
-    colunas_travadas = [c for c in editor_exibicao.columns if c != "Salvar"]
+    colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
     # Key do editor/botão varia por critério (2026-07-23, a partir do
     # Critério 2) — evita estado de widget "vazado" do Streamlit quando
     # o auditor troca de critério no selectbox (a tabela muda de linhas/
@@ -3232,39 +3254,60 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
             key=f"editor_cruzamento_entradas_{sufixo_criterio}",
         )
 
-    # Universo = TODAS as combinações mostradas nesta busca (marcadas ou
-    # não) — 2026-07-23, achado real: o auditor salvou só a combinação
-    # de 60% de similaridade, mas a tabela de IDs Únicos continuava
-    # trazendo também as duas de 11% ("SKOL BEATS..."), já confirmadas
-    # de uma sessão anterior — desmarcar o checkbox nunca removia nada,
-    # só deixava de adicionar. Passando o universo, salvar_cruzamento_
-    # confirmado() passa a SINCRONIZAR: o que está marcado AGORA vira o
-    # estado final da Rubrica pra estas combinações — desmarcar e salvar
-    # remove de fato.
-    universo_chaves = set(zip(editor_base["codproddecl"], editor_base["desc_xml"]))
+    st.caption(
+        "Marque \"Salvar\" pra confirmar uma combinação na Rubrica; marque \"Desfazer\" pra "
+        "remover uma combinação já salva (coluna \"Observação\")."
+    )
     if st.button("💾 Salvar na Rubrica do Produto Alvo", key=f"btn_salvar_rubrica_entradas_{sufixo_criterio}"):
-        marcadas = editado["Salvar"].reindex(editor_base.index)
-        selecionadas = editor_base.loc[marcadas.fillna(False), _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO]
+        marcadas_salvar = editado["Salvar"].reindex(editor_base.index).fillna(False)
+        marcadas_desfazer = editado["Desfazer"].reindex(editor_base.index).fillna(False)
+        # "Desfazer" tem precedência sobre "Salvar" se os dois vierem
+        # marcados na mesma linha (caso contraditório raro) — a
+        # combinação é tratada como remoção.
+        selecionadas = editor_base.loc[
+            marcadas_salvar & ~marcadas_desfazer, _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO
+        ]
+        # Universo restrito às combinações efetivamente TOCADAS (Salvar
+        # OU Desfazer) — 2026-07-24, pedido do usuário: "aqui abrir a
+        # oportunidade de desfazer". Antes o universo era TODAS as
+        # linhas da busca (2026-07-23, achado real: desmarcar o
+        # checkbox nunca removia nada, só deixava de adicionar — a
+        # correção de então usava o universo inteiro da busca pra
+        # sincronizar). Restringir o universo só ao que foi marcado
+        # evita que uma combinação já salva, mas simplesmente não
+        # tocada nesta rodada (nem Salvar nem Desfazer), seja removida
+        # por engano — e explicita a ação de remoção como algo
+        # deliberado ("Desfazer"), não um efeito colateral de deixar
+        # "Salvar" desmarcado.
+        chaves_desfazer = set(zip(
+            editor_base.loc[marcadas_desfazer, "codproddecl"],
+            editor_base.loc[marcadas_desfazer, "desc_xml"],
+        ))
+        chaves_salvar = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
+        universo_chaves = chaves_salvar | chaves_desfazer
         resultado = loader.salvar_cruzamento_confirmado(
             escolhido, "entradas", criterio_busca, selecionadas, universo_chaves=universo_chaves,
         )
         # Grava também o detalhe item-a-item (idunico) — 2026-07-23,
         # pedido do usuário: "é importante que os produtos com ids
         # fiquem gravado no produto alvo e que depois de gravado a
-        # situação possa ser revista pelo auditor". Universo = todos os
-        # idunicos possíveis desta busca (todas as combinações,
-        # marcadas ou não); itens a salvar = só os que pertencem às
-        # combinações marcadas AGORA — mesma sincronização do agregado.
+        # situação possa ser revista pelo auditor". Mesmo raciocínio de
+        # universo restrito às combinações tocadas.
         # fn_detalhado (não sempre cruzar_produto_escolhido_entradas_
         # detalhado()) — bug em potencial corrigido ao adicionar o
         # Critério 2: usar sempre a função do Critério 1 aqui teria
         # calculado o universo de idunicos errado pra buscas do Critério 2.
         detalhado_completo, _ = fn_detalhado()
-        universo_idunicos = set(detalhado_completo["idunico"])
-        chaves_marcadas = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
-        itens_marcados = detalhado_completo[
-            [(c, d) in chaves_marcadas for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])]
-        ][["codproddecl", "desc_xml", "idunico"]]
+        mask_universo = [
+            (c, d) in universo_chaves
+            for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
+        ]
+        universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
+        mask_salvar = [
+            (c, d) in chaves_salvar
+            for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
+        ]
+        itens_marcados = detalhado_completo.loc[mask_salvar, ["codproddecl", "desc_xml", "idunico"]]
         resultado_detalhado = loader.salvar_cruzamento_confirmado_detalhado(
             escolhido, "entradas", criterio_busca, itens_marcados, universo_idunicos=universo_idunicos,
         )
