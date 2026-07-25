@@ -5315,40 +5315,82 @@ def consultar_cruzamento_confirmado_detalhado(
         return pd.DataFrame(columns=colunas), 0
 
 
-def consultar_chv_nfe_por_idunico(idunicos: "set | list") -> pd.DataFrame:
-    """Busca a CHV_NFE (chave de acesso da NFe, campo `fatoitemnfe_
-    infprot_chnfe` de estoque_entradas) pra um conjunto de `idunico` —
-    2026-07-23, pedido do usuário: "traga tb a chave de acesso" na
-    tabela "Itens individuais (com ID Único)" (cruzamento_confirmado_
-    detalhado). Não persiste a CHV_NFE junto com a Rubrica — busca ao
-    vivo em estoque_entradas por ID_UNICO, porque o idunico já É
-    derivado de CHV_NFE+NUM_ITEM (_gerar_id_unico()), então a chave
-    associada a um idunico específico não muda mesmo que o Estágio 8
-    seja regerado depois; enriquecer só na exibição evita duplicar essa
-    informação (que já está implícita no idunico) na tabela persistida.
-    Devolve DataFrame com colunas ID_UNICO/CHV_NFE (ambas string) —
-    vazio se `idunicos` vazio, banco não existir, ou estoque_entradas
-    ainda não ter sido gerada."""
-    colunas = ["ID_UNICO", "CHV_NFE"]
+_COLUNAS_ATRIBUTOS_ESTOQUE_POR_IDUNICO = [
+    "ID_UNICO", "CHV_NFE", "ANO_ELEITO", "ncm4", "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod",
+]
+
+
+def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str = "entradas") -> pd.DataFrame:
+    """Busca atributos físicos/fiscais de cada item em estoque_entradas
+    (ou estoque_saidas, conforme `origem`) pra um conjunto de `idunico`
+    — 2026-07-25, Solicitação Técnica "ENRIQUECIMENTO DA TABELA DE
+    ITENS INDIVIDUAIS (BOTÃO 9)". Substitui a antiga
+    consultar_chv_nfe_por_idunico() (só trazia CHV_NFE) por uma versão
+    mais completa, mesmo raciocínio de não persistir nada disso junto
+    com a Rubrica — busca ao vivo por ID_UNICO (determinístico, não
+    muda mesmo que o Estágio 4/8 seja regerado depois).
+
+    Campos: CHV_NFE (chave de acesso, `fatoitemnfe_infprot_chnfe`);
+    ANO_ELEITO (Regra R07: string); ncm4 (4 primeiros dígitos de
+    `fatoitemnfe_infnfe_det_prod_ncm`, Regra R07: string); unid_prod
+    (unidade comercial do XML, `fatoitemnfe_infnfe_det_prod_ucom` —
+    "UN", "CX", "cx12" etc., mesmo campo usado como "UP XML" no
+    Estágio 9); vl_unit_prod (valor unitário do XML,
+    `fatoitemnfe_infnfe_det_prod_vuncom`); qtde_prod (quantidade
+    comercial do XML, `fatoitemnfe_infnfe_det_prod_qcom`); vl_prod =
+    vl_unit_prod × qtde_prod (validado com dado real da geraldo: bate
+    exato com `fatoitemnfe_infnfe_det_prod_vprod`/VL_ITEM do XML).
+
+    `origem="saidas"` hoje sempre devolve vazio — achado real
+    (2026-07-25): `estoque_saidas` não tem NENHUMA dessas colunas
+    (ANO_ELEITO, NCM, UCOM, VUNCOM, QCOM — só existem em
+    `estoque_entradas`); fica pronto pra quando o Botão 9 ganhar uma
+    aba de Saídas de verdade com esses campos disponíveis.
+
+    Devolve DataFrame com as colunas de
+    _COLUNAS_ATRIBUTOS_ESTOQUE_POR_IDUNICO — vazio se `idunicos`
+    vazio, banco não existir, ou a tabela de origem não existir/não
+    tiver as colunas esperadas."""
+    colunas = _COLUNAS_ATRIBUTOS_ESTOQUE_POR_IDUNICO
     if not idunicos or not _BANCO_PATH.exists():
         return pd.DataFrame(columns=colunas)
+    tabela_origem = "estoque_entradas" if origem == "entradas" else "estoque_saidas"
     try:
         with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
             tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
-            if "estoque_entradas" not in tabelas:
+            if tabela_origem not in tabelas:
                 return pd.DataFrame(columns=colunas)
-            con.register("_idunicos_busca_chv", pd.DataFrame({"ID_UNICO": list(idunicos)}))
+            # PRAGMA table_info devolve (cid, name, type, notnull, dflt_value, pk)
+            # — o nome da coluna é o índice 1, não o 0 (que é só o id sequencial).
+            colunas_tabela = {r[1] for r in con.execute(f"PRAGMA table_info('{tabela_origem}')").fetchall()}
+            campos_esperados = {
+                "ANO_ELEITO", "fatoitemnfe_infnfe_det_prod_ncm", "fatoitemnfe_infnfe_det_prod_ucom",
+                "fatoitemnfe_infnfe_det_prod_vuncom", "fatoitemnfe_infnfe_det_prod_qcom",
+                "fatoitemnfe_infprot_chnfe",
+            }
+            if not campos_esperados.issubset(colunas_tabela):
+                return pd.DataFrame(columns=colunas)
+            con.register("_idunicos_busca_fiscal", pd.DataFrame({"ID_UNICO": list(idunicos)}))
             df = con.execute(
-                "SELECT DISTINCT e.ID_UNICO, e.fatoitemnfe_infprot_chnfe AS CHV_NFE "
-                "FROM estoque_entradas e "
-                "INNER JOIN _idunicos_busca_chv b ON e.ID_UNICO = b.ID_UNICO"
+                f"SELECT DISTINCT e.ID_UNICO, "
+                f"e.fatoitemnfe_infprot_chnfe AS CHV_NFE, "
+                f"e.ANO_ELEITO, "
+                f"SUBSTR(e.fatoitemnfe_infnfe_det_prod_ncm, 1, 4) AS ncm4, "
+                f"e.fatoitemnfe_infnfe_det_prod_ucom AS unid_prod, "
+                f"TRY_CAST(e.fatoitemnfe_infnfe_det_prod_vuncom AS DOUBLE) AS vl_unit_prod, "
+                f"TRY_CAST(e.fatoitemnfe_infnfe_det_prod_qcom AS DOUBLE) AS qtde_prod "
+                f"FROM {tabela_origem} e "
+                "INNER JOIN _idunicos_busca_fiscal b ON e.ID_UNICO = b.ID_UNICO"
             ).df()
-            con.unregister("_idunicos_busca_chv")
+            con.unregister("_idunicos_busca_fiscal")
         df["ID_UNICO"] = df["ID_UNICO"].astype(str)
         df["CHV_NFE"] = df["CHV_NFE"].astype(str)
-        return df
+        df["ANO_ELEITO"] = df["ANO_ELEITO"].astype(str)
+        df["ncm4"] = df["ncm4"].astype(str)
+        df["vl_prod"] = df["vl_unit_prod"] * df["qtde_prod"]
+        return df[colunas]
     except Exception:
-        logger.exception("Erro ao consultar CHV_NFE por idunico em %s", _BANCO_PATH)
+        logger.exception("Erro ao consultar atributos de estoque por idunico em %s", _BANCO_PATH)
         return pd.DataFrame(columns=colunas)
 
 

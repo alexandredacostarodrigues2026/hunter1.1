@@ -2547,10 +2547,16 @@ _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO = ["codproddecl", "desc_xml", "descrição_de
 _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
 
 # Tabela "Itens individuais (com ID Único)" persistida (cruzamento_confirmado_detalhado,
-# 2026-07-23) — ver loader.consultar_cruzamento_confirmado_detalhado(). CHV_NFE
-# (chave de acesso) enriquecida ao vivo via loader.consultar_chv_nfe_por_idunico()
-# (2026-07-23, pedido do usuário: "traga tb a chave de acesso"), não persistida.
-_COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO = ["codproddecl", "desc_xml", "idunico", "CHV_NFE", "CRITERIO", "TS"]
+# 2026-07-23) — ver loader.consultar_cruzamento_confirmado_detalhado(). CHV_NFE +
+# atributos físicos/fiscais (Ano Eleito, NCM 4 dígitos, unidade/valor/quantidade do
+# produto) enriquecidos ao vivo via loader.consultar_atributos_estoque_por_idunico()
+# (2026-07-23: "traga tb a chave de acesso"; 2026-07-25, Solicitação Técnica
+# "ENRIQUECIMENTO DA TABELA DE ITENS INDIVIDUAIS": os 6 campos fiscais), nada
+# persistido — enriquecimento só na exibição.
+_COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO = [
+    "codproddecl", "desc_xml", "idunico", "CHV_NFE", "ANO_ELEITO", "ncm4",
+    "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod", "CRITERIO", "TS",
+]
 
 
 _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_DETALHADO = ["codproddecl", "desc_xml", "idunico"]
@@ -3345,12 +3351,20 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
             "clique em \"Salvar na Rubrica do Produto Alvo\" pra ver os itens individuais aqui."
         )
         return
-    # Chave de acesso (CHV_NFE) — 2026-07-23, pedido do usuário: "traga
-    # tb a chave de acesso" — buscada ao vivo por idunico (não persistida
-    # junto com a Rubrica, ver loader.consultar_chv_nfe_por_idunico()),
-    # já que o idunico já é derivado da própria CHV_NFE e não muda.
-    chv_por_idunico = loader.consultar_chv_nfe_por_idunico(set(detalhado["idunico"]))
-    detalhado = detalhado.merge(chv_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
+    # Chave de acesso (CHV_NFE) + atributos físicos/fiscais (Ano Eleito,
+    # NCM 4 dígitos, unidade/valor/quantidade do produto) — 2026-07-23:
+    # "traga tb a chave de acesso"; 2026-07-25, Solicitação Técnica
+    # "ENRIQUECIMENTO DA TABELA DE ITENS INDIVIDUAIS" — buscados ao vivo
+    # por idunico (não persistidos junto com a Rubrica, ver loader.
+    # consultar_atributos_estoque_por_idunico()), já que o idunico já é
+    # determinístico e não muda.
+    atributos_por_idunico = loader.consultar_atributos_estoque_por_idunico(set(detalhado["idunico"]), origem="entradas")
+    detalhado = detalhado.merge(atributos_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
+    # Formatação BR (milhar '.', decimal ',') pras colunas de valor/quantidade
+    # — pedido explícito da Solicitação Técnica ("separadores de milhar e 2
+    # casas decimais"), mesmo padrão já usado no painel 7.2.
+    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod"):
+        detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
     st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
     with st.container(key="cruzamento_entradas_detalhado_tabela"):
         st.markdown(
