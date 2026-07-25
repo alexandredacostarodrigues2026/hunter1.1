@@ -5045,6 +5045,168 @@ def cruzar_produto_escolhido_entradas_criterio3_detalhado() -> "tuple[pd.DataFra
     return candidatos, escolhido
 
 
+# ── Cruzamento do Produto Escolhido — Critérios 1 e 3 (Saídas) ───────────
+# Solicitação Técnica (2026-07-25): "BUSCA DE CORRESPONDENTES NAS SAÍDAS
+# (BOTÃO 9)" — replica a mecânica de Entradas pras Saídas, sobre
+# estagio8_saidas_agrupado/estagio8_saidas_detalhado (Estágio 8.1) em vez
+# de estagio8_agrupado/estagio8_detalhado. SEM Critério 2 (nome de
+# declaração igual) — regra de negócio explícita: na saída a auditada é
+# EMITENTE da nota, então `desc_xml`/`codproddecl` (vindo de `cProd` do
+# próprio XML, ver gerar_estagio_8_saidas()) JÁ é a "declaração" dela
+# mesma — não existe uma descrição de declaração SEPARADA pra comparar
+# contra (estagio8_saidas não tem `descrição_decl`), o que tornaria um
+# "Critério 2" redundante ou sem sentido aqui.
+_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO = _COLUNAS_ESTAGIO8_SAIDAS_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
+_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO = _COLUNAS_ESTAGIO8_SAIDAS_DETALHADO + ["SIMILARIDADE_DESCRICAO"]
+
+
+def cruzar_produto_escolhido_saidas() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 1 (Saídas): mesma lógica de
+    cruzar_produto_escolhido_entradas(), mas contra estagio8_saidas_
+    agrupado — MESMO código de produto (normalizado via
+    _normalizar_cod_item_flexivel()) + SIMILARIDADE_DESCRICAO
+    (informativa/ordenação, entre `desc_xml` e `DESCR_ALVO`). Exclusão
+    cross-alvo com `origem="saidas"` (ver
+    _chaves_ja_atribuidas_a_outro_alvo()) — um item já confirmado pra
+    outro produto alvo, na mesma origem, não aparece aqui. Devolve
+    (DataFrame, dict do produto escolhido) — mesmas regras de
+    vazio/None do Critério 1 de Entradas."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), None
+    agrupado, _ = consultar_estagio8_saidas_agrupado(limite=None)
+    if agrupado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    codigos_normalizados = _normalizar_cod_item_flexivel(agrupado["codproddecl"])
+    correspondentes = agrupado[codigos_normalizados == cod_item_normalizado].copy()
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "saidas")
+    if chaves_bloqueadas:
+        correspondentes = correspondentes[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(correspondentes["codproddecl"], correspondentes["desc_xml"])]
+        ]
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    correspondentes = correspondentes.sort_values(
+        ["SIMILARIDADE_DESCRICAO", "qtde_ocorrencias"], ascending=[False, False]
+    )[_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO].reset_index(drop=True)
+    return correspondentes, escolhido
+
+
+def cruzar_produto_escolhido_saidas_detalhado() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 1 (Saídas) — tabela DETALHADA, mesma lógica de
+    cruzar_produto_escolhido_saidas(), mas contra estagio8_saidas_
+    detalhado (uma linha por item do XML, com idunico) em vez de
+    estagio8_saidas_agrupado. Mesmas regras de vazio/None."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), None
+    detalhado, _ = consultar_estagio8_saidas_detalhado(limite=None)
+    if detalhado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    codigos_normalizados = _normalizar_cod_item_flexivel(detalhado["codproddecl"])
+    correspondentes = detalhado[codigos_normalizados == cod_item_normalizado].copy()
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "saidas")
+    if chaves_bloqueadas:
+        correspondentes = correspondentes[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(correspondentes["codproddecl"], correspondentes["desc_xml"])]
+        ]
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    correspondentes = correspondentes.sort_values(
+        "SIMILARIDADE_DESCRICAO", ascending=False
+    )[_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO].reset_index(drop=True)
+    return correspondentes, escolhido
+
+
+def cruzar_produto_escolhido_saidas_criterio3() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 3 (Saídas): mesma lógica de
+    cruzar_produto_escolhido_entradas_criterio3(), mas contra
+    estagio8_saidas_agrupado — código DIVERGENTE do alvo (normalizado)
+    + `SIMILARIDADE_DESCRICAO >= LIMIAR_SIMILARIDADE_CRITERIO3` como
+    FILTRO (não só ordenação). Exclusão cross-alvo com `origem=
+    "saidas"`. Devolve (DataFrame, dict do produto escolhido) — mesmas
+    regras de vazio/None do Critério 3 de Entradas."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), None
+    agrupado, _ = consultar_estagio8_saidas_agrupado(limite=None)
+    if agrupado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    codigos_normalizados = _normalizar_cod_item_flexivel(agrupado["codproddecl"])
+    candidatos = agrupado[codigos_normalizados != cod_item_normalizado].copy()
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "saidas")
+    if chaves_bloqueadas:
+        candidatos = candidatos[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(candidatos["codproddecl"], candidatos["desc_xml"])]
+        ]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    candidatos = candidatos[candidatos["SIMILARIDADE_DESCRICAO"] >= LIMIAR_SIMILARIDADE_CRITERIO3]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
+    candidatos = candidatos.sort_values(
+        ["SIMILARIDADE_DESCRICAO", "qtde_ocorrencias"], ascending=[False, False]
+    )[_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO].reset_index(drop=True)
+    return candidatos, escolhido
+
+
+def cruzar_produto_escolhido_saidas_criterio3_detalhado() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 3 (Saídas) — tabela DETALHADA, mesma lógica de
+    cruzar_produto_escolhido_saidas_criterio3() (código divergente +
+    piso de similaridade), mas contra estagio8_saidas_detalhado. Mesmas
+    regras de vazio/None."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), None
+    detalhado, _ = consultar_estagio8_saidas_detalhado(limite=None)
+    if detalhado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    codigos_normalizados = _normalizar_cod_item_flexivel(detalhado["codproddecl"])
+    candidatos = detalhado[codigos_normalizados != cod_item_normalizado].copy()
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "saidas")
+    if chaves_bloqueadas:
+        candidatos = candidatos[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(candidatos["codproddecl"], candidatos["desc_xml"])]
+        ]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    candidatos = candidatos[candidatos["SIMILARIDADE_DESCRICAO"] >= LIMIAR_SIMILARIDADE_CRITERIO3]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
+    candidatos = candidatos.sort_values(
+        "SIMILARIDADE_DESCRICAO", ascending=False
+    )[_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO].reset_index(drop=True)
+    return candidatos, escolhido
+
+
 # ── Rubrica do Produto Alvo (confirmação manual do cruzamento) ───────────
 # Solicitação Técnica (2026-07-23): "CRIE CAIXA PARA GRAVAR O PRODUTO QUE
 # FARÁ PARTE DA RUBRICA DO PRODUTO ALVO. GERE 1 OPÇÃO DE 'CRITÉRIO DE
@@ -5101,7 +5263,17 @@ def salvar_cruzamento_confirmado(
     {'erro': str}."""
     resultado = {}
     try:
-        novo = linhas[["codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias"]].copy()
+        # "descrição_decl" não existe em estagio8_saidas_agrupado
+        # (2026-07-25, Saídas: a auditada é emitente, `desc_xml` JÁ é a
+        # "declaração" dela — não há campo separado pra comparar) —
+        # `linhas` de Saídas vem sem essa coluna; preenche em branco em
+        # vez de propagar KeyError, sem mudar o comportamento de
+        # Entradas (que sempre traz a coluna).
+        if "descrição_decl" in linhas.columns:
+            novo = linhas[["codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias"]].copy()
+        else:
+            novo = linhas[["codproddecl", "desc_xml", "qtde_ocorrencias"]].copy()
+            novo["descrição_decl"] = ""
         novo["DESCR_ALVO"] = str(escolhido["DESCR_ALVO"])
         novo["COD_ITEM"] = str(escolhido["COD_ITEM"])
         novo["ORIGEM"] = origem

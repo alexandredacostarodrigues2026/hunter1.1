@@ -2565,6 +2565,14 @@ _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO = [
 _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_DETALHADO = ["codproddecl", "desc_xml", "idunico"]
 _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_AGRUPADO = ["codproddecl", "desc_xml", "qtde_ocorrencias"]
 
+# Saídas (2026-07-25, Solicitação Técnica "BUSCA DE CORRESPONDENTES NAS
+# SAÍDAS") — mesma ideia do cruzamento de Entradas, mas sobre
+# estagio8_saidas_agrupado, que não tem "descrição_decl" (achado real:
+# na saída a auditada é emitente, `desc_xml` JÁ é a "declaração" dela —
+# não existe campo separado pra comparar, por isso Saídas só tem
+# Critério 1 e Critério 3, sem Critério 2).
+_COLUNAS_PREVIEW_CRUZAMENTO_SAIDAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
+
 
 _COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_DETALHADO = ["codproddecl", "descrição_decl", "idunico"]
 _COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_AGRUPADO = ["codproddecl", "descrição_decl", "qtde_ocorrencias"]
@@ -3382,6 +3390,210 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         )
 
 
+def _obter_criterios_cruzamento_saidas() -> dict:
+    """Mapa criterio -> (fn_agrupado, fn_detalhado) usado pelo selectbox de
+    _render_cruzamento_saidas() — mirror de _obter_criterios_cruzamento_
+    entradas() (2026-07-25, Solicitação Técnica "BUSCA DE CORRESPONDENTES
+    NAS SAÍDAS"), mas só com Critério 1 e Critério 3: SEM Critério 2 (nome
+    de declaração igual) porque em Saídas a auditada é a EMITENTE — não há
+    um "nome de declaração" do candidato separado de `desc_xml` pra
+    comparar, já é a própria descrição da auditada."""
+    return {
+        loader.CRITERIO_BUSCA1_MESMO_CODIGO: (
+            loader.cruzar_produto_escolhido_saidas,
+            loader.cruzar_produto_escolhido_saidas_detalhado,
+        ),
+        loader.CRITERIO_BUSCA3_CODIGO_DIVERGENTE: (
+            loader.cruzar_produto_escolhido_saidas_criterio3,
+            loader.cruzar_produto_escolhido_saidas_criterio3_detalhado,
+        ),
+    }
+
+
+def _render_cruzamento_saidas(escolhido: dict) -> None:
+    """Aba 'Saídas' do cruzamento (Botão 9) — mirror de
+    _render_cruzamento_entradas(), 2026-07-25, Solicitação Técnica "BUSCA
+    DE CORRESPONDENTES NAS SAÍDAS": compara o produto escolhido com
+    estagio8_saidas_agrupado usando o critério selecionado no selectbox.
+
+    Só dois critérios (sem Critério 2 — ver _obter_criterios_cruzamento_
+    saidas()):
+
+    **Critério 1** (loader.cruzar_produto_escolhido_saidas()) — MESMO
+    código de produto (normalizado) + SIMILARIDADE_DESCRICAO só pra
+    ordenar, mesmo raciocínio do Critério 1 de Entradas.
+
+    **Critério 3** (loader.cruzar_produto_escolhido_saidas_criterio3())
+    — código DIVERGENTE do alvo, similaridade de descrição vira FILTRO
+    (≥ LIMIAR_SIMILARIDADE_CRITERIO3), mesmo raciocínio do Critério 3 de
+    Entradas.
+
+    Mesma UI de Entradas: checkbox "Salvar"/"Desfazer", botão "Salvar na
+    Rubrica" (persiste com origem="saidas" em loader.salvar_cruzamento_
+    confirmado()/salvar_cruzamento_confirmado_detalhado()) e tabela
+    "Itens individuais" ao final. Todas as keys de widget/container
+    levam sufixo "_saidas" pra não colidir com a aba de Entradas — as
+    duas abas de st.tabs() rodam no MESMO script run do Streamlit."""
+    criterios = _obter_criterios_cruzamento_saidas()
+    criterio_busca = st.selectbox(
+        "Critério de busca",
+        options=list(criterios.keys()),
+        key="select_criterio_busca_saidas",
+    )
+    fn_agrupado, fn_detalhado = criterios[criterio_busca]
+
+    if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
+        st.caption(
+            f"Combinações em `estagio8_saidas_agrupado` (Saídas, Estágio 8) com o MESMO código de produto "
+            f"de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — comparação normalizada "
+            "(zero à esquerda em código numérico não conta como diferença) — ordenadas por "
+            "similaridade de descrição (overlap de tokens) entre o produto vendido e a descrição do alvo."
+        )
+    else:
+        st.caption(
+            f"Combinações em `estagio8_saidas_agrupado` (Saídas, Estágio 8) com código DIVERGENTE (diferente) "
+            f"do de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — cobre o caso em que o "
+            "produto é o mesmo fisicamente, mas o código na saída diverge do código oficial do "
+            f"alvo. Só entram candidatos com similaridade de descrição ≥ "
+            f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% (aqui a similaridade FILTRA, não é só ordenação, "
+            "já que o código não serve de evidência), ordenados por similaridade (desc)."
+        )
+
+    correspondentes, _ = fn_agrupado()
+    if correspondentes.empty:
+        if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
+            st.warning(
+                f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
+                "em `estagio8_saidas_agrupado`, mesmo após normalizar zero à esquerda — o produto "
+                "provavelmente não aparece nas saídas com esse código."
+            )
+        else:
+            st.warning(
+                f"⚠️ Nenhum candidato de código divergente com similaridade ≥ "
+                f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% encontrado pra **{escolhido['DESCR_ALVO']}** "
+                "em `estagio8_saidas_agrupado`."
+            )
+        return
+    st.success(
+        f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
+    )
+
+    ja_confirmadas, _ = loader.consultar_cruzamento_confirmado(descr_alvo=escolhido["DESCR_ALVO"], limite=None)
+    ja_confirmadas_saidas = (
+        ja_confirmadas[ja_confirmadas["ORIGEM"] == "saidas"] if not ja_confirmadas.empty
+        else ja_confirmadas
+    )
+    chaves_confirmadas = set(
+        zip(ja_confirmadas_saidas["codproddecl"], ja_confirmadas_saidas["desc_xml"])
+    ) if not ja_confirmadas_saidas.empty else set()
+
+    editor_base = correspondentes[_COLUNAS_PREVIEW_CRUZAMENTO_SAIDAS_AGRUPADO].copy()
+    editor_base.insert(0, "Salvar", False)
+    editor_base.insert(1, "Desfazer", False)
+    editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
+    # estagio8_saidas_agrupado não tem "descrição_decl" — nada a remover
+    # da exibição aqui (diferente de Entradas).
+    editor_exibicao.insert(2, "Observação", [
+        "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
+        for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
+    ])
+    colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
+    sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
+    with st.container(key="cruzamento_saidas_tabela"):
+        st.markdown(
+            "<style>.st-key-cruzamento_saidas_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 10px; }</style>",
+            unsafe_allow_html=True,
+        )
+        editado = st.data_editor(
+            editor_exibicao,
+            use_container_width=True,
+            hide_index=True,
+            disabled=colunas_travadas,
+            key=f"editor_cruzamento_saidas_{sufixo_criterio}",
+        )
+
+    st.caption(
+        "Marque \"Salvar\" pra confirmar uma combinação na Rubrica; marque \"Desfazer\" pra "
+        "remover uma combinação já salva (coluna \"Observação\")."
+    )
+    if st.button("💾 Salvar na Rubrica do Produto Alvo", key=f"btn_salvar_rubrica_saidas_{sufixo_criterio}"):
+        marcadas_salvar = editado["Salvar"].reindex(editor_base.index).fillna(False)
+        marcadas_desfazer = editado["Desfazer"].reindex(editor_base.index).fillna(False)
+        selecionadas = editor_base.loc[
+            marcadas_salvar & ~marcadas_desfazer, _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_AGRUPADO
+        ]
+        chaves_desfazer = set(zip(
+            editor_base.loc[marcadas_desfazer, "codproddecl"],
+            editor_base.loc[marcadas_desfazer, "desc_xml"],
+        ))
+        chaves_salvar = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
+        universo_chaves = chaves_salvar | chaves_desfazer
+        resultado = loader.salvar_cruzamento_confirmado(
+            escolhido, "saidas", criterio_busca, selecionadas, universo_chaves=universo_chaves,
+        )
+        detalhado_completo, _ = fn_detalhado()
+        mask_universo = [
+            (c, d) in universo_chaves
+            for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
+        ]
+        universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
+        mask_salvar = [
+            (c, d) in chaves_salvar
+            for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
+        ]
+        itens_marcados = detalhado_completo.loc[mask_salvar, ["codproddecl", "desc_xml", "idunico"]]
+        resultado_detalhado = loader.salvar_cruzamento_confirmado_detalhado(
+            escolhido, "saidas", criterio_busca, itens_marcados, universo_idunicos=universo_idunicos,
+        )
+        if "erro" in resultado:
+            st.error(f"Erro: {resultado['erro']}")
+        elif "erro" in resultado_detalhado:
+            st.error(f"Erro ao gravar itens individuais: {resultado_detalhado['erro']}")
+        else:
+            partes = [f"{resultado['total_salvo']} confirmada(s)"]
+            if resultado["total_removido"]:
+                partes.append(f"{resultado['total_removido']} removida(s)")
+            st.success(
+                f"✅ Rubrica atualizada — {', '.join(partes)} "
+                f"({resultado_detalhado['total_salvo']} item(ns) individual(is) gravado(s))."
+            )
+            st.rerun()
+
+    st.divider()
+    st.markdown("**Itens individuais (com ID Único) — já atribuídos ao alvo**")
+    detalhado, total_detalhado = loader.consultar_cruzamento_confirmado_detalhado(
+        descr_alvo=escolhido["DESCR_ALVO"], origem="saidas", limite=None,
+    )
+    if detalhado.empty:
+        st.info(
+            "Nenhuma combinação confirmada na Rubrica ainda — marque \"Salvar\" na tabela acima e "
+            "clique em \"Salvar na Rubrica do Produto Alvo\" pra ver os itens individuais aqui."
+        )
+        return
+    # estoque_saidas não tem os campos fiscais (ANO_ELEITO/NCM/UCOM/
+    # VUNCOM/QCOM só existem em estoque_entradas, achado real de
+    # 2026-07-25) — consultar_atributos_estoque_por_idunico(origem=
+    # "saidas") sempre devolve vazio, colunas ficam em branco no merge.
+    atributos_por_idunico = loader.consultar_atributos_estoque_por_idunico(set(detalhado["idunico"]), origem="saidas")
+    detalhado = detalhado.merge(atributos_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
+    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod"):
+        if _col in detalhado.columns:
+            detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
+    st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
+    with st.container(key="cruzamento_saidas_detalhado_tabela"):
+        st.markdown(
+            "<style>.st-key-cruzamento_saidas_detalhado_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 12px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            _preparar_preview(detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
 _COLUNAS_PRODUTOS_ALVO_SALVOS = ["DESCR_ALVO", "COD_ITEM"]
 _COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS = "🎯 Escolher p/ Cruzamento"
 
@@ -3480,9 +3692,11 @@ def render_produtos_alvo_salvos() -> None:
     if not escolhido_atual:
         st.info("Escolha um produto acima pra ver o cruzamento com o Estágio 8.")
     else:
-        (aba_cruzamento_entradas,) = st.tabs(["📥 Entradas"])
+        aba_cruzamento_entradas, aba_cruzamento_saidas = st.tabs(["📥 Entradas", "📤 Saídas"])
         with aba_cruzamento_entradas:
             _render_cruzamento_entradas(escolhido_atual)
+        with aba_cruzamento_saidas:
+            _render_cruzamento_saidas(escolhido_atual)
 
 
 def render_pagina_produtos_alvo_salvos() -> None:
