@@ -2558,7 +2558,7 @@ _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_AGRUPA
 # idunico vira a ÚLTIMA coluna (depois até de CRITERIO/TS).
 _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO = [
     "codproddecl", "desc_xml", "ANO_ELEITO", "ncm4", "unid_prod",
-    "vl_unit_prod", "qtde_prod", "vl_prod", "CHV_NFE", "CRITERIO", "TS", "idunico",
+    "vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido", "CHV_NFE", "CRITERIO", "TS", "idunico",
 ]
 
 
@@ -3695,7 +3695,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     # Formatação BR (milhar '.', decimal ',') pras colunas de valor/quantidade
     # — pedido explícito da Solicitação Técnica ("separadores de milhar e 2
     # casas decimais"), mesmo padrão já usado no painel 7.2.
-    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod"):
+    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido"):
         detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
     st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
     with st.container(key="cruzamento_entradas_detalhado_tabela"):
@@ -3901,7 +3901,7 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     # "saidas") sempre devolve vazio, colunas ficam em branco no merge.
     atributos_por_idunico = loader.consultar_atributos_estoque_por_idunico(set(detalhado["idunico"]), origem="saidas")
     detalhado = detalhado.merge(atributos_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
-    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod"):
+    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido"):
         if _col in detalhado.columns:
             detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
     st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
@@ -3952,7 +3952,7 @@ def _obter_criterios_cruzamento_estoque() -> dict:
 # atributos_estoque_estoque_por_idunico().
 _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE = [
     "codproddecl", "desc_xml", "ncm4", "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod",
-    "ano_ef", "ano_ei", "dt_decl", "CRITERIO", "TS", "idunico",
+    "fm_sugerido", "ano_ef", "ano_ei", "dt_decl", "CRITERIO", "TS", "idunico",
 ]
 
 
@@ -4136,7 +4136,7 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     # não um campo bruto do SPED).
     atributos_por_idunico = loader.consultar_atributos_estoque_estoque_por_idunico(set(detalhado["idunico"]))
     detalhado = detalhado.merge(atributos_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
-    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod"):
+    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido"):
         if _col in detalhado.columns:
             detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
     st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))

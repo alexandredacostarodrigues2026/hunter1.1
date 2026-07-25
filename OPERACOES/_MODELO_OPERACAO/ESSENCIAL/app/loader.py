@@ -6201,6 +6201,7 @@ def consultar_cruzamento_confirmado_detalhado(
 
 _COLUNAS_ATRIBUTOS_ESTOQUE_POR_IDUNICO = [
     "ID_UNICO", "CHV_NFE", "ANO_ELEITO", "ncm4", "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod",
+    "fm_sugerido",
 ]
 
 
@@ -6223,13 +6224,20 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
     `fatoitemnfe_infnfe_det_prod_vuncom`); qtde_prod (quantidade
     comercial do XML, `fatoitemnfe_infnfe_det_prod_qcom`); vl_prod =
     vl_unit_prod × qtde_prod (validado com dado real da geraldo: bate
-    exato com `fatoitemnfe_infnfe_det_prod_vprod`/VL_ITEM do XML).
+    exato com `fatoitemnfe_infnfe_det_prod_vprod`/VL_ITEM do XML);
+    fm_sugerido (`FATOR_MULTIPLICADOR_SUGERIDO`, já calculado no
+    Matching, Estágio 2 — 2026-07-25, pedido do usuário: "insira fm
+    sugerido para as tabelas ids únicos de entradas, saídas e
+    estoques").
 
-    `origem="saidas"` hoje sempre devolve vazio — achado real
-    (2026-07-25): `estoque_saidas` não tem NENHUMA dessas colunas
-    (ANO_ELEITO, NCM, UCOM, VUNCOM, QCOM — só existem em
-    `estoque_entradas`); fica pronto pra quando o Botão 9 ganhar uma
-    aba de Saídas de verdade com esses campos disponíveis.
+    `origem="saidas"` — a suposição original (2026-07-25, mesma
+    sessão) de que `estoque_saidas` não teria ANO_ELEITO/NCM/UCOM/
+    VUNCOM/QCOM nunca foi checada com dado real; confirmado agora
+    (ao implementar `fm_sugerido`) que TODAS as colunas esperadas
+    já existem de fato em `estoque_saidas` (`FATOR_MULTIPLICADOR_
+    SUGERIDO` com ~0,3% de cobertura — Matching/BC3 só liga Entradas
+    de terceiros, mas o campo está lá) — a função já funcionava igual
+    pras duas origens, só a suposição no comentário estava errada.
 
     Devolve DataFrame com as colunas de
     _COLUNAS_ATRIBUTOS_ESTOQUE_POR_IDUNICO — vazio se `idunicos`
@@ -6250,7 +6258,7 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
             campos_esperados = {
                 "ANO_ELEITO", "fatoitemnfe_infnfe_det_prod_ncm", "fatoitemnfe_infnfe_det_prod_ucom",
                 "fatoitemnfe_infnfe_det_prod_vuncom", "fatoitemnfe_infnfe_det_prod_qcom",
-                "fatoitemnfe_infprot_chnfe",
+                "fatoitemnfe_infprot_chnfe", "FATOR_MULTIPLICADOR_SUGERIDO",
             }
             if not campos_esperados.issubset(colunas_tabela):
                 return pd.DataFrame(columns=colunas)
@@ -6262,7 +6270,8 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
                 f"SUBSTR(e.fatoitemnfe_infnfe_det_prod_ncm, 1, 4) AS ncm4, "
                 f"e.fatoitemnfe_infnfe_det_prod_ucom AS unid_prod, "
                 f"TRY_CAST(e.fatoitemnfe_infnfe_det_prod_vuncom AS DOUBLE) AS vl_unit_prod, "
-                f"TRY_CAST(e.fatoitemnfe_infnfe_det_prod_qcom AS DOUBLE) AS qtde_prod "
+                f"TRY_CAST(e.fatoitemnfe_infnfe_det_prod_qcom AS DOUBLE) AS qtde_prod, "
+                f"e.FATOR_MULTIPLICADOR_SUGERIDO AS fm_sugerido "
                 f"FROM {tabela_origem} e "
                 "INNER JOIN _idunicos_busca_fiscal b ON e.ID_UNICO = b.ID_UNICO"
             ).df()
@@ -6280,6 +6289,7 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
 
 _COLUNAS_ATRIBUTOS_ESTOQUE_ESTOQUE_POR_IDUNICO = [
     "ID_UNICO", "ncm4", "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod", "ano_ef", "ano_ei", "dt_decl",
+    "fm_sugerido",
 ]
 
 
@@ -6329,6 +6339,16 @@ def consultar_atributos_estoque_estoque_por_idunico(idunicos: "set | list") -> p
       um campo bruto do SPED, é uma data CALCULADA (validado nos 6
       anos do CERV SKOL LATA 350ML, todos batendo exato, inclusive os
       2 anos bissextos).
+    - fm_sugerido: 2026-07-25, pedido do usuário: "insira fm sugerido
+      para as tabelas ids únicos de entradas, saídas e estoques" —
+      diferente de Entradas/Saídas (FATOR_MULTIPLICADOR_SUGERIDO do
+      Matching, Estágio 2), o Bloco H NÃO tem ligação nenhuma com
+      Matching/BC3 (mesmo motivo pelo qual gerar_curadoria_fm_
+      estoque() não calcula fm_sugerido nenhum). Em vez de ficar
+      sempre vazio, traz o FM_ELEITO já salvo em fm_estoque_curadoria
+      (Estágio 9) pra essa DESCR_ITEM_DECLARACAO, se o grupo já foi
+      curado — cross-referência da decisão do próprio auditor, não
+      uma sugestão automática do sistema.
     Devolve DataFrame com as colunas de
     _COLUNAS_ATRIBUTOS_ESTOQUE_ESTOQUE_POR_IDUNICO — vazio se
     `idunicos` vazio, banco não existir, ou estoque_anual_consolidado
@@ -6396,6 +6416,14 @@ def consultar_atributos_estoque_estoque_por_idunico(idunicos: "set | list") -> p
     base["dt_decl"] = ano_ei_num.apply(
         lambda ano: f"{calendar.monthrange(int(ano), 2)[1]:02d}/02/{int(ano)}" if pd.notna(ano) else ""
     )
+
+    curadoria, _ = consultar_curadoria_fm_estoque(limite=None)
+    if not curadoria.empty:
+        fm_por_descricao = curadoria.drop_duplicates("DESCR_ITEM_DECL").set_index("DESCR_ITEM_DECL")["FM_ELEITO"]
+        base["fm_sugerido"] = base["DESCR_ITEM_DECLARACAO"].map(fm_por_descricao)
+    else:
+        base["fm_sugerido"] = pd.NA
+
     return base[colunas].reset_index(drop=True)
 
 
