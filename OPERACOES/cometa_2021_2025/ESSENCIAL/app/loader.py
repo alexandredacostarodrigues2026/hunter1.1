@@ -2762,6 +2762,36 @@ def _extrair_particula_fm(desc) -> str:
     return m.group(1) if m else ""
 
 
+def _extrair_fator_multiplicador_xml(desc) -> float:
+    """Fator Multiplicador derivado SÓ da descrição do XML — 2026-07-25,
+    pedido explícito do usuário: "para o fm, nas entradas e saídas não
+    olhe para o sped, olhe apenas para o xml". Substitui o cálculo
+    anterior (FATOR_MULTIPLICADOR_SUGERIDO do Matching, Estágio 2 —
+    Valor Unitário do XML ÷ Valor Unitário Declarado no SPED) em
+    gerar_curadoria_fm_entradas()/gerar_curadoria_fm_saidas() e em
+    consultar_atributos_estoque_por_idunico(). Achado real que motivou
+    a troca: comparado com dado real da geraldo (CERV SKOL LATA 350ML,
+    UCOM "cx12" nas duas notas — fisicamente a MESMA caixa de 12), o
+    fator baseado no SPED vinha 12 numa nota e 1 noutra — não porque o
+    produto físico mudou, mas porque a AUDITADA desmembrou a caixa em
+    12 latas no próprio estoque numa nota e não desmembrou na outra
+    (erro de escrituração dela, não do cálculo). Como a descrição do
+    XML e a UCOM não mudam com o jeito que a auditada escriturou, usar
+    só o XML dá um fator ESTÁVEL pro mesmo produto físico.
+
+    Reaproveita o mesmo regex de _extrair_particula_fm() (`C/N`,
+    `CX N`, `FD N`, `N UNID`), mas devolve o NÚMERO embutido como
+    fator (não o texto do hint). Sem nenhum padrão de embalagem
+    reconhecido na descrição, assume fator=1 (nenhuma multiplicação
+    necessária — mesma interpretação de "fator=1 = unidades
+    compatíveis" já usada no Matching)."""
+    m = _REGEX_PARTICULA_FM.search(str(desc).upper())
+    if not m:
+        return 1.0
+    digitos = re.search(r"\d+", m.group(1))
+    return float(digitos.group()) if digitos else 1.0
+
+
 def gerar_curadoria_fm_entradas() -> dict:
     """Estágio 9 — Curadoria de Fator Multiplicador (Entradas): agrupa
     estoque_entradas (Estágio 4) por (Descrição XML, Valor Unitário XML
@@ -2774,11 +2804,18 @@ def gerar_curadoria_fm_entradas() -> dict:
       "CX", "FD", "cx12" etc., ver nota acima) dentro do grupo.
     - particula: extraída via _extrair_particula_fm() da descrição
       (constante dentro do grupo, já que é parte da chave).
-    - fm_sugerido: MODA do FATOR_MULTIPLICADOR_SUGERIDO (já calculado
-      no Matching, Estágio 2) dentro do grupo; NULL se nenhum item do
-      grupo tiver o fator calculado (87% de cobertura na base real —
-      FATOR_MULTIPLICADOR_SUGERIDO só é calculado quando VL_ITEM bate
-      exato entre XML e SPED, ver REGRAS_MATCHING.md).
+    - fm_sugerido: 2026-07-25, pedido do usuário: "para o fm, nas
+      entradas e saídas não olhe para o sped, olhe apenas para o
+      xml" — deixou de ser o FATOR_MULTIPLICADOR_SUGERIDO do Matching
+      (Estágio 2, que comparava contra o SPED) e passou a ser
+      _extrair_fator_multiplicador_xml(desc_xml): número embutido na
+      própria descrição do XML (ex.: "C/12" → 12), fator=1 se nenhum
+      padrão de embalagem for reconhecido. Achado real que motivou:
+      o cálculo via SPED podia variar pro MESMO produto físico (ex.:
+      CERV SKOL LATA 350ML, sempre UCOM "cx12") só porque a auditada
+      escriturava a caixa desmembrada em latas numa nota e não
+      desmembrada noutra — o fator baseado só no XML é ESTÁVEL pro
+      mesmo produto, já que não depende de como a auditada escriturou.
     - nova_up: valor PADRÃO NOVA_UP_PADRAO ("UNID") — não é calculado a
       partir de up_xml/fm_sugerido, é só o ponto de partida editável
       pelo auditor (2026-07-24, resposta do usuário: "deixe como
@@ -2798,7 +2835,6 @@ def gerar_curadoria_fm_entradas() -> dict:
                 "SELECT fatoitemnfe_infnfe_det_prod_xprod AS desc_xml, "
                 "TRY_CAST(fatoitemnfe_infnfe_det_prod_vuncom AS DOUBLE) AS valor_unit_bruto, "
                 "fatoitemnfe_infnfe_det_prod_ucom AS ucom, "
-                "FATOR_MULTIPLICADOR_SUGERIDO AS fm_item, "
                 "ID_UNICO AS idunico "
                 "FROM estoque_entradas"
             ).df()
@@ -2816,11 +2852,11 @@ def gerar_curadoria_fm_entradas() -> dict:
         bruto.groupby(["desc_xml", "_valor_unit_grupo"], as_index=False, dropna=False)
         .agg(
             up_xml=("ucom", _moda_ou_none),
-            fm_sugerido=("fm_item", _moda_ou_none),
             qtde_ocorrencias=("idunico", "count"),
         )
     )
     agrupado["particula"] = agrupado["desc_xml"].apply(_extrair_particula_fm)
+    agrupado["fm_sugerido"] = agrupado["desc_xml"].apply(_extrair_fator_multiplicador_xml)
     agrupado["nova_up"] = NOVA_UP_PADRAO
     agrupado = (
         agrupado.sort_values("qtde_ocorrencias", ascending=False)[_COLUNAS_FM_ENTRADAS_AGRUPADO]
@@ -3024,14 +3060,16 @@ def consultar_curadoria_fm_entradas_detalhado(limite: "int | None" = 200) -> "tu
 # sobre estoque_saidas (Estágio 4). Mesma chave de agrupamento (Descrição XML
 # + Valor Unitário XML arredondado ao inteiro — `_valor_unit_grupo`, chave
 # interna) e mesmos campos calculados (up_xml=moda(ucom), particula,
-# fm_sugerido=moda(FATOR_MULTIPLICADOR_SUGERIDO), nova_up=NOVA_UP_PADRAO).
-# Diferença real confirmada com o usuário ANTES de implementar: `FATOR_
-# MULTIPLICADOR_SUGERIDO` só é calculado pelo Matching/BC3 (Estágio 2), que
-# só cobre ENTRADAS de terceiros — em `estoque_saidas` só 153 de 60.382
-# linhas (0,3%) têm esse campo preenchido (achado real na geraldo).
-# Confirmado explicitamente: mantém a coluna "fm_sugerido" mesmo quase
-# sempre vazia — o auditor ainda digita o FM_ELEITO manualmente, mesmos
-# moldes de Entradas, só que quase sem sugestão pronta.
+# nova_up=NOVA_UP_PADRAO). `fm_sugerido` (2026-07-25, pedido do usuário:
+# "para o fm, nas entradas e saídas não olhe para o sped, olhe apenas para
+# o xml") vem de _extrair_fator_multiplicador_xml(desc_xml) — NÃO mais do
+# FATOR_MULTIPLICADOR_SUGERIDO do Matching (que já teria cobertura ínfima
+# aqui, 0,3% das linhas — Matching/BC3 só liga Entradas de terceiros —, e
+# além disso podia variar pro MESMO produto físico dependendo de como a
+# auditada escriturou cada nota no SPED, achado real confirmado com o
+# CERV SKOL LATA 350ML). Com o cálculo baseado só no XML, `fm_sugerido`
+# passa a ter a MESMA cobertura de Entradas (qualquer descrição com
+# padrão de embalagem reconhecido, sem depender do SPED).
 _COLUNAS_FM_SAIDAS_AGRUPADO = [
     "desc_xml", "_valor_unit_grupo", "up_xml", "particula", "fm_sugerido", "nova_up", "qtde_ocorrencias",
 ]
@@ -3040,15 +3078,11 @@ _COLUNAS_FM_SAIDAS_AGRUPADO = [
 def gerar_curadoria_fm_saidas() -> dict:
     """Estágio 9 — Curadoria de Fator Multiplicador (Saídas): mirror de
     gerar_curadoria_fm_entradas(), mesma lógica de agrupamento e campos
-    calculados, mas sobre estoque_saidas (Estágio 4) em vez de
-    estoque_entradas. `fm_sugerido` fica NULL na quase totalidade dos
-    grupos (achado real: só 0,3% das linhas de estoque_saidas têm
-    FATOR_MULTIPLICADOR_SUGERIDO — Matching/BC3 só cobre Entradas de
-    terceiros), mantida mesmo assim por decisão explícita do usuário —
-    o auditor digita o FM_ELEITO manualmente na curadoria, sem depender
-    de sugestão pronta. Devolve {'agrupado': DataFrame, 'erros': list}
-    — erros não-vazio quando estoque_saidas (Estágio 4) ainda não foi
-    gerada."""
+    calculados (incluindo fm_sugerido = _extrair_fator_multiplicador_
+    xml(desc_xml), só a partir do XML, ver nota da seção), mas sobre
+    estoque_saidas (Estágio 4) em vez de estoque_entradas. Devolve
+    {'agrupado': DataFrame, 'erros': list} — erros não-vazio quando
+    estoque_saidas (Estágio 4) ainda não foi gerada."""
     vazio = {"agrupado": pd.DataFrame(columns=_COLUNAS_FM_SAIDAS_AGRUPADO)}
     if not _BANCO_PATH.exists():
         return {**vazio, "erros": ["Tabela estoque_saidas (Estágio 4) ainda não foi gerada."]}
@@ -3061,7 +3095,6 @@ def gerar_curadoria_fm_saidas() -> dict:
                 "SELECT fatoitemnfe_infnfe_det_prod_xprod AS desc_xml, "
                 "TRY_CAST(fatoitemnfe_infnfe_det_prod_vuncom AS DOUBLE) AS valor_unit_bruto, "
                 "fatoitemnfe_infnfe_det_prod_ucom AS ucom, "
-                "FATOR_MULTIPLICADOR_SUGERIDO AS fm_item, "
                 "ID_UNICO AS idunico "
                 "FROM estoque_saidas"
             ).df()
@@ -3079,11 +3112,11 @@ def gerar_curadoria_fm_saidas() -> dict:
         bruto.groupby(["desc_xml", "_valor_unit_grupo"], as_index=False, dropna=False)
         .agg(
             up_xml=("ucom", _moda_ou_none),
-            fm_sugerido=("fm_item", _moda_ou_none),
             qtde_ocorrencias=("idunico", "count"),
         )
     )
     agrupado["particula"] = agrupado["desc_xml"].apply(_extrair_particula_fm)
+    agrupado["fm_sugerido"] = agrupado["desc_xml"].apply(_extrair_fator_multiplicador_xml)
     agrupado["nova_up"] = NOVA_UP_PADRAO
     agrupado = (
         agrupado.sort_values("qtde_ocorrencias", ascending=False)[_COLUNAS_FM_SAIDAS_AGRUPADO]
@@ -6225,19 +6258,26 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
     comercial do XML, `fatoitemnfe_infnfe_det_prod_qcom`); vl_prod =
     vl_unit_prod × qtde_prod (validado com dado real da geraldo: bate
     exato com `fatoitemnfe_infnfe_det_prod_vprod`/VL_ITEM do XML);
-    fm_sugerido (`FATOR_MULTIPLICADOR_SUGERIDO`, já calculado no
-    Matching, Estágio 2 — 2026-07-25, pedido do usuário: "insira fm
-    sugerido para as tabelas ids únicos de entradas, saídas e
-    estoques").
+    fm_sugerido — 2026-07-25, pedido do usuário: "insira fm sugerido
+    para as tabelas ids únicos de entradas, saídas e estoques", depois
+    corrigido no mesmo dia: "para o fm, nas entradas e saídas não olhe
+    para o sped, olhe apenas para o xml". Primeira versão usava
+    `FATOR_MULTIPLICADOR_SUGERIDO` (Matching, Estágio 2 — compara XML
+    contra SPED); TROCADO pra `_extrair_fator_multiplicador_xml(desc_
+    xml)` — número embutido na própria descrição do XML (ex.: "C/12" →
+    12) — achado real que motivou: o fator via SPED podia variar pro
+    MESMO produto físico (CERV SKOL LATA 350ML, sempre UCOM "cx12")
+    dependendo de como a auditada escriturou cada nota (ora
+    desmembrando a caixa em latas no estoque dela, ora não), enquanto
+    o fator via XML é ESTÁVEL — não depende da escrituração da
+    auditada.
 
     `origem="saidas"` — a suposição original (2026-07-25, mesma
     sessão) de que `estoque_saidas` não teria ANO_ELEITO/NCM/UCOM/
-    VUNCOM/QCOM nunca foi checada com dado real; confirmado agora
-    (ao implementar `fm_sugerido`) que TODAS as colunas esperadas
-    já existem de fato em `estoque_saidas` (`FATOR_MULTIPLICADOR_
-    SUGERIDO` com ~0,3% de cobertura — Matching/BC3 só liga Entradas
-    de terceiros, mas o campo está lá) — a função já funcionava igual
-    pras duas origens, só a suposição no comentário estava errada.
+    VUNCOM/QCOM nunca foi checada com dado real; confirmado depois que
+    TODAS as colunas esperadas já existem de fato em `estoque_saidas`
+    — a função já funcionava igual pras duas origens, só a suposição
+    no comentário estava errada.
 
     Devolve DataFrame com as colunas de
     _COLUNAS_ATRIBUTOS_ESTOQUE_POR_IDUNICO — vazio se `idunicos`
@@ -6258,7 +6298,7 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
             campos_esperados = {
                 "ANO_ELEITO", "fatoitemnfe_infnfe_det_prod_ncm", "fatoitemnfe_infnfe_det_prod_ucom",
                 "fatoitemnfe_infnfe_det_prod_vuncom", "fatoitemnfe_infnfe_det_prod_qcom",
-                "fatoitemnfe_infprot_chnfe", "FATOR_MULTIPLICADOR_SUGERIDO",
+                "fatoitemnfe_infprot_chnfe", "fatoitemnfe_infnfe_det_prod_xprod",
             }
             if not campos_esperados.issubset(colunas_tabela):
                 return pd.DataFrame(columns=colunas)
@@ -6271,7 +6311,7 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
                 f"e.fatoitemnfe_infnfe_det_prod_ucom AS unid_prod, "
                 f"TRY_CAST(e.fatoitemnfe_infnfe_det_prod_vuncom AS DOUBLE) AS vl_unit_prod, "
                 f"TRY_CAST(e.fatoitemnfe_infnfe_det_prod_qcom AS DOUBLE) AS qtde_prod, "
-                f"e.FATOR_MULTIPLICADOR_SUGERIDO AS fm_sugerido "
+                f"e.fatoitemnfe_infnfe_det_prod_xprod AS desc_xml "
                 f"FROM {tabela_origem} e "
                 "INNER JOIN _idunicos_busca_fiscal b ON e.ID_UNICO = b.ID_UNICO"
             ).df()
@@ -6281,6 +6321,7 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
         df["ANO_ELEITO"] = df["ANO_ELEITO"].astype(str)
         df["ncm4"] = df["ncm4"].astype(str)
         df["vl_prod"] = df["vl_unit_prod"] * df["qtde_prod"]
+        df["fm_sugerido"] = df["desc_xml"].apply(_extrair_fator_multiplicador_xml)
         return df[colunas]
     except Exception:
         logger.exception("Erro ao consultar atributos de estoque por idunico em %s", _BANCO_PATH)
