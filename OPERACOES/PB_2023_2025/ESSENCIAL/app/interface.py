@@ -2577,6 +2577,19 @@ _COLUNAS_PREVIEW_CRUZAMENTO_SAIDAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_A
 _COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_DETALHADO = ["codproddecl", "descrição_decl", "idunico"]
 _COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_AGRUPADO = ["codproddecl", "descrição_decl", "qtde_ocorrencias"]
 
+# Estoque (2026-07-25, Solicitação Técnica "BUSCA DE CORRESPONDENTES NO
+# ESTOQUE") — mesma ideia do cruzamento de Entradas/Saídas, mas sobre
+# estagio8_estoque_agrupado (Estágio 8.2, Bloco H). Só Critério 1 (mesmo
+# código) e Critério 2 (nome de declaração igual), sem Critério 3 (não
+# pedido na Solicitação Técnica). `desc_xml` não aparece na EXIBIÇÃO —
+# Estoque só tem "descrição_decl" (ver loader._COLUNAS_CRUZAMENTO_
+# ESTOQUE_AGRUPADO); `desc_xml` existe só internamente, como alias de
+# descrição_decl, pra caber no mesmo esquema de persistência de
+# cruzamento_confirmado usado por Entradas/Saídas, sem exigir mudança
+# nenhuma em salvar_cruzamento_confirmado()/_detalhado().
+_COLUNAS_BASE_CRUZAMENTO_ESTOQUE_AGRUPADO = ["codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias"]
+_COLUNAS_PREVIEW_CRUZAMENTO_ESTOQUE_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
+
 
 def _render_bloco_estagio8(
     *,
@@ -3029,18 +3042,323 @@ def render_curadoria_fm_entradas() -> None:
         )
 
 
+_CHAVE_EDITOR_FM_SAIDAS = "editor_curadoria_fm_saidas"
+_COLUNAS_PREVIEW_FM_SAIDAS_AGRUPADO = [
+    "desc_xml", "up_xml", "particula", "fm_sugerido", "nova_up", "qtde_ocorrencias",
+]
+_COLUNAS_PREVIEW_FM_SAIDAS_DETALHADO = ["desc_xml", "idunico", "FM_ELEITO", "NOVA_UP"]
+
+
+def render_curadoria_fm_saidas() -> None:
+    """Estágio 9 — Curadoria de Fator Multiplicador (Saídas), 2026-07-25,
+    Solicitação Técnica "crie tb fator para descrição de saídas e
+    estoques nos moldes das entradas" — mirror de
+    render_curadoria_fm_entradas(), mesmo agrupamento (Descrição XML +
+    Valor Unitário XML arredondado) sobre estoque_saidas (Estágio 4).
+    `fm_sugerido` fica NULL na quase totalidade dos grupos (achado
+    real: só 0,3% de estoque_saidas tem FATOR_MULTIPLICADOR_SUGERIDO —
+    Matching/BC3 só cobre Entradas), mantida mesmo assim por decisão
+    explícita do usuário — o auditor digita o FM_ELEITO manualmente."""
+    st.subheader("Estágio 9 — Curadoria de Fator Multiplicador (Saídas)")
+    st.caption(
+        "Agrupa itens de Saídas (Estágio 4) por Descrição XML + Valor Unitário XML "
+        "(arredondado, só como chave interna). \"UP XML\" é a Unidade de Produto do XML "
+        "(CX, UN, FD...); \"FM Sugerido\" vem do Fator Multiplicador do Matching (Estágio 2), mas "
+        "cobre só ~0,3% dos itens de Saídas (o Matching só liga Entradas de terceiros) — na maioria "
+        "das linhas o auditor digita o FM_ELEITO do zero; \"Partícula\" é uma pista de embalagem "
+        "extraída da própria descrição; \"Nova UP\" começa como \"UNID\" (ajustável)."
+    )
+
+    if "estagio9_fm_saidas_gerado" not in st.session_state:
+        st.session_state["estagio9_fm_saidas_gerado"] = loader.curadoria_fm_saidas_ja_gerado()
+
+    if st.session_state["estagio9_fm_saidas_gerado"]:
+        clicou = st.button(
+            "Regerar Estágio 9 — Curadoria de Fator Multiplicador (Saídas)",
+            key="btn_regerar_estagio9_fm_saidas",
+            help="Reprocessa a partir de estoque_saidas (Estágio 4) e substitui a tabela agrupada.",
+        )
+    else:
+        clicou = st.button(
+            "Gerar Estágio 9 — Curadoria de Fator Multiplicador (Saídas)", key="btn_gerar_estagio9_fm_saidas",
+        )
+
+    if clicou:
+        with st.spinner("Processando estoque_saidas (agrupando por Descrição XML + Valor Unitário)..."):
+            resultado = loader.persistir_curadoria_fm_saidas()
+        if resultado.get("erros"):
+            st.error(resultado["erros"][0])
+            return
+        st.session_state["estagio9_fm_saidas_gerado"] = True
+        st.session_state.pop(_CHAVE_EDITOR_FM_SAIDAS, None)
+        st.rerun()
+
+    if not st.session_state["estagio9_fm_saidas_gerado"]:
+        return
+
+    agrupado, total = loader.consultar_curadoria_fm_saidas_agrupado(limite=None)
+    if agrupado.empty:
+        st.info("Nenhum grupo encontrado.")
+        return
+    st.markdown(f"**{total:,} grupo(s)** de Descrição XML + Valor Unitário.".replace(",", "."))
+
+    curadoria_salva, _ = loader.consultar_curadoria_fm_saidas(limite=None)
+    salvos_por_chave = {}
+    if not curadoria_salva.empty:
+        for _, linha in curadoria_salva.iterrows():
+            if pd.notna(linha["VALOR_UNIT_GRUPO"]):
+                salvos_por_chave[(linha["DESC_XML"], int(linha["VALOR_UNIT_GRUPO"]))] = linha
+
+    editor_base = agrupado[_COLUNAS_PREVIEW_FM_SAIDAS_AGRUPADO].copy()
+    editor_base.insert(0, "_valor_unit_grupo", agrupado["_valor_unit_grupo"])
+    for idx, linha in editor_base.iterrows():
+        chave = (
+            linha["desc_xml"],
+            int(linha["_valor_unit_grupo"]) if pd.notna(linha["_valor_unit_grupo"]) else None,
+        )
+        salvo = salvos_por_chave.get(chave)
+        if salvo is not None:
+            editor_base.at[idx, "fm_sugerido"] = salvo["FM_ELEITO"]
+            editor_base.at[idx, "nova_up"] = salvo["NOVA_UP"]
+
+    editor_exibicao = (
+        editor_base.drop(columns=["_valor_unit_grupo"]).rename(columns=loader.carregar_dicionario_campos())
+    )
+    colunas_travadas = [c for c in editor_exibicao.columns if c not in ("FM Sugerido", "Nova UP")]
+    with st.container(key="curadoria_fm_saidas_tabela"):
+        st.markdown(
+            "<style>.st-key-curadoria_fm_saidas_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 10px; }</style>",
+            unsafe_allow_html=True,
+        )
+        editado = st.data_editor(
+            editor_exibicao,
+            use_container_width=True,
+            hide_index=True,
+            disabled=colunas_travadas,
+            key=_CHAVE_EDITOR_FM_SAIDAS,
+            column_config={"FM Sugerido": st.column_config.NumberColumn(format="%g")},
+        )
+
+    if st.button("💾 Salvar Curadoria de Fator Multiplicador", key="btn_salvar_curadoria_fm_saidas"):
+        selecionadas = pd.DataFrame({
+            "DESC_XML": editor_base["desc_xml"],
+            "VALOR_UNIT_GRUPO": editor_base["_valor_unit_grupo"],
+            "FM_ELEITO": editado["FM Sugerido"],
+            "NOVA_UP": editado["Nova UP"],
+        })
+        universo_chaves = set(zip(
+            editor_base["desc_xml"],
+            editor_base["_valor_unit_grupo"].apply(lambda v: int(v) if pd.notna(v) else None),
+        ))
+        resultado = loader.salvar_curadoria_fm_saidas(selecionadas, universo_chaves=universo_chaves)
+        if "erro" in resultado:
+            st.error(f"Erro: {resultado['erro']}")
+        else:
+            st.success(f"✅ Curadoria salva — {resultado['total_salvo']} grupo(s) atualizado(s).")
+            st.rerun()
+
+    st.divider()
+    st.markdown("**Itens individuais (com ID Único)**")
+    detalhado, total_detalhado = loader.consultar_curadoria_fm_saidas_detalhado(limite=200)
+    if detalhado.empty:
+        st.info("Nenhum grupo salvo ainda — clique em \"Salvar Curadoria de Fator Multiplicador\" acima.")
+        return
+    st.markdown(f"Prévia limitada a 200 linhas de {total_detalhado:,}".replace(",", "."))
+    with st.container(key="curadoria_fm_saidas_detalhado_tabela"):
+        st.markdown(
+            "<style>.st-key-curadoria_fm_saidas_detalhado_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 12px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            _preparar_preview(detalhado, _COLUNAS_PREVIEW_FM_SAIDAS_DETALHADO),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+_CHAVE_EDITOR_FM_ESTOQUE = "editor_curadoria_fm_estoque"
+_COLUNAS_PREVIEW_FM_ESTOQUE_AGRUPADO = ["descrição_decl", "up_estoque", "particula", "nova_up", "qtde_ocorrencias"]
+_COLUNAS_PREVIEW_FM_ESTOQUE_DETALHADO = ["descrição_decl", "idunico", "FM_ELEITO", "NOVA_UP"]
+
+
+def render_curadoria_fm_estoque() -> None:
+    """Estágio 9 — Curadoria de Fator Multiplicador (Estoque), 2026-07-25,
+    Solicitação Técnica — mirror de render_curadoria_fm_entradas(), mas
+    sobre estoque_anual_consolidado (Bloco H, Estágio 5). Diferença
+    estrutural real confirmada com o usuário ANTES de implementar: essa
+    tabela não tem valor unitário nem UCOM — agrupa só por Descrição
+    Declarada (sem "_valor_unit_grupo"); "UP Estoque" vem da MODA do
+    campo UNIDADE (único campo de unidade do Bloco H); SEM "FM
+    Sugerido" pré-calculado (Bloco H não tem ligação com Matching/BC3)
+    — o auditor digita o "FM Eleito" do zero, coluna em branco por
+    padrão (só populada de novo quando já houver curadoria salva)."""
+    st.subheader("Estágio 9 — Curadoria de Fator Multiplicador (Estoque)")
+    st.caption(
+        "Agrupa itens de Estoque (Estágio 5, Bloco H) por Descrição Declarada — sem valor "
+        "unitário (o Bloco H não declara valor por item, só quantidade por ano). \"UP Estoque\" "
+        "é a Unidade declarada no Bloco H (moda do grupo); \"FM Eleito\" fica em branco por "
+        "padrão (Bloco H não tem ligação com Matching/BC3) — o auditor digita manualmente; "
+        "\"Partícula\" é uma pista de embalagem extraída da própria descrição; \"Nova UP\" "
+        "começa como \"UNID\" (ajustável)."
+    )
+
+    if "estagio9_fm_estoque_gerado" not in st.session_state:
+        st.session_state["estagio9_fm_estoque_gerado"] = loader.curadoria_fm_estoque_ja_gerado()
+
+    if st.session_state["estagio9_fm_estoque_gerado"]:
+        clicou = st.button(
+            "Regerar Estágio 9 — Curadoria de Fator Multiplicador (Estoque)",
+            key="btn_regerar_estagio9_fm_estoque",
+            help="Reprocessa a partir de estoque_anual_consolidado (Estágio 5) e substitui a tabela agrupada.",
+        )
+    else:
+        clicou = st.button(
+            "Gerar Estágio 9 — Curadoria de Fator Multiplicador (Estoque)", key="btn_gerar_estagio9_fm_estoque",
+        )
+
+    if clicou:
+        with st.spinner("Processando estoque_anual_consolidado (agrupando por Descrição Declarada)..."):
+            resultado = loader.persistir_curadoria_fm_estoque()
+        if resultado.get("erros"):
+            st.error(resultado["erros"][0])
+            return
+        st.session_state["estagio9_fm_estoque_gerado"] = True
+        st.session_state.pop(_CHAVE_EDITOR_FM_ESTOQUE, None)
+        st.rerun()
+
+    if not st.session_state["estagio9_fm_estoque_gerado"]:
+        return
+
+    agrupado, total = loader.consultar_curadoria_fm_estoque_agrupado(limite=None)
+    if agrupado.empty:
+        st.info("Nenhum grupo encontrado.")
+        return
+    st.markdown(f"**{total:,} grupo(s)** de Descrição Declarada.".replace(",", "."))
+
+    curadoria_salva, _ = loader.consultar_curadoria_fm_estoque(limite=None)
+    salvos_por_chave = {}
+    if not curadoria_salva.empty:
+        for _, linha in curadoria_salva.iterrows():
+            salvos_por_chave[linha["DESCR_ITEM_DECL"]] = linha
+
+    editor_base = agrupado[_COLUNAS_PREVIEW_FM_ESTOQUE_AGRUPADO].copy()
+    # "fm_eleito" não vem de estagio9_fm_estoque_agrupado (não existe
+    # fm_sugerido no Bloco H) — coluna editável em branco, só populada
+    # de volta quando já houver curadoria salva pra essa descrição.
+    editor_base.insert(
+        editor_base.columns.get_loc("nova_up"), "fm_eleito",
+        pd.array([pd.NA] * len(editor_base), dtype="Float64"),
+    )
+    for idx, linha in editor_base.iterrows():
+        salvo = salvos_por_chave.get(linha["descrição_decl"])
+        if salvo is not None:
+            editor_base.at[idx, "fm_eleito"] = salvo["FM_ELEITO"]
+            editor_base.at[idx, "nova_up"] = salvo["NOVA_UP"]
+
+    editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
+    colunas_travadas = [c for c in editor_exibicao.columns if c not in ("FM Eleito", "Nova UP")]
+    with st.container(key="curadoria_fm_estoque_tabela"):
+        st.markdown(
+            "<style>.st-key-curadoria_fm_estoque_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 10px; }</style>",
+            unsafe_allow_html=True,
+        )
+        editado = st.data_editor(
+            editor_exibicao,
+            use_container_width=True,
+            hide_index=True,
+            disabled=colunas_travadas,
+            key=_CHAVE_EDITOR_FM_ESTOQUE,
+            column_config={"FM Eleito": st.column_config.NumberColumn(format="%g")},
+        )
+
+    if st.button("💾 Salvar Curadoria de Fator Multiplicador", key="btn_salvar_curadoria_fm_estoque"):
+        selecionadas = pd.DataFrame({
+            "DESCR_ITEM_DECL": editor_base["descrição_decl"],
+            "FM_ELEITO": editado["FM Eleito"],
+            "NOVA_UP": editado["Nova UP"],
+        })
+        universo_chaves = set(editor_base["descrição_decl"])
+        resultado = loader.salvar_curadoria_fm_estoque(selecionadas, universo_chaves=universo_chaves)
+        if "erro" in resultado:
+            st.error(f"Erro: {resultado['erro']}")
+        else:
+            st.success(f"✅ Curadoria salva — {resultado['total_salvo']} grupo(s) atualizado(s).")
+            st.rerun()
+
+    st.divider()
+    st.markdown("**Itens individuais (com ID Único)**")
+    detalhado, total_detalhado = loader.consultar_curadoria_fm_estoque_detalhado(limite=200)
+    if detalhado.empty:
+        st.info("Nenhum grupo salvo ainda — clique em \"Salvar Curadoria de Fator Multiplicador\" acima.")
+        return
+    st.markdown(f"Prévia limitada a 200 linhas de {total_detalhado:,}".replace(",", "."))
+    with st.container(key="curadoria_fm_estoque_detalhado_tabela"):
+        st.markdown(
+            "<style>.st-key-curadoria_fm_estoque_detalhado_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 12px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            _preparar_preview(detalhado, _COLUNAS_PREVIEW_FM_ESTOQUE_DETALHADO),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
 def render_pagina_estagio_9() -> None:
-    """Painel 'ESTÁGIO 9: FATOR MULTIPLICADOR (ENTRADAS)' (2026-07-24,
-    Solicitação Técnica), botão da 2ª linha do Menu Principal: ver
-    loader.gerar_curadoria_fm_entradas()/render_curadoria_fm_entradas().
-    Exige dados_carregados (mesmo padrão das outras páginas); depende
-    também de estoque_entradas (Estágio 4) já gerada, checado dentro de
-    render_curadoria_fm_entradas()."""
+    """Painel 'ESTÁGIO 9: FATOR MULTIPLICADOR' (2026-07-24, Solicitação
+    Técnica original — só Entradas; expandido 2026-07-25 pra Saídas e
+    Estoque, "nos moldes das entradas"), botão da 2ª linha do Menu
+    Principal: 3 abas, mesmo padrão de nível superior do Estágio 8
+    ("📥 Entradas"/"📤 Saídas"/"📦 Estoque"). Exige dados_carregados
+    (mesmo padrão das outras páginas); cada aba checa sua própria
+    tabela de origem (estoque_entradas/estoque_saidas/estoque_anual_
+    consolidado) dentro da respectiva render_curadoria_fm_*()."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
-    render_curadoria_fm_entradas()
+    aba_entradas, aba_saidas, aba_estoque = st.tabs(["📥 Entradas", "📤 Saídas", "📦 Estoque"])
+    with aba_entradas:
+        render_curadoria_fm_entradas()
+    with aba_saidas:
+        render_curadoria_fm_saidas()
+    with aba_estoque:
+        render_curadoria_fm_estoque()
+
+
+def _ampliar_universo_idunicos_com_persistido(
+    escolhido: dict, origem: str, universo_chaves: set, universo_idunicos: set,
+) -> set:
+    """Amplia `universo_idunicos` (calculado a partir da busca AO VIVO,
+    `fn_detalhado()`) com qualquer idunico JÁ PERSISTIDO em
+    cruzamento_confirmado_detalhado pras mesmas `universo_chaves`
+    (codproddecl, desc_xml), mesmo que esse idunico não apareça mais na
+    busca atual — achado real 2026-07-25: um item confirmado na Rubrica
+    do Estoque (idunico de um ano "ainda não fechado") ficou ÓRFÃO depois
+    que o filtro de QUANTIDADE_FINAL do Estágio 8.2 passou a excluir
+    aquele ano da busca — o usuário marcou "Desfazer" na combinação
+    inteira, mas o idunico órfão nunca aparecia mais em `fn_detalhado()`,
+    então nunca entrava no `universo_idunicos` calculado só a partir da
+    busca ao vivo, e a linha ficava PRA SEMPRE travada em
+    cruzamento_confirmado_detalhado, inalcançável pelo Desfazer normal.
+    Sem essa ampliação, qualquer mudança futura na fonte (Estágio 4/5/8,
+    regeneração de dados) que remova um idunico anteriormente confirmado
+    pode orfanizar aquela confirmação da mesma forma — a ampliação evita
+    isso em qualquer origem (entradas/saídas/estoque)."""
+    ja_persistido, _ = loader.consultar_cruzamento_confirmado_detalhado(
+        descr_alvo=escolhido["DESCR_ALVO"], origem=origem, limite=None,
+    )
+    if ja_persistido.empty:
+        return universo_idunicos
+    mask_persistido = [
+        (c, d) in universo_chaves
+        for c, d in zip(ja_persistido["codproddecl"], ja_persistido["desc_xml"])
+    ]
+    return universo_idunicos | set(ja_persistido.loc[mask_persistido, "idunico"])
 
 
 def _obter_criterios_cruzamento_entradas() -> dict:
@@ -3320,6 +3638,9 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
             for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
         ]
         universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
+        universo_idunicos = _ampliar_universo_idunicos_com_persistido(
+            escolhido, "entradas", universo_chaves, universo_idunicos,
+        )
         mask_salvar = [
             (c, d) in chaves_salvar
             for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
@@ -3538,6 +3859,9 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
             for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
         ]
         universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
+        universo_idunicos = _ampliar_universo_idunicos_com_persistido(
+            escolhido, "saidas", universo_chaves, universo_idunicos,
+        )
         mask_salvar = [
             (c, d) in chaves_salvar
             for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
@@ -3589,6 +3913,219 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
         )
         st.dataframe(
             _preparar_preview(detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+def _obter_criterios_cruzamento_estoque() -> dict:
+    """Mapa criterio -> (fn_agrupado, fn_detalhado) usado pelo selectbox de
+    _render_cruzamento_estoque() — mirror de _obter_criterios_cruzamento_
+    entradas() (2026-07-25, Solicitação Técnica "BUSCA DE CORRESPONDENTES
+    NO ESTOQUE"), com Critério 1 (mesmo código) e Critério 2 (nome de
+    declaração igual) — mesmos dois critérios de Entradas. SEM Critério 3
+    (código divergente): não pedido na Solicitação Técnica."""
+    return {
+        loader.CRITERIO_BUSCA1_MESMO_CODIGO: (
+            loader.cruzar_produto_escolhido_estoque,
+            loader.cruzar_produto_escolhido_estoque_detalhado,
+        ),
+        loader.CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL: (
+            loader.cruzar_produto_escolhido_estoque_criterio2,
+            loader.cruzar_produto_escolhido_estoque_criterio2_detalhado,
+        ),
+    }
+
+
+# "Itens individuais" do Estoque não passa pelo enriquecimento fiscal
+# (loader.consultar_atributos_estoque_por_idunico()) — esse enriquecimento
+# busca em estoque_entradas/estoque_saidas por ID_UNICO real de item de
+# XML; o idunico do Estoque é SINTÉTICO (hash de ANO_REFERENCIA+COD_ITEM_
+# DECLARACAO+DESCR_ITEM_DECLARACAO+QUANTIDADE_INICIAL+QUANTIDADE_FINAL,
+# ver gerar_estagio_8_estoque()) e não existe em nenhuma das duas tabelas
+# — não faz sentido tentar enriquecer com CHV_NFE/ANO_ELEITO/NCM/etc.,
+# que só existem pra itens de movimentação física (XML).
+_COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE = ["codproddecl", "desc_xml", "CRITERIO", "TS", "idunico"]
+
+
+def _render_cruzamento_estoque(escolhido: dict) -> None:
+    """Aba 'Estoque' do cruzamento (Botão 9) — mirror de
+    _render_cruzamento_entradas(), 2026-07-25, Solicitação Técnica "BUSCA
+    DE CORRESPONDENTES NO ESTOQUE": compara o produto escolhido com
+    estagio8_estoque_agrupado (Estágio 8.2, Bloco H) usando o critério
+    selecionado no selectbox.
+
+    Dois critérios (sem Critério 3 — ver
+    _obter_criterios_cruzamento_estoque()):
+
+    **Critério 1** (loader.cruzar_produto_escolhido_estoque()) — MESMO
+    código de produto (normalizado) + SIMILARIDADE_DESCRICAO (entre
+    `descrição_decl` — única descrição disponível no Bloco H — e
+    `DESCR_ALVO`) só pra ordenar.
+
+    **Critério 2** (loader.cruzar_produto_escolhido_estoque_criterio2())
+    — `descrição_decl` IGUAL (normalizado) ao `DESCR_ALVO`, sem exigir
+    relação de código — captura itens que a empresa declara com o nome
+    correto mas com código interno que não bate com as notas fiscais
+    (comum em cadastros legados, conforme a Solicitação Técnica).
+
+    Mesma UI de Entradas/Saídas: checkbox "Salvar"/"Desfazer", botão
+    "Salvar na Rubrica" (persiste com origem="estoque" em
+    loader.salvar_cruzamento_confirmado()/salvar_cruzamento_confirmado_
+    detalhado(), preservando o idunico SINTÉTICO do Estágio 8.2 pra
+    auditoria física futura) e tabela "Itens individuais" ao final —
+    aqui SEM o enriquecimento fiscal (não se aplica ao idunico
+    sintético, ver _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_
+    ESTOQUE). Todas as keys de widget/container levam sufixo "_estoque"
+    pra não colidir com as abas de Entradas/Saídas — as três abas de
+    st.tabs() rodam no MESMO script run do Streamlit."""
+    criterios = _obter_criterios_cruzamento_estoque()
+    criterio_busca = st.selectbox(
+        "Critério de busca",
+        options=list(criterios.keys()),
+        key="select_criterio_busca_estoque",
+    )
+    fn_agrupado, fn_detalhado = criterios[criterio_busca]
+
+    if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
+        st.caption(
+            f"Combinações em `estagio8_estoque_agrupado` (Estoque, Estágio 8.2) com o MESMO código de produto "
+            f"de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — comparação normalizada "
+            "(zero à esquerda em código numérico não conta como diferença) — ordenadas por "
+            "similaridade de descrição (overlap de tokens) entre a descrição declarada e a do alvo."
+        )
+    else:
+        st.caption(
+            f"Combinações em `estagio8_estoque_agrupado` (Estoque, Estágio 8.2) cujo nome de declaração "
+            f"(`descrição_decl`) é IGUAL (normalizado — maiúsculas/espaços) ao de **{escolhido['DESCR_ALVO']}** "
+            f"({escolhido['COD_ITEM']}), sem exigir nenhuma relação de código — captura itens com nome "
+            "correto mas código interno divergente (comum em cadastros legados)."
+        )
+
+    correspondentes, _ = fn_agrupado()
+    if correspondentes.empty:
+        if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
+            st.warning(
+                f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
+                "em `estagio8_estoque_agrupado`, mesmo após normalizar zero à esquerda."
+            )
+        else:
+            st.warning(
+                f"⚠️ Nenhum item declarado com o mesmo nome de **{escolhido['DESCR_ALVO']}** encontrado "
+                "em `estagio8_estoque_agrupado`."
+            )
+        return
+    st.success(
+        f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
+    )
+
+    ja_confirmadas, _ = loader.consultar_cruzamento_confirmado(descr_alvo=escolhido["DESCR_ALVO"], limite=None)
+    ja_confirmadas_estoque = (
+        ja_confirmadas[ja_confirmadas["ORIGEM"] == "estoque"] if not ja_confirmadas.empty
+        else ja_confirmadas
+    )
+    chaves_confirmadas = set(
+        zip(ja_confirmadas_estoque["codproddecl"], ja_confirmadas_estoque["desc_xml"])
+    ) if not ja_confirmadas_estoque.empty else set()
+
+    editor_base = correspondentes[_COLUNAS_BASE_CRUZAMENTO_ESTOQUE_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]].copy()
+    editor_base.insert(0, "Salvar", False)
+    editor_base.insert(1, "Desfazer", False)
+    editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
+    # "desc_xml" não aparece na EXIBIÇÃO (Estoque só tem "descrição_decl",
+    # desc_xml é só um alias interno pro esquema de persistência — ver
+    # loader._COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO).
+    editor_exibicao = editor_exibicao.drop(columns=["Descricao XML"], errors="ignore")
+    editor_exibicao.insert(2, "Observação", [
+        "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
+        for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
+    ])
+    colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
+    sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
+    with st.container(key="cruzamento_estoque_tabela"):
+        st.markdown(
+            "<style>.st-key-cruzamento_estoque_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 10px; }</style>",
+            unsafe_allow_html=True,
+        )
+        editado = st.data_editor(
+            editor_exibicao,
+            use_container_width=True,
+            hide_index=True,
+            disabled=colunas_travadas,
+            key=f"editor_cruzamento_estoque_{sufixo_criterio}",
+        )
+
+    st.caption(
+        "Marque \"Salvar\" pra confirmar uma combinação na Rubrica; marque \"Desfazer\" pra "
+        "remover uma combinação já salva (coluna \"Observação\")."
+    )
+    if st.button("💾 Salvar na Rubrica do Produto Alvo", key=f"btn_salvar_rubrica_estoque_{sufixo_criterio}"):
+        marcadas_salvar = editado["Salvar"].reindex(editor_base.index).fillna(False)
+        marcadas_desfazer = editado["Desfazer"].reindex(editor_base.index).fillna(False)
+        selecionadas = editor_base.loc[
+            marcadas_salvar & ~marcadas_desfazer, _COLUNAS_BASE_CRUZAMENTO_ESTOQUE_AGRUPADO
+        ]
+        chaves_desfazer = set(zip(
+            editor_base.loc[marcadas_desfazer, "codproddecl"],
+            editor_base.loc[marcadas_desfazer, "desc_xml"],
+        ))
+        chaves_salvar = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
+        universo_chaves = chaves_salvar | chaves_desfazer
+        resultado = loader.salvar_cruzamento_confirmado(
+            escolhido, "estoque", criterio_busca, selecionadas, universo_chaves=universo_chaves,
+        )
+        detalhado_completo, _ = fn_detalhado()
+        mask_universo = [
+            (c, d) in universo_chaves
+            for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
+        ]
+        universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
+        universo_idunicos = _ampliar_universo_idunicos_com_persistido(
+            escolhido, "estoque", universo_chaves, universo_idunicos,
+        )
+        mask_salvar = [
+            (c, d) in chaves_salvar
+            for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
+        ]
+        itens_marcados = detalhado_completo.loc[mask_salvar, ["codproddecl", "desc_xml", "idunico"]]
+        resultado_detalhado = loader.salvar_cruzamento_confirmado_detalhado(
+            escolhido, "estoque", criterio_busca, itens_marcados, universo_idunicos=universo_idunicos,
+        )
+        if "erro" in resultado:
+            st.error(f"Erro: {resultado['erro']}")
+        elif "erro" in resultado_detalhado:
+            st.error(f"Erro ao gravar itens individuais: {resultado_detalhado['erro']}")
+        else:
+            partes = [f"{resultado['total_salvo']} confirmada(s)"]
+            if resultado["total_removido"]:
+                partes.append(f"{resultado['total_removido']} removida(s)")
+            st.success(
+                f"✅ Rubrica atualizada — {', '.join(partes)} "
+                f"({resultado_detalhado['total_salvo']} item(ns) individual(is) gravado(s))."
+            )
+            st.rerun()
+
+    st.divider()
+    st.markdown("**Itens individuais (com ID Único) — já atribuídos ao alvo**")
+    detalhado, total_detalhado = loader.consultar_cruzamento_confirmado_detalhado(
+        descr_alvo=escolhido["DESCR_ALVO"], origem="estoque", limite=None,
+    )
+    if detalhado.empty:
+        st.info(
+            "Nenhuma combinação confirmada na Rubrica ainda — marque \"Salvar\" na tabela acima e "
+            "clique em \"Salvar na Rubrica do Produto Alvo\" pra ver os itens individuais aqui."
+        )
+        return
+    st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
+    with st.container(key="cruzamento_estoque_detalhado_tabela"):
+        st.markdown(
+            "<style>.st-key-cruzamento_estoque_detalhado_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 12px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            _preparar_preview(detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE),
             use_container_width=True,
             hide_index=True,
         )
@@ -3692,9 +4229,13 @@ def render_produtos_alvo_salvos() -> None:
     if not escolhido_atual:
         st.info("Escolha um produto acima pra ver o cruzamento com o Estágio 8.")
     else:
-        aba_cruzamento_entradas, aba_cruzamento_saidas = st.tabs(["📥 Entradas", "📤 Saídas"])
+        aba_cruzamento_entradas, aba_cruzamento_saidas, aba_cruzamento_estoque = st.tabs(
+            ["📥 Entradas", "📤 Saídas", "📦 Estoque"]
+        )
         with aba_cruzamento_entradas:
             _render_cruzamento_entradas(escolhido_atual)
+        with aba_cruzamento_estoque:
+            _render_cruzamento_estoque(escolhido_atual)
         with aba_cruzamento_saidas:
             _render_cruzamento_saidas(escolhido_atual)
 
