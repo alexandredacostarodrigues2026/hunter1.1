@@ -2558,7 +2558,7 @@ _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_AGRUPA
 # idunico vira a ÚLTIMA coluna (depois até de CRITERIO/TS).
 _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO = [
     "codproddecl", "desc_xml", "ANO_ELEITO", "ncm4", "unid_prod",
-    "vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido", "TRATAMENTO", "valor_destoante",
+    "vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido", "TRATAMENTO",
     "CHV_NFE", "CRITERIO", "TS", "idunico",
 ]
 
@@ -3418,10 +3418,6 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
       destoantes) — a correspondência por texto não distinguia mais
       qual linha era. `_idunicos` resolve isso: cada linha do Sumário
       carrega o conjunto EXATO de idunico que ela representa.
-    - detalhado_ajustado ganha a coluna `valor_destoante` (mesma
-      sinalização, ver loader.sinalizar_valor_destoante()) — calculada
-      DEPOIS do tratamento de FM abaixo, refletindo o valor unitário
-      já ajustado (o que o auditor vê na tela).
     - idunicos_tratados: conjunto de idunico com TRATAMENTO='T' — usado
       pra coluna "Observação" (2026-07-26, "CRIE UMA OBSERVAÇÃO COMO NA
       FIG"), testando interseção com `_idunicos` de cada linha do
@@ -3454,8 +3450,6 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
     detalhado.loc[mascara_tratado, "unid_prod"] = detalhado.loc[mascara_tratado, "NOVA_UNIDADE_APLICADA"]
     detalhado["TRATAMENTO"] = detalhado["TRATAMENTO"].fillna("")
     detalhado = detalhado.drop(columns=["FM_APLICADO", "NOVA_UNIDADE_APLICADA"], errors="ignore")
-    if "vl_unit_prod" in detalhado.columns and "unid_prod" in detalhado.columns:
-        detalhado["valor_destoante"] = loader.sinalizar_valor_destoante(detalhado)
     return detalhado, sumario_unidades, idunicos_tratados
 
 
@@ -4172,7 +4166,7 @@ def _obter_criterios_cruzamento_estoque() -> dict:
 # atributos_estoque_estoque_por_idunico().
 _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE = [
     "codproddecl", "desc_xml", "ncm4", "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod",
-    "fm_sugerido", "TRATAMENTO", "valor_destoante", "ano_ef", "ano_ei", "dt_decl", "CRITERIO", "TS", "idunico",
+    "fm_sugerido", "TRATAMENTO", "ano_ef", "ano_ei", "dt_decl", "CRITERIO", "TS", "idunico",
 ]
 
 
@@ -4359,10 +4353,6 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     detalhado, sumario_unidades, idunicos_tratados = _aplicar_tratamento_fm_detalhado(
         detalhado, origem="estoque",
     )
-    # Valor Destoante já calculado dentro de _aplicar_tratamento_fm_
-    # detalhado() (2026-07-26; estendido de Estoque pras 3 origens no
-    # mesmo dia, "ESTENDA PARA ENTRADAS E SAÍDAS") — coluna
-    # `valor_destoante` já vem pronta em `detalhado`.
     for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido"):
         if _col in detalhado.columns:
             detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
