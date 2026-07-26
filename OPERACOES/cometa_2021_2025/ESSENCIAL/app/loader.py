@@ -2792,6 +2792,48 @@ def _extrair_fator_multiplicador_xml(desc) -> float:
     return float(digitos.group()) if digitos else 1.0
 
 
+TOLERANCIA_CLUSTER_PRECO_FM = 0.10  # 10%: cobre variacao normal (frete/desconto) sem juntar unidades distintas
+# Ref. real (geraldo, CERV SKOL LATA 350ML): cx12 (R$30,49) vs cx012 (R$31,35)
+# = diff ~2,7% -> mesmo cluster (mesma unidade, erro de digitacao). cx12
+# (R$30,49) vs LAT (R$2,50) = diff ~92% -> clusters distintos (unidade
+# realmente diferente, nao junta).
+
+
+def _clusterizar_por_preco(vl_unit_prod: pd.Series, tolerancia: float = TOLERANCIA_CLUSTER_PRECO_FM) -> pd.Series:
+    """Atribui um id de cluster (0, 1, 2, ...) a cada item de `vl_unit_prod`,
+    agrupando por PROXIMIDADE PERCENTUAL de preço em vez de por texto de
+    unidade — pedido do usuário (2026-07-25): variações de grafia da mesma
+    unidade real (ex.: "cx12"/"cx012") devem cair juntas quando o preço
+    unitário bate, sem depender de faixas fixas por produto.
+
+    Algoritmo: ordena os preços válidos ascendente e percorre
+    sequencialmente, comparando cada item à média corrente do cluster
+    aberto; abre um novo cluster quando a diferença relativa a essa média
+    excede `tolerancia` (padrão 10%, ver TOLERANCIA_CLUSTER_PRECO_FM).
+    Itens com preço nulo/NaN não entram na comparação — cada um recebe seu
+    próprio cluster, preservando a linha na exibição sem preço pra
+    comparar."""
+    validos = vl_unit_prod.dropna().sort_values()
+    ids = pd.Series(index=vl_unit_prod.index, dtype="object")
+    cluster_atual = 0
+    soma_atual = 0.0
+    n_atual = 0
+    for idx, preco in validos.items():
+        media_atual = soma_atual / n_atual if n_atual else preco
+        if n_atual > 0 and abs(preco - media_atual) / media_atual > tolerancia:
+            cluster_atual += 1
+            soma_atual = 0.0
+            n_atual = 0
+        ids.loc[idx] = f"p{cluster_atual}"
+        soma_atual += preco
+        n_atual += 1
+    proximo_id_nulo = cluster_atual + 1
+    for idx in vl_unit_prod.index[vl_unit_prod.isna()]:
+        ids.loc[idx] = f"n{proximo_id_nulo}"
+        proximo_id_nulo += 1
+    return ids
+
+
 def gerar_curadoria_fm_entradas() -> dict:
     """Estágio 9 — Curadoria de Fator Multiplicador (Entradas): agrupa
     estoque_entradas (Estágio 4) por (Descrição XML, Valor Unitário XML
@@ -5245,25 +5287,55 @@ def consultar_grupo_produto_alvo_fiscalizacao(
 # mesmo raciocínio do Estágio 9. Editáveis na tela (interface.py), sem
 # persistência própria por ora — a decisão final do Fator Multiplicador
 # continua sendo gravada no Estágio 9 (fm_entradas_curadoria).
+#
+# Clusterização por preço (2026-07-25, pedido do usuário: agrupar unidades
+# por FAIXA de preço, não só por texto exato) — ver _clusterizar_por_preco()
+# e TOLERANCIA_CLUSTER_PRECO_FM. Motivo: "cx12"/"cx012" são a mesma unidade
+# física (erro de digitação numa nota), com preço unitário quase idêntico;
+# agrupar só por texto criava 2 linhas artificiais e diluía o diagnóstico.
 _COLUNAS_SUMARIO_UNIDADES_ALVO = ["unid_prod", "qtde_ocorrencia_unid_prod", "media_vu", "fm_sug", "nova_unid"]
 
 
 def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
     """Agrupa os itens já confirmados na Rubrica do Produto Alvo (Botão 9)
-    por `unid_prod` (unidade comercial do XML, `ucom` — mesmo campo já
-    enriquecido em consultar_atributos_estoque_por_idunico(), ver
-    _render_cruzamento_entradas()). `df_detalhado` é o DataFrame já
-    enriquecido com as métricas fiscais (uma linha por item/idunico
-    confirmado, com `unid_prod`/`vl_unit_prod`/`fm_sugerido` numéricos —
-    chamar ANTES de qualquer formatação BR em texto, que transformaria
-    vl_unit_prod em string e quebraria a média). Colunas devolvidas:
-    - unid_prod: unidade do XML (Regra R07: string).
-    - qtde_ocorrencia_unid_prod: contagem de linhas (itens) por unidade.
-    - media_vu: média aritmética de vl_unit_prod por unidade.
+    primeiro por TEXTO exato de `unid_prod`, e depois FUNDE grupos de texto
+    diferentes cujo preço unitário MÉDIO seja próximo (cluster de preço,
+    ver _clusterizar_por_preco()). Mudança de 2026-07-25 (pedido do
+    usuário): variações de grafia da mesma unidade real (ex.: "cx12" com
+    45 ocorrências e "cx012" com 1, mesmo produto físico digitado errado
+    numa nota) tinham preço unitário médio quase idêntico e ficavam em
+    linhas separadas, diluindo o diagnóstico — agora caem no mesmo
+    cluster e viram 1 linha só, com o rótulo (`unid_prod`) sendo a grafia
+    mais frequente do cluster. Unidades genuinamente diferentes (ex.:
+    venda avulsa "LAT" a R$2,50 vs. caixa "cx12" a R$30,49) continuam em
+    clusters distintos, pois o preço está muito além da tolerância de
+    10% (TOLERANCIA_CLUSTER_PRECO_FM).
+
+    IMPORTANTE — a clusterização compara a MÉDIA de cada grupo de texto,
+    não o preço de cada item isolado: testado com dado real (geraldo,
+    CERV SKOL LATA 350ML) e descoberto que a variação NATURAL de preço
+    dentro do próprio "cx12" entre notas diferentes (fornecedor/desconto/
+    época) já passa de 10% (ex.: R$24,90 a R$38,76) — clusterizar item a
+    item fragmentava "cx12" em vários pedaços artificiais. Agregando por
+    texto primeiro, essa variação interna fica absorvida na própria
+    média do grupo, e o cluster de preço só decide se DOIS GRUPOS DE
+    TEXTO diferentes devem ser tratados como a mesma unidade real.
+
+    `df_detalhado` é o DataFrame já enriquecido com as métricas fiscais
+    (uma linha por item/idunico confirmado, com `unid_prod`/`vl_unit_prod`/
+    `fm_sugerido` numéricos — chamar ANTES de qualquer formatação BR em
+    texto, que transformaria vl_unit_prod em string e quebraria a média
+    / a clusterização). Colunas devolvidas:
+    - unid_prod: MODA do texto de unidade dentro do cluster (grafia mais
+      frequente — Regra R07: string).
+    - qtde_ocorrencia_unid_prod: contagem de itens do cluster (soma as
+      variações de texto que caíram juntas).
+    - media_vu: média aritmética de vl_unit_prod dentro do cluster
+      (ponderada pelos itens de todos os grupos de texto fundidos).
     - fm_sug: MODA do `fm_sugerido` (já calculado por item na tabela
-      "Itens individuais", ver nota da seção) dentro do grupo — NULL se
+      "Itens individuais", ver nota da seção) dentro do cluster — NULL se
       `df_detalhado` não tiver a coluna (ex.: enriquecimento
-      indisponível) ou nenhum item do grupo tiver fator calculado.
+      indisponível) ou nenhum item do cluster tiver fator calculado.
     - nova_unid: valor PADRÃO NOVA_UP_PADRAO ("UNID") — ponto de partida
       editável, mesmo raciocínio do Estágio 9.
     Ordenado por qtde_ocorrencia_unid_prod decrescente. Devolve DataFrame
@@ -5279,13 +5351,25 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
         s = serie.dropna()
         return s.mode().iloc[0] if not s.empty else pd.NA
 
+    # 1) agrega primeiro por texto exato — preserva a variação natural de
+    #    preço dentro de uma mesma unidade real (ex.: "cx12" entre notas).
+    media_por_texto = base.groupby("unid_prod")["vl_unit_prod"].mean()
+
+    # 2) clusteriza os GRUPOS de texto (não os itens) pela proximidade da
+    #    média de cada grupo — só aqui que grafias diferentes da mesma
+    #    unidade real (cx12/cx012) se juntam, sem fragmentar cx12
+    #    internamente por causa da variação natural de preço entre notas.
+    cluster_por_texto = _clusterizar_por_preco(media_por_texto)
+    base["_cluster_preco"] = base["unid_prod"].map(cluster_por_texto)
+
     agg_kwargs = {
+        "unid_prod": ("unid_prod", _moda_ou_none),
         "qtde_ocorrencia_unid_prod": ("unid_prod", "size"),
         "media_vu": ("vl_unit_prod", "mean"),
     }
     if "fm_sugerido" in base.columns:
         agg_kwargs["fm_sug"] = ("fm_sugerido", _moda_ou_none)
-    agrupado = base.groupby("unid_prod", as_index=False).agg(**agg_kwargs)
+    agrupado = base.groupby("_cluster_preco", as_index=False).agg(**agg_kwargs)
     if "fm_sug" not in agrupado.columns:
         agrupado["fm_sug"] = pd.NA
     agrupado["nova_unid"] = NOVA_UP_PADRAO
