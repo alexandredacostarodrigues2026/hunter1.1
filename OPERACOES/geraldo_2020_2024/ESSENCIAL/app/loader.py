@@ -5448,8 +5448,24 @@ def gerar_sumario_unidades_alvo_com_destaque(df_detalhado: pd.DataFrame) -> pd.D
 # de toda tabela ligada a um produto alvo neste app (cruzamento_
 # confirmado, cruzamento_confirmado_detalhado, produto_alvo_
 # fiscalizacao). Regra R07: sempre string.
+#
+# VALOR_UNITARIO_APLICADO (2026-07-26, pedido do usuário: "TRANSFORME O
+# VALOR UNIT MIN-MAX EM EDITÁVEL" — coluna "Valor Unitário (Min-Max)"
+# do Sumário ganhou edição) — override OPCIONAL (nullable) do valor
+# unitário base usado no ÷FM, no lugar do vl_unit_prod BRUTO de cada
+# item. Só é usado quando o auditor de fato EDITA o campo pra um número
+# único (não uma faixa "min - max") — ver _parsear_valor_unitario_
+# editado() (interface.py). Sem override (NULL, comportamento padrão
+# de antes): vl_unit_prod÷FM/qtde_prod×FM preserva vl_prod invariante.
+# COM override: vl_unit_prod = VALOR_UNITARIO_APLICADO÷FM (mesmo valor
+# pra todos os itens do grupo, corrigindo a variação interna de preço
+# entre notas — ver achado real de 2026-07-25/26 sobre "cx12" variar
+# de R$24,90 a R$38,76), qtde_prod continua item a item ×FM, e vl_prod
+# passa a ser RECALCULADO (não mais invariante ao total original — o
+# auditor decidiu conscientemente corrigir o preço-base).
 _COLUNAS_TRATAMENTO_FM = [
-    "idunico", "DESCR_ALVO", "COD_ITEM", "TRATAMENTO", "FM_APLICADO", "NOVA_UNIDADE_APLICADA", "TS",
+    "idunico", "DESCR_ALVO", "COD_ITEM", "TRATAMENTO", "FM_APLICADO",
+    "NOVA_UNIDADE_APLICADA", "VALOR_UNITARIO_APLICADO", "TS",
 ]
 
 _TABELAS_TRATAMENTO_FM = {
@@ -5466,7 +5482,9 @@ def consultar_tratamento_fm_por_idunico(idunicos: "set | list", origem: str = "e
     tabela "Itens individuais" do Botão 9. Devolve DataFrame vazio
     (mesmas colunas) se `idunicos` vier vazio, o banco não existir, ou a
     tabela ainda não tiver sido criada (nenhum tratamento aplicado
-    ainda)."""
+    ainda). Colunas ausentes na tabela real (2026-07-26: tabelas já
+    existentes antes de `VALOR_UNITARIO_APLICADO` ser adicionada) vêm
+    preenchidas com NULL — sem exigir migração de schema."""
     colunas = _COLUNAS_TRATAMENTO_FM
     tabela = _TABELAS_TRATAMENTO_FM[origem]
     if not idunicos or not _BANCO_PATH.exists():
@@ -5483,6 +5501,9 @@ def consultar_tratamento_fm_por_idunico(idunicos: "set | list", origem: str = "e
             ).df()
             con.unregister("_idunicos_tratamento_fm")
         df["idunico"] = df["idunico"].astype(str)
+        for col in colunas:
+            if col not in df.columns:
+                df[col] = pd.NA
         return df[colunas]
     except Exception:
         logger.exception("Erro ao consultar %s em %s", tabela, _BANCO_PATH)
@@ -5492,16 +5513,22 @@ def consultar_tratamento_fm_por_idunico(idunicos: "set | list", origem: str = "e
 def aplicar_tratamento_fm(
     idunicos: "set | list", fm_aplicado: float, nova_unidade: str,
     descr_alvo: str, cod_item: str, origem: str = "entradas",
+    valor_unitario_aplicado: "float | None" = None,
 ) -> dict:
     """Aplica (grava) o Fator Multiplicador e a Nova Unidade nos itens
     (idunico) informados — marca TRATAMENTO='T' pra cada um, na tabela
     tratamento_fm_entradas/_saidas/_estoque conforme `origem`, junto com
     `descr_alvo`/`cod_item` (Produto Alvo dono do tratamento — 2026-07-26,
-    "ISSO DEVE FICAR SALVO NO PRODUTO ALVO"). Upsert por `idunico`: item
-    já tratado antes tem seu registro SUBSTITUÍDO (não duplicado) se
-    aplicado de novo. Regra R07: idunico/DESCR_ALVO/COD_ITEM/TRATAMENTO/
-    NOVA_UNIDADE_APLICADA sempre string. Devolve {'ok': True,
-    'total_aplicado': int} ou {'erro': str}."""
+    "ISSO DEVE FICAR SALVO NO PRODUTO ALVO"). `valor_unitario_aplicado`
+    (opcional, 2026-07-26, "TRANSFORME O VALOR UNIT MIN-MAX EM
+    EDITÁVEL") — quando informado, vira o valor unitário BASE usado no
+    ÷FM no lugar do vl_unit_prod bruto de cada item (ver
+    _aplicar_tratamento_fm_detalhado(), interface.py); `None` preserva o
+    comportamento original (÷FM sobre o valor bruto de cada item, total
+    invariante). Upsert por `idunico`: item já tratado antes tem seu
+    registro SUBSTITUÍDO (não duplicado) se aplicado de novo. Regra R07:
+    idunico/DESCR_ALVO/COD_ITEM/TRATAMENTO/NOVA_UNIDADE_APLICADA sempre
+    string. Devolve {'ok': True, 'total_aplicado': int} ou {'erro': str}."""
     tabela = _TABELAS_TRATAMENTO_FM[origem]
     if not idunicos:
         return {"erro": "Nenhum item selecionado."}
@@ -5512,6 +5539,9 @@ def aplicar_tratamento_fm(
         novo["TRATAMENTO"] = "T"
         novo["FM_APLICADO"] = float(fm_aplicado)
         novo["NOVA_UNIDADE_APLICADA"] = str(nova_unidade)
+        novo["VALOR_UNITARIO_APLICADO"] = (
+            float(valor_unitario_aplicado) if valor_unitario_aplicado is not None else pd.NA
+        )
         novo["TS"] = datetime.now().isoformat(timespec="seconds")
         novo = novo[_COLUNAS_TRATAMENTO_FM]
 
