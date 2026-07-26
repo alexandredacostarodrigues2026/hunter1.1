@@ -3692,6 +3692,10 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     # determinístico e não muda.
     atributos_por_idunico = loader.consultar_atributos_estoque_por_idunico(set(detalhado["idunico"]), origem="entradas")
     detalhado = detalhado.merge(atributos_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
+    # Sumário de Unidades (2026-07-25, Solicitação Técnica "SUMÁRIO DE
+    # UNIDADES PARA FATOR MULTIPLICADOR") — calculado ANTES da formatação
+    # BR abaixo, que transforma vl_unit_prod em string (quebraria a média).
+    sumario_unidades = loader.gerar_sumario_unidades_alvo(detalhado)
     # Formatação BR (milhar '.', decimal ',') pras colunas de valor/quantidade
     # — pedido explícito da Solicitação Técnica ("separadores de milhar e 2
     # casas decimais"), mesmo padrão já usado no painel 7.2.
@@ -3709,6 +3713,27 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
             use_container_width=True,
             hide_index=True,
         )
+
+    # Diagnóstico de Unidades (2026-07-25, Solicitação Técnica "SUMÁRIO DE
+    # UNIDADES PARA FATOR MULTIPLICADOR") — agrupa os itens já confirmados
+    # por unid_prod (ucom do XML), mostrando recorrência + valor unitário
+    # médio, prova estatística pro auditor decidir o Fator Multiplicador
+    # no Estágio 9 (ex.: "cx12" com muitas ocorrências e média alta vs.
+    # "unid" com poucas ocorrências e média baixa sugere fator = razão
+    # entre as médias).
+    if not sumario_unidades.empty:
+        st.markdown("### 📊 Diagnóstico de Unidades (Visão XML)")
+        sumario_exibicao = sumario_unidades.rename(columns=loader.carregar_dicionario_campos())
+        sumario_exibicao["Preco Unitario Medio (XML)"] = sumario_exibicao["Preco Unitario Medio (XML)"].apply(
+            lambda v: _formatar_moeda_br(v) if pd.notna(v) else ""
+        )
+        with st.container(key="sumario_unidades_alvo_tabela"):
+            st.markdown(
+                "<style>.st-key-sumario_unidades_alvo_tabela [data-testid='stDataFrame'] "
+                "* { font-size: 10px; }</style>",
+                unsafe_allow_html=True,
+            )
+            st.dataframe(sumario_exibicao, use_container_width=True, hide_index=True)
 
 
 def _obter_criterios_cruzamento_saidas() -> dict:

@@ -5226,6 +5226,49 @@ def consultar_grupo_produto_alvo_fiscalizacao(
         return pd.DataFrame(columns=colunas), 0
 
 
+# ── Sumário de Unidades para Fator Multiplicador (Botão 9, Entradas) ─────
+# Solicitação Técnica (2026-07-25): ao analisar um produto alvo, o auditor
+# precisa decidir se as unidades vindas do XML (`ucom`, aqui `unid_prod`)
+# exigem conversão — este sumário consolida as métricas das unidades já
+# encontradas nos itens confirmados da Rubrica, mostrando a recorrência de
+# cada unidade e o valor unitário médio praticado (prova estatística pra
+# gravar o Fator Multiplicador no Estágio 9 — ex.: "cx12" com 46
+# ocorrências e média de R$30,34 vs. "unid" a R$2,50 sugere fator 12).
+_COLUNAS_SUMARIO_UNIDADES_ALVO = ["unid_prod", "qtde_ocorrencia_unid_prod", "media_vu"]
+
+
+def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
+    """Agrupa os itens já confirmados na Rubrica do Produto Alvo (Botão 9)
+    por `unid_prod` (unidade comercial do XML, `ucom` — mesmo campo já
+    enriquecido em consultar_atributos_estoque_por_idunico(), ver
+    _render_cruzamento_entradas()). `df_detalhado` é o DataFrame já
+    enriquecido com as métricas fiscais (uma linha por item/idunico
+    confirmado, com `unid_prod`/`vl_unit_prod` numéricos — chamar ANTES
+    de qualquer formatação BR em texto, que transformaria vl_unit_prod em
+    string e quebraria a média). Colunas devolvidas:
+    - unid_prod: unidade do XML (Regra R07: string).
+    - qtde_ocorrencia_unid_prod: contagem de linhas (itens) por unidade.
+    - media_vu: média aritmética de vl_unit_prod por unidade.
+    Ordenado por qtde_ocorrencia_unid_prod decrescente. Devolve DataFrame
+    vazio (mesmas colunas) se `df_detalhado` vier vazio ou sem a coluna
+    `unid_prod`/`vl_unit_prod` (ex.: enriquecimento fiscal indisponível)."""
+    colunas = _COLUNAS_SUMARIO_UNIDADES_ALVO
+    if df_detalhado.empty or not {"unid_prod", "vl_unit_prod"}.issubset(df_detalhado.columns):
+        return pd.DataFrame(columns=colunas)
+    base = df_detalhado.copy()
+    base["unid_prod"] = base["unid_prod"].astype(str)
+    agrupado = (
+        base.groupby("unid_prod", as_index=False)
+        .agg(
+            qtde_ocorrencia_unid_prod=("unid_prod", "size"),
+            media_vu=("vl_unit_prod", "mean"),
+        )
+        .sort_values("qtde_ocorrencia_unid_prod", ascending=False)
+        .reset_index(drop=True)
+    )[colunas]
+    return agrupado
+
+
 # ── Produto Escolhido para Cruzamento (Botão 9) ──────────────────────────
 # Solicitação Técnica (2026-07-23): "SERÁ UM PAINEL EM QUE ESCOLHEREU UM
 # PRODUTO A SER CRUZADO" — painel "PRODUTOS ALVOS SALVOS" onde o auditor

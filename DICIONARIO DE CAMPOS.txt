@@ -152,3 +152,7 @@ vl_prod;Valor Total Item
 ano_ef;Ano Estoque Final
 ano_ei;Ano Estoque Inicial
 dt_decl;Data da Declaracao
+
+# Novos campos - 2026-07-25 (Botao 9 - Sumario de Unidades para Fator Multiplicador)
+qtde_ocorrencia_unid_prod;Qtd. Ocorrencias
+media_vu;Preco Unitario Medio (XML)
