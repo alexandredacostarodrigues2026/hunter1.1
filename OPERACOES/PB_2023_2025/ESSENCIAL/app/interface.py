@@ -3441,27 +3441,31 @@ def _render_sumario_unidades_com_aplicar(
     escolhido: dict, origem: str, sufixo_key: str,
 ) -> None:
     """Renderiza o "📊 Diagnóstico de Unidades (Visão XML)" — Sumário de
-    Unidades (2026-07-25) com "FM Sug"/"Nova Unid" editáveis e checkbox
-    "Aplicar" + botão "🔧 Aplicar FM e Nova Unidade" (2026-07-26). Mirror
-    entre Entradas/Saídas/Estoque — `sufixo_key` evita colisão de widget
-    key entre as 3 abas (rodam no mesmo script run do `st.tabs()`).
-    Layout "up|vl min_max|qtde|fm|nova up": `vl_min_max` já vem
-    pré-formatado em BR de gerar_sumario_unidades_alvo(). Checkbox
-    "Aplicar" sempre começa DESMARCADO, mesmo padrão do "Salvar" da
-    Rubrica. Ao clicar "Aplicar FM e Nova Unidade", localiza os idunicos
-    de cada UP marcada via `detalhado_unid_bruto` (unid_prod BRUTO, não
-    o já tratado) e chama loader.aplicar_tratamento_fm(origem=origem),
-    gravando `escolhido["DESCR_ALVO"]`/`escolhido["COD_ITEM"]` junto
-    (2026-07-26, pedido do usuário: "ISSO DEVE FICAR SALVO NO PRODUTO
-    ALVO" — o tratamento já persistia por idunico, mas sem o nome do
-    Produto Alvo explícito na tabela)."""
+    Unidades (2026-07-25) com "FM Sug"/"Nova Unid" editáveis e checkboxes
+    "Aplicar"/"Desfazer" + botão "🔧 Aplicar / Desfazer Tratamento"
+    (2026-07-26). Mirror entre Entradas/Saídas/Estoque — `sufixo_key`
+    evita colisão de widget key entre as 3 abas (rodam no mesmo script
+    run do `st.tabs()`). Layout "up|vl min_max|qtde|fm|nova up":
+    `vl_min_max` já vem pré-formatado em BR de gerar_sumario_unidades_
+    alvo(). Checkboxes sempre começam DESMARCADOS, mesmo padrão do
+    "Salvar"/"Desfazer" da Rubrica. Ao clicar no botão, localiza os
+    idunicos de cada UP marcada via `detalhado_unid_bruto` (unid_prod
+    BRUTO, não o já tratado — continua valendo pra UPs já tratadas
+    antes, já que o Sumário sempre reflete o dado bruto do XML) e chama
+    loader.aplicar_tratamento_fm()/loader.desfazer_tratamento_fm()
+    (origem=origem). "Desfazer" tem precedência sobre "Aplicar" se as
+    duas vierem marcadas na mesma linha (mesmo raciocínio da Rubrica,
+    2026-07-24). "Aplicar" grava `escolhido["DESCR_ALVO"]`/`escolhido
+    ["COD_ITEM"]` junto (2026-07-26, "ISSO DEVE FICAR SALVO NO PRODUTO
+    ALVO")."""
     if sumario_unidades.empty:
         return
     st.markdown("### 📊 Diagnóstico de Unidades (Visão XML)")
     sumario_exibicao = sumario_unidades.rename(columns=loader.carregar_dicionario_campos())
     sumario_exibicao["Aplicar"] = False
+    sumario_exibicao["Desfazer"] = False
     colunas_travadas_sumario = [
-        c for c in sumario_exibicao.columns if c not in ("FM Sug", "Nova Unid", "Aplicar")
+        c for c in sumario_exibicao.columns if c not in ("FM Sug", "Nova Unid", "Aplicar", "Desfazer")
     ]
     chave_container = f"sumario_unidades_alvo_tabela_{sufixo_key}"
     with st.container(key=chave_container):
@@ -3483,16 +3487,24 @@ def _render_sumario_unidades_com_aplicar(
         )
     st.caption(
         "Marque \"Aplicar\" nas UPs cujo FM Sug/Nova Unid devem ser lançados nos itens "
-        "individuais dessa UP (preço unitário ÷ FM, quantidade × FM, TRATAMENTO='T')."
+        "individuais dessa UP (preço unitário ÷ FM, quantidade × FM, TRATAMENTO='T'); marque "
+        "\"Desfazer\" pra reverter um tratamento já aplicado (volta ao valor bruto do XML)."
     )
-    if st.button("🔧 Aplicar FM e Nova Unidade", key=f"btn_aplicar_fm_sumario_{sufixo_key}"):
-        marcadas = sumario_editado[sumario_editado["Aplicar"] == True]  # noqa: E712
-        if marcadas.empty:
-            st.warning("Nenhuma UP marcada em \"Aplicar\".")
+    if st.button("🔧 Aplicar / Desfazer Tratamento", key=f"btn_aplicar_fm_sumario_{sufixo_key}"):
+        marcadas_desfazer = sumario_editado[sumario_editado["Desfazer"] == True]  # noqa: E712
+        marcadas_aplicar = sumario_editado[sumario_editado["Aplicar"] == True]  # noqa: E712
+        # "Desfazer" tem precedência sobre "Aplicar" se as duas vierem
+        # marcadas na mesma linha (caso contraditório raro) — mesmo
+        # raciocínio do "Salvar"/"Desfazer" da Rubrica (2026-07-24).
+        ups_desfazer = set(marcadas_desfazer["Unidade do Produto"])
+        marcadas_aplicar = marcadas_aplicar[~marcadas_aplicar["Unidade do Produto"].isin(ups_desfazer)]
+        if marcadas_aplicar.empty and marcadas_desfazer.empty:
+            st.warning("Nenhuma UP marcada em \"Aplicar\" ou \"Desfazer\".")
         else:
             total_aplicado = 0
+            total_desfeito = 0
             erros = []
-            for _, linha in marcadas.iterrows():
+            for _, linha in marcadas_aplicar.iterrows():
                 up = linha["Unidade do Produto"]
                 fm = linha["FM Sug"]
                 nova_unid = linha["Nova Unid"]
@@ -3510,10 +3522,25 @@ def _render_sumario_unidades_com_aplicar(
                     erros.append(f"UP \"{up}\": {resultado['erro']}")
                 else:
                     total_aplicado += resultado["total_aplicado"]
+            for _, linha in marcadas_desfazer.iterrows():
+                up = linha["Unidade do Produto"]
+                idunicos_up = set(
+                    detalhado_unid_bruto.loc[detalhado_unid_bruto["unid_prod"] == up, "idunico"]
+                )
+                resultado = loader.desfazer_tratamento_fm(idunicos_up, origem=origem)
+                if "erro" in resultado:
+                    erros.append(f"UP \"{up}\": {resultado['erro']}")
+                else:
+                    total_desfeito += resultado["total_removido"]
             for erro in erros:
                 st.error(erro)
+            partes = []
             if total_aplicado:
-                st.success(f"✅ FM/Nova Unidade aplicado a {total_aplicado} item(ns).")
+                partes.append(f"{total_aplicado} item(ns) tratado(s)")
+            if total_desfeito:
+                partes.append(f"{total_desfeito} item(ns) revertido(s)")
+            if partes:
+                st.success(f"✅ {', '.join(partes)}.")
                 st.rerun()
 
 

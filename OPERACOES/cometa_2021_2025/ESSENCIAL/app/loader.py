@@ -5455,6 +5455,38 @@ def aplicar_tratamento_fm(
         return {"erro": str(e)}
 
 
+def desfazer_tratamento_fm(idunicos: "set | list", origem: str = "entradas") -> dict:
+    """Remove o tratamento de FM/Nova Unidade já aplicado nos itens
+    (idunico) informados — 2026-07-26, pedido do usuário (checkbox
+    "Desfazer" dedicado no Sumário, mesmo padrão da Rubrica do Botão 9:
+    "aqui abrir a oportunidade de desfazer", 2026-07-24). A tabela
+    "Itens individuais" volta a mostrar vl_unit_prod/qtde_prod/unid_prod
+    BRUTOS (sem FM aplicado) e TRATAMENTO="" pros itens removidos.
+    Devolve {'ok': True, 'total_removido': int} ou {'erro': str}."""
+    tabela = _TABELAS_TRATAMENTO_FM[origem]
+    if not idunicos:
+        return {"erro": "Nenhum item selecionado."}
+    if not _BANCO_PATH.exists():
+        return {"ok": True, "total_removido": 0}
+    try:
+        idunicos_str = {str(i) for i in idunicos}
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if tabela not in tabelas:
+                return {"ok": True, "total_removido": 0}
+            existente = con.execute(f"SELECT * FROM {tabela}").df()
+            existente["idunico"] = existente["idunico"].astype(str)
+            total_removido = int(existente["idunico"].isin(idunicos_str).sum())
+            combinado = existente[~existente["idunico"].isin(idunicos_str)].reset_index(drop=True)
+            con.register("_df_tratamento_fm", combinado)
+            con.execute(f"CREATE OR REPLACE TABLE {tabela} AS SELECT * FROM _df_tratamento_fm")
+            con.unregister("_df_tratamento_fm")
+        return {"ok": True, "total_removido": total_removido}
+    except Exception as e:
+        logger.exception("Erro ao desfazer tratamento em %s (%s)", tabela, _BANCO_PATH)
+        return {"erro": str(e)}
+
+
 # ── Produto Escolhido para Cruzamento (Botão 9) ──────────────────────────
 # Solicitação Técnica (2026-07-23): "SERÁ UM PAINEL EM QUE ESCOLHEREU UM
 # PRODUTO A SER CRUZADO" — painel "PRODUTOS ALVOS SALVOS" onde o auditor
