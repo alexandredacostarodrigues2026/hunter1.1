@@ -3080,9 +3080,12 @@ def gerar_curadoria_fm_saidas() -> dict:
     gerar_curadoria_fm_entradas(), mesma lógica de agrupamento e campos
     calculados (incluindo fm_sugerido = _extrair_fator_multiplicador_
     xml(desc_xml), só a partir do XML, ver nota da seção), mas sobre
-    estoque_saidas (Estágio 4) em vez de estoque_entradas. Devolve
-    {'agrupado': DataFrame, 'erros': list} — erros não-vazio quando
-    estoque_saidas (Estágio 4) ainda não foi gerada."""
+    estoque_saidas (Estágio 4) em vez de estoque_entradas. Exclui
+    autoemissão (mesmo filtro de gerar_estagio_8_saidas(), 2026-07-25
+    — transferência interna, emit_cnpj==dest_cnpj, não é venda pra
+    terceiro) pra manter consistência com o Estágio 8.1/Botão 9.
+    Devolve {'agrupado': DataFrame, 'erros': list} — erros não-vazio
+    quando estoque_saidas (Estágio 4) ainda não foi gerada."""
     vazio = {"agrupado": pd.DataFrame(columns=_COLUNAS_FM_SAIDAS_AGRUPADO)}
     if not _BANCO_PATH.exists():
         return {**vazio, "erros": ["Tabela estoque_saidas (Estágio 4) ainda não foi gerada."]}
@@ -3096,7 +3099,8 @@ def gerar_curadoria_fm_saidas() -> dict:
                 "TRY_CAST(fatoitemnfe_infnfe_det_prod_vuncom AS DOUBLE) AS valor_unit_bruto, "
                 "fatoitemnfe_infnfe_det_prod_ucom AS ucom, "
                 "ID_UNICO AS idunico "
-                "FROM estoque_saidas"
+                "FROM estoque_saidas "
+                "WHERE fatonfe_infnfe_emit_cnpj IS DISTINCT FROM fatonfe_infnfe_dest_cnpj"
             ).df()
     except Exception:
         logger.exception("Erro ao gerar Estágio 9 (Curadoria de Fator Multiplicador, Saídas) em %s", _BANCO_PATH)
@@ -3580,9 +3584,22 @@ def gerar_estagio_8_saidas() -> dict:
     raciocínio de Regra R07 de gerar_estagio_8() (NULL genuíno
     preservado, nunca vira "None" — cprod na prática não deveria ter
     nenhum, mas o tratamento fica por segurança). "agrupado" por
-    (codproddecl, desc_xml), dropna=False. Devolve {'detalhado':
-    DataFrame, 'agrupado': DataFrame, 'erros': list} — erros não-vazio
-    quando estoque_saidas (Estágio 4) ainda não foi gerada."""
+    (codproddecl, desc_xml), dropna=False.
+
+    Exclui autoemissão (`fatonfe_infnfe_emit_cnpj == fatonfe_infnfe_
+    dest_cnpj` — mesma empresa como emitente E destinatária, ex.:
+    transferência entre estabelecimentos próprios) — 2026-07-25,
+    achado real confirmado com o usuário: "para geraldo, nas saídas,
+    cerveja skol 350 ml, há 170 ocorrências no meu controle já testado
+    e 172 no projeto" — a diferença eram exatamente 2 itens de
+    autoemissão (CFOP 1411, mesma razão social "GERALDO ANDRADE
+    VIEIRA" em emit e dest) contados como "saída"/venda, quando na
+    verdade é movimentação INTERNA, não venda pra terceiro. Usuário
+    confirmou explicitamente excluir autoemissão de Saídas (Estágio
+    8.1 e Botão 9); 172-2=170, batendo exato com o controle. Devolve
+    {'detalhado': DataFrame, 'agrupado': DataFrame, 'erros': list} —
+    erros não-vazio quando estoque_saidas (Estágio 4) ainda não foi
+    gerada."""
     vazio = {
         "detalhado": pd.DataFrame(columns=_COLUNAS_ESTAGIO8_SAIDAS_DETALHADO),
         "agrupado": pd.DataFrame(columns=_COLUNAS_ESTAGIO8_SAIDAS_AGRUPADO),
@@ -3598,7 +3615,8 @@ def gerar_estagio_8_saidas() -> dict:
                 "SELECT fatoitemnfe_infnfe_det_prod_cprod AS codproddecl, "
                 "fatoitemnfe_infnfe_det_prod_xprod AS desc_xml, "
                 "ID_UNICO AS idunico "
-                "FROM estoque_saidas"
+                "FROM estoque_saidas "
+                "WHERE fatonfe_infnfe_emit_cnpj IS DISTINCT FROM fatonfe_infnfe_dest_cnpj"
             ).df()
     except Exception:
         logger.exception("Erro ao gerar Estágio 8.1 (Resumo de Saídas) em %s", _BANCO_PATH)
