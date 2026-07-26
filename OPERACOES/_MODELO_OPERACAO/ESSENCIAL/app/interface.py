@@ -3398,7 +3398,7 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
     qtde_prod/fm_sugerido (por `consultar_atributos_estoque_por_idunico()`
     ou `consultar_atributos_estoque_estoque_por_idunico()`, conforme a
     aba) e devolve (detalhado_ajustado, sumario_unidades,
-    detalhado_unid_bruto, ups_ja_tratadas):
+    idunicos_tratados):
     - sumario_unidades: calculado ANTES do tratamento abaixo, sempre
       reflete a unidade/preço BRUTOS do XML (independente de
       tratamentos já aplicados) — via loader.gerar_sumario_unidades_alvo_
@@ -3406,22 +3406,26 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
       DA MESMA UNID", depois "ESTENDA PARA ENTRADAS E SAÍDAS") — separa
       em linha própria os itens com valor destoante dentro da mesma
       UNID; quando nenhum item é destoante, o resultado é idêntico ao
-      de gerar_sumario_unidades_alvo() (testado com dado real de
-      Entradas/Saídas: nenhuma UP tinha variação interna grande o
-      bastante pra ser sinalizada, por isso o comportamento passou
-      despercebido até a extensão explícita do Estoque pras outras 2
-      origens).
+      de gerar_sumario_unidades_alvo(). Carrega a coluna interna
+      `_idunicos` por linha (ver loader.gerar_sumario_unidades_alvo()) —
+      2026-07-26, achado real: "MARQUE SOMENTE O 17,67 E A APLICAÇÃO
+      CONSIDEROU TUDO ERRONEAMENTE" — antes, _render_sumario_unidades_
+      com_aplicar() localizava os idunicos de uma linha marcada
+      comparando o TEXTO de `unid_prod`; depois da separação por
+      destaque, 2 linhas podem ter o MESMO texto (ex.: "LA" normal e
+      "LA" destoante), então marcar só a linha do "LA" destoante
+      aplicava o tratamento em TODOS os itens "LA" (normal + os 2
+      destoantes) — a correspondência por texto não distinguia mais
+      qual linha era. `_idunicos` resolve isso: cada linha do Sumário
+      carrega o conjunto EXATO de idunico que ela representa.
     - detalhado_ajustado ganha a coluna `valor_destoante` (mesma
       sinalização, ver loader.sinalizar_valor_destoante()) — calculada
       DEPOIS do tratamento de FM abaixo, refletindo o valor unitário
       já ajustado (o que o auditor vê na tela).
-    - detalhado_unid_bruto: mapa idunico -> unid_prod BRUTO, usado por
-      _render_sumario_unidades_com_aplicar() pra localizar quais itens
-      pertencem a uma UP do Sumário.
-    - ups_ja_tratadas: conjunto de unid_prod BRUTO com pelo menos 1 item
-      já tratado — usado pra coluna "Observação" (2026-07-26, "CRIE UMA
-      OBSERVAÇÃO COMO NA FIG", mesmo padrão da coluna "Observação" da
-      Rubrica: "✅ Já salvo na Rubrica").
+    - idunicos_tratados: conjunto de idunico com TRATAMENTO='T' — usado
+      pra coluna "Observação" (2026-07-26, "CRIE UMA OBSERVAÇÃO COMO NA
+      FIG"), testando interseção com `_idunicos` de cada linha do
+      Sumário (não mais comparação de texto, mesmo motivo acima).
     - detalhado_ajustado: busca o tratamento já persistido (por
       idunico, ver loader.aplicar_tratamento_fm()) e ajusta vl_unit_prod
       (÷FM) / qtde_prod (×FM) / unid_prod (=Nova Unidade) nos itens
@@ -3429,7 +3433,6 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
       ((v÷f)×(q×f) = v×q), a divisão/multiplicação só muda a
       "embalagem" do valor, não o total. TRATAMENTO vira coluna nova,
       "" (nunca "None", Regra R07) pra itens não tratados."""
-    detalhado_unid_bruto = detalhado[["idunico", "unid_prod"]].copy()
     sumario_unidades = loader.gerar_sumario_unidades_alvo_com_destaque(detalhado)
     tratamento_por_idunico = loader.consultar_tratamento_fm_por_idunico(set(detalhado["idunico"]), origem=origem)
     detalhado = detalhado.merge(tratamento_por_idunico, on="idunico", how="left")
@@ -3441,10 +3444,7 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
     # achado real via AppTest antes de propagar (Entradas, 2026-07-26).
     detalhado["FM_APLICADO"] = pd.to_numeric(detalhado["FM_APLICADO"], errors="coerce")
     mascara_tratado = detalhado["TRATAMENTO"] == "T"
-    # Capturado ANTES de sobrescrever unid_prod abaixo — precisa da
-    # grafia BRUTA (idêntica a detalhado_unid_bruto) pra casar com as
-    # linhas do Sumário, que também são sempre calculadas sobre o bruto.
-    ups_ja_tratadas = set(detalhado.loc[mascara_tratado, "unid_prod"])
+    idunicos_tratados = set(detalhado.loc[mascara_tratado, "idunico"])
     detalhado.loc[mascara_tratado, "vl_unit_prod"] = (
         detalhado.loc[mascara_tratado, "vl_unit_prod"] / detalhado.loc[mascara_tratado, "FM_APLICADO"]
     )
@@ -3456,44 +3456,54 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
     detalhado = detalhado.drop(columns=["FM_APLICADO", "NOVA_UNIDADE_APLICADA"], errors="ignore")
     if "vl_unit_prod" in detalhado.columns and "unid_prod" in detalhado.columns:
         detalhado["valor_destoante"] = loader.sinalizar_valor_destoante(detalhado)
-    return detalhado, sumario_unidades, detalhado_unid_bruto, ups_ja_tratadas
+    return detalhado, sumario_unidades, idunicos_tratados
 
 
 def _render_sumario_unidades_com_aplicar(
-    sumario_unidades: pd.DataFrame, detalhado_unid_bruto: pd.DataFrame, ups_ja_tratadas: set,
+    sumario_unidades: pd.DataFrame, idunicos_tratados: set,
     escolhido: dict, origem: str, sufixo_key: str,
 ) -> None:
     """Renderiza o "📊 Diagnóstico de Unidades (Visão XML)" — Sumário de
     Unidades (2026-07-25) com "FM Sug"/"Nova Unid" editáveis, coluna
     "Observação" (2026-07-26, "CRIE UMA OBSERVAÇÃO COMO NA FIG", mesmo
     padrão da coluna homônima da Rubrica: "✅ Já salvo na Rubrica" —
-    aqui "✅ Já aplicado" pras UPs com pelo menos 1 item já tratado, sem
-    depender do estado dos checkboxes, que é só a AÇÃO da próxima
+    aqui "✅ Já aplicado" pras linhas com pelo menos 1 item já tratado,
+    sem depender do estado dos checkboxes, que é só a AÇÃO da próxima
     gravação/remoção) e checkboxes "Aplicar"/"Desfazer" + botão "🔧
     Aplicar / Desfazer Tratamento" (2026-07-26). Mirror entre Entradas/
     Saídas/Estoque — `sufixo_key` evita colisão de widget key entre as 3
     abas (rodam no mesmo script run do `st.tabs()`). Layout "up|vl min_
     max|qtde|fm|nova up": `vl_min_max` já vem pré-formatado em BR de
     gerar_sumario_unidades_alvo(). Checkboxes sempre começam
-    DESMARCADOS, mesmo padrão do "Salvar"/"Desfazer" da Rubrica. Ao
-    clicar no botão, localiza os idunicos de cada UP marcada via
-    `detalhado_unid_bruto` (unid_prod BRUTO, não o já tratado — continua
-    valendo pra UPs já tratadas antes, já que o Sumário sempre reflete o
-    dado bruto do XML) e chama loader.aplicar_tratamento_fm()/loader.
-    desfazer_tratamento_fm() (origem=origem). "Desfazer" tem precedência
-    sobre "Aplicar" se as duas vierem marcadas na mesma linha (mesmo
-    raciocínio da Rubrica, 2026-07-24). "Aplicar" grava `escolhido
-    ["DESCR_ALVO"]`/`escolhido["COD_ITEM"]` junto (2026-07-26, "ISSO
-    DEVE FICAR SALVO NO PRODUTO ALVO")."""
+    DESMARCADOS, mesmo padrão do "Salvar"/"Desfazer" da Rubrica.
+
+    IMPORTANTE (2026-07-26, achado real via bug reportado pelo usuário:
+    "MARQUE SOMENTE O 17,67 E A APLICAÇÃO CONSIDEROU TUDO
+    ERRONEAMENTE") — localiza os idunicos de cada linha marcada pela
+    coluna INTERNA `sumario_unidades["_idunicos"]` (indexada pela mesma
+    posição da linha), NUNCA por texto de `unid_prod`: depois da
+    separação por destaque, 2+ linhas podem ter o MESMO texto (ex.:
+    "LA" normal e "LA" destoante) — comparar por texto aplicava/
+    desfazia em TODOS os itens daquele texto, não só os da linha
+    marcada. Chama loader.aplicar_tratamento_fm()/loader.desfazer_
+    tratamento_fm() (origem=origem). "Desfazer" tem precedência sobre
+    "Aplicar" se as duas vierem marcadas na mesma linha (por ÍNDICE,
+    mesmo raciocínio da Rubrica, 2026-07-24 — mas nunca por texto, pelo
+    mesmo motivo acima). "Aplicar" grava `escolhido["DESCR_ALVO"]`/
+    `escolhido["COD_ITEM"]` junto (2026-07-26, "ISSO DEVE FICAR SALVO
+    NO PRODUTO ALVO")."""
     if sumario_unidades.empty:
         return
     st.markdown("### 📊 Diagnóstico de Unidades (Visão XML)")
-    sumario_exibicao = sumario_unidades.rename(columns=loader.carregar_dicionario_campos())
+    idunicos_por_linha = sumario_unidades["_idunicos"]
+    sumario_exibicao = sumario_unidades.drop(columns=["_idunicos"]).rename(
+        columns=loader.carregar_dicionario_campos(),
+    )
     sumario_exibicao["Aplicar"] = False
     sumario_exibicao["Desfazer"] = False
     sumario_exibicao["Observação"] = [
-        "✅ Já aplicado" if up in ups_ja_tratadas else ""
-        for up in sumario_unidades["unid_prod"]
+        "✅ Já aplicado" if (conjunto & idunicos_tratados) else ""
+        for conjunto in idunicos_por_linha
     ]
     colunas_travadas_sumario = [
         c for c in sumario_exibicao.columns if c not in ("FM Sug", "Nova Unid", "Aplicar", "Desfazer")
@@ -3525,26 +3535,25 @@ def _render_sumario_unidades_com_aplicar(
         marcadas_desfazer = sumario_editado[sumario_editado["Desfazer"] == True]  # noqa: E712
         marcadas_aplicar = sumario_editado[sumario_editado["Aplicar"] == True]  # noqa: E712
         # "Desfazer" tem precedência sobre "Aplicar" se as duas vierem
-        # marcadas na mesma linha (caso contraditório raro) — mesmo
-        # raciocínio do "Salvar"/"Desfazer" da Rubrica (2026-07-24).
-        ups_desfazer = set(marcadas_desfazer["Unidade do Produto"])
-        marcadas_aplicar = marcadas_aplicar[~marcadas_aplicar["Unidade do Produto"].isin(ups_desfazer)]
+        # marcadas na mesma linha (caso contraditório raro) — por
+        # ÍNDICE da linha, não por texto de UP (2026-07-26, ver
+        # docstring: 2 linhas podem ter o mesmo texto).
+        indices_desfazer = set(marcadas_desfazer.index)
+        marcadas_aplicar = marcadas_aplicar[~marcadas_aplicar.index.isin(indices_desfazer)]
         if marcadas_aplicar.empty and marcadas_desfazer.empty:
             st.warning("Nenhuma UP marcada em \"Aplicar\" ou \"Desfazer\".")
         else:
             total_aplicado = 0
             total_desfeito = 0
             erros = []
-            for _, linha in marcadas_aplicar.iterrows():
+            for idx, linha in marcadas_aplicar.iterrows():
                 up = linha["Unidade do Produto"]
                 fm = linha["FM Sug"]
                 nova_unid = linha["Nova Unid"]
                 if pd.isna(fm) or float(fm) == 0:
                     erros.append(f"UP \"{up}\": FM Sug inválido (vazio ou zero), não aplicado.")
                     continue
-                idunicos_up = set(
-                    detalhado_unid_bruto.loc[detalhado_unid_bruto["unid_prod"] == up, "idunico"]
-                )
+                idunicos_up = set(idunicos_por_linha.loc[idx])
                 resultado = loader.aplicar_tratamento_fm(
                     idunicos_up, float(fm), str(nova_unid),
                     descr_alvo=escolhido["DESCR_ALVO"], cod_item=escolhido["COD_ITEM"], origem=origem,
@@ -3553,11 +3562,9 @@ def _render_sumario_unidades_com_aplicar(
                     erros.append(f"UP \"{up}\": {resultado['erro']}")
                 else:
                     total_aplicado += resultado["total_aplicado"]
-            for _, linha in marcadas_desfazer.iterrows():
+            for idx, linha in marcadas_desfazer.iterrows():
                 up = linha["Unidade do Produto"]
-                idunicos_up = set(
-                    detalhado_unid_bruto.loc[detalhado_unid_bruto["unid_prod"] == up, "idunico"]
-                )
+                idunicos_up = set(idunicos_por_linha.loc[idx])
                 resultado = loader.desfazer_tratamento_fm(idunicos_up, origem=origem)
                 if "erro" in resultado:
                     erros.append(f"UP \"{up}\": {resultado['erro']}")
@@ -3880,7 +3887,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     # determinístico e não muda.
     atributos_por_idunico = loader.consultar_atributos_estoque_por_idunico(set(detalhado["idunico"]), origem="entradas")
     detalhado = detalhado.merge(atributos_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
-    detalhado, sumario_unidades, detalhado_unid_bruto, ups_ja_tratadas = _aplicar_tratamento_fm_detalhado(
+    detalhado, sumario_unidades, idunicos_tratados = _aplicar_tratamento_fm_detalhado(
         detalhado, origem="entradas",
     )
     # Formatação BR (milhar '.', decimal ',') pras colunas de valor/quantidade
@@ -3904,7 +3911,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     # Diagnóstico de Unidades + aplicação de FM/Nova Unidade — ver
     # _render_sumario_unidades_com_aplicar() (2026-07-25/26).
     _render_sumario_unidades_com_aplicar(
-        sumario_unidades, detalhado_unid_bruto, ups_ja_tratadas, escolhido,
+        sumario_unidades, idunicos_tratados, escolhido,
         origem="entradas", sufixo_key="entradas",
     )
 
@@ -4103,7 +4110,7 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     # de CERV SKOL LATA 350ML em Saídas), o merge veio 100% preenchido.
     atributos_por_idunico = loader.consultar_atributos_estoque_por_idunico(set(detalhado["idunico"]), origem="saidas")
     detalhado = detalhado.merge(atributos_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
-    detalhado, sumario_unidades, detalhado_unid_bruto, ups_ja_tratadas = _aplicar_tratamento_fm_detalhado(
+    detalhado, sumario_unidades, idunicos_tratados = _aplicar_tratamento_fm_detalhado(
         detalhado, origem="saidas",
     )
     for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido"):
@@ -4126,7 +4133,7 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     # pedido do usuário: "ESTENDA PARA SAIDAS E ESTOQUES") — ver
     # _render_sumario_unidades_com_aplicar().
     _render_sumario_unidades_com_aplicar(
-        sumario_unidades, detalhado_unid_bruto, ups_ja_tratadas, escolhido,
+        sumario_unidades, idunicos_tratados, escolhido,
         origem="saidas", sufixo_key="saidas",
     )
 
@@ -4349,7 +4356,7 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     # não um campo bruto do SPED).
     atributos_por_idunico = loader.consultar_atributos_estoque_estoque_por_idunico(set(detalhado["idunico"]))
     detalhado = detalhado.merge(atributos_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
-    detalhado, sumario_unidades, detalhado_unid_bruto, ups_ja_tratadas = _aplicar_tratamento_fm_detalhado(
+    detalhado, sumario_unidades, idunicos_tratados = _aplicar_tratamento_fm_detalhado(
         detalhado, origem="estoque",
     )
     # Valor Destoante já calculado dentro de _aplicar_tratamento_fm_
@@ -4379,7 +4386,7 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     # como o idunico foi gerado, só que seja determinístico — funciona
     # igual às outras 2 origens.
     _render_sumario_unidades_com_aplicar(
-        sumario_unidades, detalhado_unid_bruto, ups_ja_tratadas, escolhido,
+        sumario_unidades, idunicos_tratados, escolhido,
         origem="estoque", sufixo_key="estoque",
     )
 

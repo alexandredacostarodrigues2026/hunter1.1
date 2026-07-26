@@ -5311,10 +5311,21 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
       editável, mesmo raciocínio do Estágio 9.
     Ordenado por qtde_ocorrencia_unid_prod decrescente. Devolve DataFrame
     vazio (mesmas colunas) se `df_detalhado` vier vazio ou sem a coluna
-    `unid_prod`/`vl_unit_prod`."""
+    `unid_prod`/`vl_unit_prod`. Carrega também a coluna interna
+    `_idunicos` (frozenset dos idunico do grupo — 2026-07-26, achado
+    real: "MARQUE SOMENTE O 17,67 E A APLICAÇÃO CONSIDEROU TUDO
+    ERRONEAMENTE" — depois da separação de linhas por destaque, duas
+    linhas podem ter o MESMO texto de `unid_prod` (ex.: "LA" normal e
+    "LA" destoante); localizar os idunicos de uma linha marcada só por
+    texto de unidade não distingue mais qual linha era, aplicando o
+    tratamento em TODOS os itens daquele texto em vez de só os da linha
+    marcada. `_idunicos` não é exibida — usada só por _render_sumario_
+    unidades_com_aplicar() (interface.py) pra aplicar/desfazer
+    EXATAMENTE os itens da linha marcada, nunca por correspondência de
+    texto)."""
     colunas = _COLUNAS_SUMARIO_UNIDADES_ALVO
     if df_detalhado.empty or not {"unid_prod", "vl_unit_prod"}.issubset(df_detalhado.columns):
-        return pd.DataFrame(columns=colunas)
+        return pd.DataFrame(columns=colunas + ["_idunicos"])
     base = df_detalhado.copy()
     base["unid_prod"] = base["unid_prod"].astype(str)
 
@@ -5324,14 +5335,18 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
     }
     if "fm_sugerido" in base.columns:
         agg_kwargs["fm_sug"] = ("fm_sugerido", _moda_ou_none)
+    if "idunico" in base.columns:
+        agg_kwargs["_idunicos"] = ("idunico", lambda s: frozenset(s))
     agrupado = base.groupby("unid_prod", as_index=False).agg(**agg_kwargs)
     if "fm_sug" not in agrupado.columns:
         agrupado["fm_sug"] = pd.NA
+    if "_idunicos" not in agrupado.columns:
+        agrupado["_idunicos"] = [frozenset()] * len(agrupado)
     agrupado["nova_unid"] = NOVA_UP_PADRAO
     agrupado = (
         agrupado.sort_values("qtde_ocorrencia_unid_prod", ascending=False)
         .reset_index(drop=True)
-    )[colunas]
+    )[colunas + ["_idunicos"]]
     return agrupado
 
 
@@ -5357,10 +5372,14 @@ def gerar_sumario_unidades_alvo_com_destaque(df_detalhado: pd.DataFrame) -> pd.D
     separação só muda algo quando há de fato um item fora do padrão
     dentro da mesma UNID. Mesmas colunas de gerar_sumario_unidades_
     alvo(); linhas de item destoante têm `vl_min_max` com um valor só
-    (o próprio item) e `qtde_ocorrencia_unid_prod=1`."""
+    (o próprio item) e `qtde_ocorrencia_unid_prod=1`. Carrega a coluna
+    interna `_idunicos` (ver gerar_sumario_unidades_alvo() — crítica
+    aqui: duas linhas podem ter o MESMO texto de `unid_prod` — ex.: "LA"
+    normal e "LA" destoante — e só `_idunicos` distingue qual linha é
+    qual pra aplicar/desfazer o tratamento correto)."""
     colunas = _COLUNAS_SUMARIO_UNIDADES_ALVO
     if df_detalhado.empty or not {"unid_prod", "vl_unit_prod"}.issubset(df_detalhado.columns):
-        return pd.DataFrame(columns=colunas)
+        return pd.DataFrame(columns=colunas + ["_idunicos"])
     base = df_detalhado.copy()
     base["unid_prod"] = base["unid_prod"].astype(str)
     destaque = sinalizar_valor_destoante(base)
@@ -5374,18 +5393,23 @@ def gerar_sumario_unidades_alvo_com_destaque(df_detalhado: pd.DataFrame) -> pd.D
         linhas = []
         for _, item in destoante.iterrows():
             fm_item = item["fm_sugerido"] if "fm_sugerido" in destoante.columns else pd.NA
+            idunico_item = item["idunico"] if "idunico" in destoante.columns else None
             linhas.append({
                 "unid_prod": str(item["unid_prod"]),
                 "vl_min_max": _formatar_numero_br(item["vl_unit_prod"]) if pd.notna(item["vl_unit_prod"]) else "",
                 "qtde_ocorrencia_unid_prod": 1,
                 "fm_sug": fm_item,
                 "nova_unid": NOVA_UP_PADRAO,
+                "_idunicos": frozenset([idunico_item]) if idunico_item is not None else frozenset(),
             })
-        partes.append(pd.DataFrame(linhas, columns=colunas))
+        partes.append(pd.DataFrame(linhas, columns=colunas + ["_idunicos"]))
     if not partes:
-        return pd.DataFrame(columns=colunas)
+        return pd.DataFrame(columns=colunas + ["_idunicos"])
     resultado = pd.concat(partes, ignore_index=True)
-    return resultado.sort_values("qtde_ocorrencia_unid_prod", ascending=False).reset_index(drop=True)[colunas]
+    return (
+        resultado.sort_values("qtde_ocorrencia_unid_prod", ascending=False)
+        .reset_index(drop=True)
+    )[colunas + ["_idunicos"]]
 
 
 # ── Aplicação do FM/Nova Unidade na tabela "Itens individuais" (Botão 9) ─
