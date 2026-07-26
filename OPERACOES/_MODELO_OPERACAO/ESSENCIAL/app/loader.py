@@ -5357,7 +5357,20 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
 # Estágio 9), com as funções parametrizadas por `origem` em vez de
 # triplicar código (a lógica de leitura/escrita é idêntica nas 3, só
 # muda qual tabela).
-_COLUNAS_TRATAMENTO_FM = ["idunico", "TRATAMENTO", "FM_APLICADO", "NOVA_UNIDADE_APLICADA", "TS"]
+#
+# DESCR_ALVO/COD_ITEM (2026-07-26, pedido do usuário: "ISSO DEVE FICAR
+# SALVO NO PRODUTO ALVO") — o tratamento já persistia por idunico
+# (sobrevive a recarregar a página, ver teste real), mas sem o nome do
+# Produto Alvo junto: ficava implícito (só descobrível cruzando com
+# cruzamento_confirmado_detalhado, já que um idunico só pertence a 1
+# produto alvo por vez). Gravar DESCR_ALVO/COD_ITEM explicitamente
+# torna o tratamento rastreável direto na própria tabela, mesmo padrão
+# de toda tabela ligada a um produto alvo neste app (cruzamento_
+# confirmado, cruzamento_confirmado_detalhado, produto_alvo_
+# fiscalizacao). Regra R07: sempre string.
+_COLUNAS_TRATAMENTO_FM = [
+    "idunico", "DESCR_ALVO", "COD_ITEM", "TRATAMENTO", "FM_APLICADO", "NOVA_UNIDADE_APLICADA", "TS",
+]
 
 _TABELAS_TRATAMENTO_FM = {
     "entradas": "tratamento_fm_entradas",
@@ -5397,13 +5410,16 @@ def consultar_tratamento_fm_por_idunico(idunicos: "set | list", origem: str = "e
 
 
 def aplicar_tratamento_fm(
-    idunicos: "set | list", fm_aplicado: float, nova_unidade: str, origem: str = "entradas",
+    idunicos: "set | list", fm_aplicado: float, nova_unidade: str,
+    descr_alvo: str, cod_item: str, origem: str = "entradas",
 ) -> dict:
     """Aplica (grava) o Fator Multiplicador e a Nova Unidade nos itens
     (idunico) informados — marca TRATAMENTO='T' pra cada um, na tabela
-    tratamento_fm_entradas/_saidas/_estoque conforme `origem`. Upsert
-    por `idunico`: item já tratado antes tem seu registro SUBSTITUÍDO
-    (não duplicado) se aplicado de novo. Regra R07: idunico/TRATAMENTO/
+    tratamento_fm_entradas/_saidas/_estoque conforme `origem`, junto com
+    `descr_alvo`/`cod_item` (Produto Alvo dono do tratamento — 2026-07-26,
+    "ISSO DEVE FICAR SALVO NO PRODUTO ALVO"). Upsert por `idunico`: item
+    já tratado antes tem seu registro SUBSTITUÍDO (não duplicado) se
+    aplicado de novo. Regra R07: idunico/DESCR_ALVO/COD_ITEM/TRATAMENTO/
     NOVA_UNIDADE_APLICADA sempre string. Devolve {'ok': True,
     'total_aplicado': int} ou {'erro': str}."""
     tabela = _TABELAS_TRATAMENTO_FM[origem]
@@ -5411,6 +5427,8 @@ def aplicar_tratamento_fm(
         return {"erro": "Nenhum item selecionado."}
     try:
         novo = pd.DataFrame({"idunico": [str(i) for i in idunicos]})
+        novo["DESCR_ALVO"] = str(descr_alvo)
+        novo["COD_ITEM"] = str(cod_item)
         novo["TRATAMENTO"] = "T"
         novo["FM_APLICADO"] = float(fm_aplicado)
         novo["NOVA_UNIDADE_APLICADA"] = str(nova_unidade)

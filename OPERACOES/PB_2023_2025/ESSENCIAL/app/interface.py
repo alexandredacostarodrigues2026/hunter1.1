@@ -3437,7 +3437,8 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
 
 
 def _render_sumario_unidades_com_aplicar(
-    sumario_unidades: pd.DataFrame, detalhado_unid_bruto: pd.DataFrame, origem: str, sufixo_key: str,
+    sumario_unidades: pd.DataFrame, detalhado_unid_bruto: pd.DataFrame,
+    escolhido: dict, origem: str, sufixo_key: str,
 ) -> None:
     """Renderiza o "📊 Diagnóstico de Unidades (Visão XML)" — Sumário de
     Unidades (2026-07-25) com "FM Sug"/"Nova Unid" editáveis e checkbox
@@ -3449,7 +3450,11 @@ def _render_sumario_unidades_com_aplicar(
     "Aplicar" sempre começa DESMARCADO, mesmo padrão do "Salvar" da
     Rubrica. Ao clicar "Aplicar FM e Nova Unidade", localiza os idunicos
     de cada UP marcada via `detalhado_unid_bruto` (unid_prod BRUTO, não
-    o já tratado) e chama loader.aplicar_tratamento_fm(origem=origem)."""
+    o já tratado) e chama loader.aplicar_tratamento_fm(origem=origem),
+    gravando `escolhido["DESCR_ALVO"]`/`escolhido["COD_ITEM"]` junto
+    (2026-07-26, pedido do usuário: "ISSO DEVE FICAR SALVO NO PRODUTO
+    ALVO" — o tratamento já persistia por idunico, mas sem o nome do
+    Produto Alvo explícito na tabela)."""
     if sumario_unidades.empty:
         return
     st.markdown("### 📊 Diagnóstico de Unidades (Visão XML)")
@@ -3497,7 +3502,10 @@ def _render_sumario_unidades_com_aplicar(
                 idunicos_up = set(
                     detalhado_unid_bruto.loc[detalhado_unid_bruto["unid_prod"] == up, "idunico"]
                 )
-                resultado = loader.aplicar_tratamento_fm(idunicos_up, float(fm), str(nova_unid), origem=origem)
+                resultado = loader.aplicar_tratamento_fm(
+                    idunicos_up, float(fm), str(nova_unid),
+                    descr_alvo=escolhido["DESCR_ALVO"], cod_item=escolhido["COD_ITEM"], origem=origem,
+                )
                 if "erro" in resultado:
                     erros.append(f"UP \"{up}\": {resultado['erro']}")
                 else:
@@ -3836,7 +3844,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     # Diagnóstico de Unidades + aplicação de FM/Nova Unidade — ver
     # _render_sumario_unidades_com_aplicar() (2026-07-25/26).
     _render_sumario_unidades_com_aplicar(
-        sumario_unidades, detalhado_unid_bruto, origem="entradas", sufixo_key="entradas",
+        sumario_unidades, detalhado_unid_bruto, escolhido, origem="entradas", sufixo_key="entradas",
     )
 
 
@@ -4055,7 +4063,7 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     # pedido do usuário: "ESTENDA PARA SAIDAS E ESTOQUES") — ver
     # _render_sumario_unidades_com_aplicar().
     _render_sumario_unidades_com_aplicar(
-        sumario_unidades, detalhado_unid_bruto, origem="saidas", sufixo_key="saidas",
+        sumario_unidades, detalhado_unid_bruto, escolhido, origem="saidas", sufixo_key="saidas",
     )
 
 
@@ -4301,7 +4309,7 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     # como o idunico foi gerado, só que seja determinístico — funciona
     # igual às outras 2 origens.
     _render_sumario_unidades_com_aplicar(
-        sumario_unidades, detalhado_unid_bruto, origem="estoque", sufixo_key="estoque",
+        sumario_unidades, detalhado_unid_bruto, escolhido, origem="estoque", sufixo_key="estoque",
     )
 
 
