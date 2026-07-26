@@ -5332,6 +5332,92 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
     return agrupado
 
 
+# ── Aplicação do FM/Nova Unidade na tabela "Itens individuais" (Botão 9) ─
+# Solicitação Técnica (2026-07-26): "crie o campo 'TRATAMENTO' na tabela
+# de id único. agora crie uma caixa no sumário para aplicar o fm e a nova
+# unidade na tabela id única. o preço unitário deve ser dividido pelo fm
+# e a qtde deve ser multiplicada. caso haja aplicação do FM, deve ser
+# lançando 'T' o campo tratamento." — diferente do "FM Sug"/"Nova Unid"
+# do Sumário (só decisão em tela, sem persistência), esta é uma ação
+# REAL de tratamento: o auditor marca "Aplicar" numa linha do Sumário
+# (uma UP) e os itens individuais dessa UP passam a ter vl_unit_prod÷FM
+# e qtde_prod×FM (vl_prod = preço×qtde fica matematicamente invariante —
+# só a "embalagem" do valor muda, não o total). Persistido POR IDUNICO
+# (não por UP/grupo) — cada item confirmado guarda seu próprio FM/Nova
+# Unidade aplicados, já que idunico é a chave granular e determinística
+# usada em toda a Rubrica do Botão 9. Recomputa vl_unit_prod/qtde_prod
+# AO VIVO a partir do valor bruto + FM salvo (não grava o número final
+# já dividido/multiplicado) — evita duplicar fonte de verdade; reverter
+# bastaria limpar o registro de tratamento (ainda não implementado, sem
+# pedido explícito do usuário).
+_COLUNAS_TRATAMENTO_FM_ENTRADAS = ["idunico", "TRATAMENTO", "FM_APLICADO", "NOVA_UNIDADE_APLICADA", "TS"]
+
+
+def consultar_tratamento_fm_entradas_por_idunico(idunicos: "set | list") -> pd.DataFrame:
+    """Busca, pra um conjunto de `idunico`, o tratamento de FM/Nova
+    Unidade já aplicado (tabela tratamento_fm_entradas) — usado pra
+    ajustar vl_unit_prod/qtde_prod na tabela "Itens individuais" do
+    Botão 9 (Entradas). Devolve DataFrame vazio (mesmas colunas) se
+    `idunicos` vier vazio, o banco não existir, ou a tabela ainda não
+    tiver sido criada (nenhum tratamento aplicado ainda)."""
+    colunas = _COLUNAS_TRATAMENTO_FM_ENTRADAS
+    if not idunicos or not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas)
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "tratamento_fm_entradas" not in tabelas:
+                return pd.DataFrame(columns=colunas)
+            con.register("_idunicos_tratamento_fm", pd.DataFrame({"idunico": list(idunicos)}))
+            df = con.execute(
+                "SELECT t.* FROM tratamento_fm_entradas t "
+                "INNER JOIN _idunicos_tratamento_fm b ON t.idunico = b.idunico"
+            ).df()
+            con.unregister("_idunicos_tratamento_fm")
+        df["idunico"] = df["idunico"].astype(str)
+        return df[colunas]
+    except Exception:
+        logger.exception("Erro ao consultar tratamento_fm_entradas em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas)
+
+
+def aplicar_tratamento_fm_entradas(idunicos: "set | list", fm_aplicado: float, nova_unidade: str) -> dict:
+    """Aplica (grava) o Fator Multiplicador e a Nova Unidade nos itens
+    (idunico) informados — marca TRATAMENTO='T' pra cada um. Upsert por
+    `idunico`: item já tratado antes tem seu registro SUBSTITUÍDO (não
+    duplicado) se aplicado de novo. Regra R07: idunico/TRATAMENTO/
+    NOVA_UNIDADE_APLICADA sempre string. Devolve {'ok': True,
+    'total_aplicado': int} ou {'erro': str}."""
+    if not idunicos:
+        return {"erro": "Nenhum item selecionado."}
+    try:
+        novo = pd.DataFrame({"idunico": [str(i) for i in idunicos]})
+        novo["TRATAMENTO"] = "T"
+        novo["FM_APLICADO"] = float(fm_aplicado)
+        novo["NOVA_UNIDADE_APLICADA"] = str(nova_unidade)
+        novo["TS"] = datetime.now().isoformat(timespec="seconds")
+        novo = novo[_COLUNAS_TRATAMENTO_FM_ENTRADAS]
+
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "tratamento_fm_entradas" in tabelas:
+                existente = con.execute("SELECT * FROM tratamento_fm_entradas").df()
+                existente["idunico"] = existente["idunico"].astype(str)
+                preservar = existente[~existente["idunico"].isin(novo["idunico"])]
+                combinado = pd.concat([preservar, novo], ignore_index=True)
+            else:
+                combinado = novo
+            combinado = combinado[_COLUNAS_TRATAMENTO_FM_ENTRADAS].reset_index(drop=True)
+            con.register("_df_tratamento_fm_entradas", combinado)
+            con.execute("CREATE OR REPLACE TABLE tratamento_fm_entradas AS SELECT * FROM _df_tratamento_fm_entradas")
+            con.unregister("_df_tratamento_fm_entradas")
+        return {"ok": True, "total_aplicado": len(novo)}
+    except Exception as e:
+        logger.exception("Erro ao aplicar tratamento_fm_entradas em %s", _BANCO_PATH)
+        return {"erro": str(e)}
+
+
 # ── Produto Escolhido para Cruzamento (Botão 9) ──────────────────────────
 # Solicitação Técnica (2026-07-23): "SERÁ UM PAINEL EM QUE ESCOLHEREU UM
 # PRODUTO A SER CRUZADO" — painel "PRODUTOS ALVOS SALVOS" onde o auditor

@@ -2558,7 +2558,8 @@ _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_AGRUPA
 # idunico vira a ÚLTIMA coluna (depois até de CRITERIO/TS).
 _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO = [
     "codproddecl", "desc_xml", "ANO_ELEITO", "ncm4", "unid_prod",
-    "vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido", "CHV_NFE", "CRITERIO", "TS", "idunico",
+    "vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido", "TRATAMENTO",
+    "CHV_NFE", "CRITERIO", "TS", "idunico",
 ]
 
 
@@ -3692,10 +3693,46 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     # determinístico e não muda.
     atributos_por_idunico = loader.consultar_atributos_estoque_por_idunico(set(detalhado["idunico"]), origem="entradas")
     detalhado = detalhado.merge(atributos_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
+    # Mapa idunico -> unid_prod BRUTO (antes de qualquer tratamento) —
+    # 2026-07-26, usado pelo botão "Aplicar FM e Nova Unidade" abaixo pra
+    # localizar quais itens pertencem a uma UP do Sumário (que também é
+    # calculado sobre o valor BRUTO, não o já tratado).
+    detalhado_unid_bruto = detalhado[["idunico", "unid_prod"]].copy()
     # Sumário de Unidades (2026-07-25, Solicitação Técnica "SUMÁRIO DE
     # UNIDADES PARA FATOR MULTIPLICADOR") — calculado ANTES da formatação
-    # BR abaixo, que transforma vl_unit_prod em string (quebraria a média).
+    # BR abaixo, que transforma vl_unit_prod em string (quebraria a média);
+    # e ANTES do tratamento de FM abaixo, pra sempre refletir a unidade/
+    # preço BRUTOS do XML, independente de tratamentos já aplicados.
     sumario_unidades = loader.gerar_sumario_unidades_alvo(detalhado)
+    # Aplicação do FM/Nova Unidade (2026-07-26, Solicitação Técnica "crie
+    # o campo 'TRATAMENTO' na tabela de id única. ... crie uma caixa no
+    # sumário para aplicar o fm e a nova unidade na tabela id única. o
+    # preço unitário deve ser dividido pelo fm e a qtde deve ser
+    # multiplicada. caso haja aplicação do FM, deve ser lançando 'T' o
+    # campo tratamento.") — busca o tratamento já persistido (por
+    # idunico, ver loader.aplicar_tratamento_fm_entradas()) e ajusta
+    # vl_unit_prod/qtde_prod nos itens tratados. vl_prod NÃO é
+    # recalculado — matematicamente invariante ((v÷f)×(q×f) = v×q), a
+    # divisão/multiplicação só muda a "embalagem" do valor, não o total.
+    tratamento_por_idunico = loader.consultar_tratamento_fm_entradas_por_idunico(set(detalhado["idunico"]))
+    detalhado = detalhado.merge(tratamento_por_idunico, on="idunico", how="left")
+    # FM_APLICADO precisa ser float mesmo quando NENHUM item foi tratado
+    # ainda — quando tratamento_por_idunico vem vazio (tabela ainda não
+    # criada), o merge traz a coluna como dtype "object" (peculiaridade
+    # de DataFrame vazio), e a divisão abaixo quebra ("Invalid value '[]'
+    # for dtype 'float64'") mesmo com a máscara selecionando 0 linhas —
+    # achado real via AppTest antes de propagar.
+    detalhado["FM_APLICADO"] = pd.to_numeric(detalhado["FM_APLICADO"], errors="coerce")
+    mascara_tratado = detalhado["TRATAMENTO"] == "T"
+    detalhado.loc[mascara_tratado, "vl_unit_prod"] = (
+        detalhado.loc[mascara_tratado, "vl_unit_prod"] / detalhado.loc[mascara_tratado, "FM_APLICADO"]
+    )
+    detalhado.loc[mascara_tratado, "qtde_prod"] = (
+        detalhado.loc[mascara_tratado, "qtde_prod"] * detalhado.loc[mascara_tratado, "FM_APLICADO"]
+    )
+    detalhado.loc[mascara_tratado, "unid_prod"] = detalhado.loc[mascara_tratado, "NOVA_UNIDADE_APLICADA"]
+    detalhado["TRATAMENTO"] = detalhado["TRATAMENTO"].fillna("")  # Regra R07: nunca "None"
+    detalhado = detalhado.drop(columns=["FM_APLICADO", "NOVA_UNIDADE_APLICADA"], errors="ignore")
     # Formatação BR (milhar '.', decimal ',') pras colunas de valor/quantidade
     # — pedido explícito da Solicitação Técnica ("separadores de milhar e 2
     # casas decimais"), mesmo padrão já usado no painel 7.2.
@@ -3730,14 +3767,23 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     if not sumario_unidades.empty:
         st.markdown("### 📊 Diagnóstico de Unidades (Visão XML)")
         sumario_exibicao = sumario_unidades.rename(columns=loader.carregar_dicionario_campos())
-        colunas_travadas_sumario = [c for c in sumario_exibicao.columns if c not in ("FM Sug", "Nova Unid")]
+        # Checkbox "Aplicar" (2026-07-26, pedido do usuário: "crie uma
+        # caixa no sumário para aplicar o fm e a nova unidade na tabela
+        # id única") — sempre começa DESMARCADO, mesmo padrão do "Salvar"
+        # da Rubrica (nenhuma pré-marcação). Marca quais UPs (linhas)
+        # devem ter o FM Sug/Nova Unid (já editáveis) efetivamente
+        # aplicados aos itens individuais dessa UP.
+        sumario_exibicao["Aplicar"] = False
+        colunas_travadas_sumario = [
+            c for c in sumario_exibicao.columns if c not in ("FM Sug", "Nova Unid", "Aplicar")
+        ]
         with st.container(key="sumario_unidades_alvo_tabela"):
             st.markdown(
                 "<style>.st-key-sumario_unidades_alvo_tabela [data-testid='stDataFrame'] "
                 "* { font-size: 10px; }</style>",
                 unsafe_allow_html=True,
             )
-            st.data_editor(
+            sumario_editado = st.data_editor(
                 sumario_exibicao,
                 use_container_width=True,
                 hide_index=True,
@@ -3748,6 +3794,37 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
                 # esconder casas decimais quando existem de verdade.
                 column_config={"FM Sug": st.column_config.NumberColumn(format="%g")},
             )
+        st.caption(
+            "Marque \"Aplicar\" nas UPs cujo FM Sug/Nova Unid devem ser lançados nos itens "
+            "individuais dessa UP (preço unitário ÷ FM, quantidade × FM, TRATAMENTO='T')."
+        )
+        if st.button("🔧 Aplicar FM e Nova Unidade", key="btn_aplicar_fm_sumario"):
+            marcadas = sumario_editado[sumario_editado["Aplicar"] == True]  # noqa: E712
+            if marcadas.empty:
+                st.warning("Nenhuma UP marcada em \"Aplicar\".")
+            else:
+                total_aplicado = 0
+                erros = []
+                for _, linha in marcadas.iterrows():
+                    up = linha["Unidade do Produto"]
+                    fm = linha["FM Sug"]
+                    nova_unid = linha["Nova Unid"]
+                    if pd.isna(fm) or float(fm) == 0:
+                        erros.append(f"UP \"{up}\": FM Sug inválido (vazio ou zero), não aplicado.")
+                        continue
+                    idunicos_up = set(
+                        detalhado_unid_bruto.loc[detalhado_unid_bruto["unid_prod"] == up, "idunico"]
+                    )
+                    resultado = loader.aplicar_tratamento_fm_entradas(idunicos_up, float(fm), str(nova_unid))
+                    if "erro" in resultado:
+                        erros.append(f"UP \"{up}\": {resultado['erro']}")
+                    else:
+                        total_aplicado += resultado["total_aplicado"]
+                for erro in erros:
+                    st.error(erro)
+                if total_aplicado:
+                    st.success(f"✅ FM/Nova Unidade aplicado a {total_aplicado} item(ns).")
+                    st.rerun()
 
 
 def _obter_criterios_cruzamento_saidas() -> dict:

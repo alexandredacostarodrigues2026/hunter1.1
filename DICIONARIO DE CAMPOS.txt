@@ -162,3 +162,6 @@ grafias_cluster;Grafias no Cluster
 
 # Novos campos - 2026-07-25 (Botao 9 - Sumario de Unidades, layout up|vl min_max|qtde|fm|nova up)
 vl_min_max;Valor Unitario (Min-Max)
+
+# Novos campos - 2026-07-26 (Botao 9 - Aplicacao do FM/Nova Unidade na tabela id unica)
+TRATAMENTO;Tratamento
