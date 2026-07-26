@@ -2558,7 +2558,7 @@ _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_AGRUPA
 # idunico vira a ÚLTIMA coluna (depois até de CRITERIO/TS).
 _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO = [
     "codproddecl", "desc_xml", "ANO_ELEITO", "ncm4", "unid_prod",
-    "vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido", "TRATAMENTO",
+    "vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido", "TRATAMENTO", "valor_destoante",
     "CHV_NFE", "CRITERIO", "TS", "idunico",
 ]
 
@@ -3401,11 +3401,20 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
     detalhado_unid_bruto, ups_ja_tratadas):
     - sumario_unidades: calculado ANTES do tratamento abaixo, sempre
       reflete a unidade/preço BRUTOS do XML (independente de
-      tratamentos já aplicados) — ver loader.gerar_sumario_unidades_alvo().
-      No Estoque (`origem="estoque"`), usa gerar_sumario_unidades_alvo_
-      com_destaque() — separa em linha própria os itens com valor
-      destoante dentro da mesma UNID (2026-07-26, "SEPARE AS LINHAS DO
-      SUMÁRIO, DENTRO DA MESMA UNID").
+      tratamentos já aplicados) — via loader.gerar_sumario_unidades_alvo_
+      com_destaque() (2026-07-26, "SEPARE AS LINHAS DO SUMÁRIO, DENTRO
+      DA MESMA UNID", depois "ESTENDA PARA ENTRADAS E SAÍDAS") — separa
+      em linha própria os itens com valor destoante dentro da mesma
+      UNID; quando nenhum item é destoante, o resultado é idêntico ao
+      de gerar_sumario_unidades_alvo() (testado com dado real de
+      Entradas/Saídas: nenhuma UP tinha variação interna grande o
+      bastante pra ser sinalizada, por isso o comportamento passou
+      despercebido até a extensão explícita do Estoque pras outras 2
+      origens).
+    - detalhado_ajustado ganha a coluna `valor_destoante` (mesma
+      sinalização, ver loader.sinalizar_valor_destoante()) — calculada
+      DEPOIS do tratamento de FM abaixo, refletindo o valor unitário
+      já ajustado (o que o auditor vê na tela).
     - detalhado_unid_bruto: mapa idunico -> unid_prod BRUTO, usado por
       _render_sumario_unidades_com_aplicar() pra localizar quais itens
       pertencem a uma UP do Sumário.
@@ -3421,14 +3430,7 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
       "embalagem" do valor, não o total. TRATAMENTO vira coluna nova,
       "" (nunca "None", Regra R07) pra itens não tratados."""
     detalhado_unid_bruto = detalhado[["idunico", "unid_prod"]].copy()
-    # Estoque separa em linha própria os itens com valor destoante dentro
-    # da mesma UNID (2026-07-26, "SEPARE AS LINHAS DO SUMÁRIO, DENTRO DA
-    # MESMA UNID") — só nessa origem, mesmo escopo de sinalizar_valor_
-    # destoante() ("SOMENTE PARA ESTOQUE, POR ENQUANTO").
-    if origem == "estoque":
-        sumario_unidades = loader.gerar_sumario_unidades_alvo_com_destaque(detalhado)
-    else:
-        sumario_unidades = loader.gerar_sumario_unidades_alvo(detalhado)
+    sumario_unidades = loader.gerar_sumario_unidades_alvo_com_destaque(detalhado)
     tratamento_por_idunico = loader.consultar_tratamento_fm_por_idunico(set(detalhado["idunico"]), origem=origem)
     detalhado = detalhado.merge(tratamento_por_idunico, on="idunico", how="left")
     # FM_APLICADO precisa ser float mesmo quando NENHUM item foi tratado
@@ -3452,6 +3454,8 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
     detalhado.loc[mascara_tratado, "unid_prod"] = detalhado.loc[mascara_tratado, "NOVA_UNIDADE_APLICADA"]
     detalhado["TRATAMENTO"] = detalhado["TRATAMENTO"].fillna("")
     detalhado = detalhado.drop(columns=["FM_APLICADO", "NOVA_UNIDADE_APLICADA"], errors="ignore")
+    if "vl_unit_prod" in detalhado.columns and "unid_prod" in detalhado.columns:
+        detalhado["valor_destoante"] = loader.sinalizar_valor_destoante(detalhado)
     return detalhado, sumario_unidades, detalhado_unid_bruto, ups_ja_tratadas
 
 
@@ -4348,15 +4352,10 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     detalhado, sumario_unidades, detalhado_unid_bruto, ups_ja_tratadas = _aplicar_tratamento_fm_detalhado(
         detalhado, origem="estoque",
     )
-    # Valor Destoante (2026-07-26, pedido do usuário: "PARA O ESTOQUE
-    # TENHO ISSO: UM VALOR DESTOANDO. QUAL SERIA MELHOR SAIDA PARA ACHAR
-    # ESSE VALOR AUTOMATICAMENTE?" — confirmado "SIM"/"SOMENTE PARA
-    # ESTOQUE, POR ENQUANTO") — calculado ANTES da formatação BR abaixo
-    # (precisa de vl_unit_prod numérico), sinaliza itens cujo preço
-    # unitário destoa (>=3x ou <=1/3x) da mediana do grupo (mesmo
-    # unid_prod) — ver loader.sinalizar_valor_destoante().
-    if "vl_unit_prod" in detalhado.columns and "unid_prod" in detalhado.columns:
-        detalhado["valor_destoante"] = loader.sinalizar_valor_destoante(detalhado)
+    # Valor Destoante já calculado dentro de _aplicar_tratamento_fm_
+    # detalhado() (2026-07-26; estendido de Estoque pras 3 origens no
+    # mesmo dia, "ESTENDA PARA ENTRADAS E SAÍDAS") — coluna
+    # `valor_destoante` já vem pronta em `detalhado`.
     for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido"):
         if _col in detalhado.columns:
             detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")

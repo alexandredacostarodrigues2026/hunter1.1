@@ -5348,11 +5348,16 @@ def gerar_sumario_unidades_alvo_com_destaque(df_detalhado: pd.DataFrame) -> pd.D
     com 6 itens (4 normais + 2020 e 2021 destoantes) vira 3 linhas: "LA"
     (4 itens, faixa normal), "LA" (só 2020), "LA" (só 2021).
 
-    Só usada no Estoque por enquanto (mesmo escopo de sinalizar_valor_
-    destoante() — "SOMENTE PARA ESTOQUE, POR ENQUANTO"). Mesmas colunas
-    de gerar_sumario_unidades_alvo(); linhas de item destoante têm
-    `vl_min_max` com um valor só (o próprio item) e `qtde_ocorrencia_
-    unid_prod=1`."""
+    Estendida pras 3 origens (2026-07-26, mesmo dia: "ESTENDA PARA
+    ENTRADAS E SAÍDAS") — usada uniformemente por
+    _aplicar_tratamento_fm_detalhado() (interface.py), sem branch por
+    origem: testado com dado real de Entradas/Saídas (CERV SKOL LATA
+    350ML) e confirmado que, quando nenhum item é destoante, o
+    resultado é IDÊNTICO ao de gerar_sumario_unidades_alvo() — a
+    separação só muda algo quando há de fato um item fora do padrão
+    dentro da mesma UNID. Mesmas colunas de gerar_sumario_unidades_
+    alvo(); linhas de item destoante têm `vl_min_max` com um valor só
+    (o próprio item) e `qtde_ocorrencia_unid_prod=1`."""
     colunas = _COLUNAS_SUMARIO_UNIDADES_ALVO
     if df_detalhado.empty or not {"unid_prod", "vl_unit_prod"}.issubset(df_detalhado.columns):
         return pd.DataFrame(columns=colunas)
@@ -6800,9 +6805,10 @@ def consultar_atributos_estoque_estoque_por_idunico(idunicos: "set | list") -> p
 
 # Detecção de valor destoante (2026-07-26, pedido do usuário: "PARA O
 # ESTOQUE TENHO ISSO: UM VALOR DESTOANDO. QUAL SERIA MELHOR SAIDA PARA
-# ACHAR ESSE VALOR AUTOMATICAMENTE?" — confirmado "SIM", escopo restrito
-# a Estoque por enquanto: "SOMENTE PARA ESTOQUE, POR ENQUANTO") — sinaliza
-# itens cujo vl_unit_prod foge muito da MEDIANA do grupo (mesmo
+# ACHAR ESSE VALOR AUTOMATICAMENTE?" — confirmado "SIM", escopo
+# inicialmente restrito ao Estoque: "SOMENTE PARA ESTOQUE, POR ENQUANTO",
+# depois estendido no mesmo dia: "ESTENDA PARA ENTRADAS E SAÍDAS") —
+# sinaliza itens cujo vl_unit_prod foge muito da MEDIANA do grupo (mesmo
 # unid_prod), sem depender de faixa fixa por produto (mesmo raciocínio
 # já usado na clusterização por preço do Sumário de Unidades). Mediana
 # escolhida por ser ROBUSTA a um único outlier num grupo pequeno (ex.:
