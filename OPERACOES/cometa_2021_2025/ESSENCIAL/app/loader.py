@@ -5262,26 +5262,23 @@ def consultar_grupo_produto_alvo_fiscalizacao(
 # interna de preço entre notas — o usuário quer TODA UP visível, cada
 # uma com sua própria faixa, sem fusão entre grafias diferentes. Cada
 # `unid_prod` (texto exato do UCOM) agora é uma linha própria, garantido.
+#
+# `vl_min_max` virou 2 colunas numéricas — `vl_min`/`vl_max` (2026-07-26,
+# "SEPARE EM DIAS COLUNAS MIN E MAX", pedido logo após tornar o campo
+# combinado editável) — mais simples de editar que um texto único tipo
+# "24,90 - 38,76" (não precisa digitar hífen nem lidar com parsing de
+# faixa). Override de preço-base (ver _aplicar_tratamento_fm_detalhado(),
+# interface.py) passa a valer quando `vl_min == vl_max` (um valor único,
+# não mais uma faixa de verdade) — mesmo raciocínio de antes, só que sem
+# precisar de parser de texto.
 _COLUNAS_SUMARIO_UNIDADES_ALVO = [
-    "unid_prod", "vl_min_max", "qtde_ocorrencia_unid_prod", "fm_sug", "nova_unid",
+    "unid_prod", "vl_min", "vl_max", "qtde_ocorrencia_unid_prod", "fm_sug", "nova_unid",
 ]
 
 
 def _moda_ou_none(serie: pd.Series):
     s = serie.dropna()
     return s.mode().iloc[0] if not s.empty else pd.NA
-
-
-def _formatar_numero_br(v: float) -> str:
-    return f"{v:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
-
-
-def _formatar_vl_min_max(serie: pd.Series) -> str:
-    s = serie.dropna()
-    if s.empty:
-        return ""
-    minv, maxv = s.min(), s.max()
-    return _formatar_numero_br(minv) if minv == maxv else f"{_formatar_numero_br(minv)} - {_formatar_numero_br(maxv)}"
 
 
 def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
@@ -5300,8 +5297,9 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
     texto, que transformaria vl_unit_prod em string e quebraria o
     cálculo). Colunas devolvidas:
     - unid_prod: texto exato da unidade (Regra R07: string).
-    - vl_min_max: faixa mínimo-máximo de vl_unit_prod dentro da unidade
-      (já formatada em BR, "24,90 - 38,76"; só um valor se mín=máx).
+    - vl_min/vl_max: mínimo/máximo de vl_unit_prod dentro da unidade
+      (numéricos, editáveis na tela — 2026-07-26, "SEPARE EM DIAS
+      COLUNAS MIN E MAX"; iguais entre si quando só há 1 valor).
     - qtde_ocorrencia_unid_prod: contagem de itens dessa unidade.
     - fm_sug: MODA do `fm_sugerido` (já calculado por item na tabela
       "Itens individuais", ver nota da seção) dentro da unidade — NULL se
@@ -5330,7 +5328,8 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
     base["unid_prod"] = base["unid_prod"].astype(str)
 
     agg_kwargs = {
-        "vl_min_max": ("vl_unit_prod", _formatar_vl_min_max),
+        "vl_min": ("vl_unit_prod", "min"),
+        "vl_max": ("vl_unit_prod", "max"),
         "qtde_ocorrencia_unid_prod": ("unid_prod", "size"),
     }
     if "fm_sugerido" in base.columns:
@@ -5371,12 +5370,12 @@ def gerar_sumario_unidades_alvo_com_destaque(df_detalhado: pd.DataFrame) -> pd.D
     resultado é IDÊNTICO ao de gerar_sumario_unidades_alvo() — a
     separação só muda algo quando há de fato um item fora do padrão
     dentro da mesma UNID. Mesmas colunas de gerar_sumario_unidades_
-    alvo(); linhas de item destoante têm `vl_min_max` com um valor só
-    (o próprio item) e `qtde_ocorrencia_unid_prod=1`. Carrega a coluna
-    interna `_idunicos` (ver gerar_sumario_unidades_alvo() — crítica
-    aqui: duas linhas podem ter o MESMO texto de `unid_prod` — ex.: "LA"
-    normal e "LA" destoante — e só `_idunicos` distingue qual linha é
-    qual pra aplicar/desfazer o tratamento correto)."""
+    alvo(); linhas de item destoante têm `vl_min`/`vl_max` iguais entre
+    si (o próprio item) e `qtde_ocorrencia_unid_prod=1`. Carrega a
+    coluna interna `_idunicos` (ver gerar_sumario_unidades_alvo() —
+    crítica aqui: duas linhas podem ter o MESMO texto de `unid_prod` —
+    ex.: "LA" normal e "LA" destoante — e só `_idunicos` distingue qual
+    linha é qual pra aplicar/desfazer o tratamento correto)."""
     colunas = _COLUNAS_SUMARIO_UNIDADES_ALVO
     if df_detalhado.empty or not {"unid_prod", "vl_unit_prod"}.issubset(df_detalhado.columns):
         return pd.DataFrame(columns=colunas + ["_idunicos"])
@@ -5394,9 +5393,11 @@ def gerar_sumario_unidades_alvo_com_destaque(df_detalhado: pd.DataFrame) -> pd.D
         for _, item in destoante.iterrows():
             fm_item = item["fm_sugerido"] if "fm_sugerido" in destoante.columns else pd.NA
             idunico_item = item["idunico"] if "idunico" in destoante.columns else None
+            valor_item = item["vl_unit_prod"] if pd.notna(item["vl_unit_prod"]) else pd.NA
             linhas.append({
                 "unid_prod": str(item["unid_prod"]),
-                "vl_min_max": _formatar_numero_br(item["vl_unit_prod"]) if pd.notna(item["vl_unit_prod"]) else "",
+                "vl_min": valor_item,
+                "vl_max": valor_item,
                 "qtde_ocorrencia_unid_prod": 1,
                 "fm_sug": fm_item,
                 "nova_unid": NOVA_UP_PADRAO,

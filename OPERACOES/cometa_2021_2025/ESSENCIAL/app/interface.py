@@ -3474,26 +3474,22 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
     return detalhado, sumario_unidades, idunicos_tratados
 
 
-def _parsear_valor_unitario_editado(texto) -> "float | None":
-    """Interpreta o texto de "Valor Unitário (Min-Max)" como um valor
-    unitário ÚNICO editado pelo auditor (2026-07-26, "TRANSFORME O
-    VALOR UNIT MIN-MAX EM EDITÁVEL") — devolve o float se for um número
-    BR válido (vírgula decimal), ou None se ainda for uma FAIXA
-    ("min - max", com hífen) ou vier vazio/inválido. Só um valor único
-    aqui vira override em loader.aplicar_tratamento_fm(); uma faixa
-    intocada (UP com mais de um preço distinto, não editada) preserva o
-    comportamento padrão (÷FM sobre o valor bruto de cada item). Numa
-    linha de 1 item só, a faixa já É o próprio valor do item — editar
-    sem mudar o número não tem efeito prático algum."""
-    if texto is None:
+def _obter_valor_unitario_editado(valor_min, valor_max) -> "float | None":
+    """Devolve o valor unitário ÚNICO editado pelo auditor no Sumário —
+    2026-07-26, "SEPARE EM DIAS COLUNAS MIN E MAX" (antes era um texto
+    combinado "min - max", "TRANSFORME O VALOR UNIT MIN-MAX EM
+    EDITÁVEL"; virou 2 colunas numéricas, `Valor Minimo`/`Valor
+    Maximo`). Quando `valor_min == valor_max` (um valor único, não uma
+    faixa de verdade), esse valor vira o override usado em loader.
+    aplicar_tratamento_fm() — mesmo raciocínio de antes, sem precisar
+    de parser de texto. Devolve `None` se os 2 valores divergirem
+    (faixa de verdade, preserva o comportamento padrão) ou se algum dos
+    2 vier vazio/inválido."""
+    if pd.isna(valor_min) or pd.isna(valor_max):
         return None
-    texto = str(texto).strip()
-    if not texto or " - " in texto:
+    if float(valor_min) != float(valor_max):
         return None
-    try:
-        return float(texto.replace(".", "").replace(",", "."))
-    except ValueError:
-        return None
+    return float(valor_min)
 
 
 def _render_sumario_unidades_com_aplicar(
@@ -3501,8 +3497,8 @@ def _render_sumario_unidades_com_aplicar(
     escolhido: dict, origem: str, sufixo_key: str,
 ) -> None:
     """Renderiza o "📊 Diagnóstico de Unidades (Visão XML)" — Sumário de
-    Unidades (2026-07-25) com "Valor Unitário (Min-Max)"/"FM Sug"/"Nova
-    Unid" editáveis, coluna "Observação" (2026-07-26, "CRIE UMA
+    Unidades (2026-07-25) com "Valor Minimo"/"Valor Maximo"/"FM Sug"/
+    "Nova Unid" editáveis, coluna "Observação" (2026-07-26, "CRIE UMA
     OBSERVAÇÃO COMO NA FIG", mesmo padrão da coluna homônima da Rubrica:
     "✅ Já salvo na Rubrica" — aqui "✅ Já aplicado" pras linhas com pelo
     menos 1 item já tratado, sem depender do estado dos checkboxes, que
@@ -3513,18 +3509,20 @@ def _render_sumario_unidades_com_aplicar(
     `st.tabs()`). Checkboxes sempre começam DESMARCADOS, mesmo padrão
     do "Salvar"/"Desfazer" da Rubrica.
 
-    "Valor Unitário (Min-Max)" editável (2026-07-26, "1-TRANSFORME O
-    VALOR UNIT MIN-MAX EM EDITÁVEL"): se o auditor sobrescrever a faixa
-    por um número único (via `_parsear_valor_unitario_editado()`), esse
-    valor vira o preço-base usado no ÷FM pra TODOS os itens da UP, no
-    lugar do valor bruto individual de cada item — corrige a variação
-    interna de preço entre notas (achado real: "cx12" variando de
-    R$24,90 a R$38,76). "2-ATUALIZE A OCORRÊNCIA": a "Qtd. Ocorrências"
-    já reflete corretamente os itens tratados sem precisar de código
-    extra — o Sumário sempre recalcula do zero (bruto) a cada `st.
-    rerun()`, e "Aplicar" sempre trata TODOS os idunicos daquela linha
-    de uma vez (nunca parcialmente), então a contagem bruta da linha JÁ
-    É a contagem de itens tratados. "3-VOLTE AO DEFAULT AO DESFAZER":
+    "Valor Minimo"/"Valor Maximo" editáveis (2026-07-26, "1-TRANSFORME O
+    VALOR UNIT MIN-MAX EM EDITÁVEL", depois "SEPARE EM DIAS COLUNAS MIN
+    E MAX" — o campo combinado "faixa" virou 2 colunas numéricas): se o
+    auditor igualar os 2 valores (via `_obter_valor_unitario_editado()`,
+    um valor único, não mais uma faixa de verdade), esse valor vira o
+    preço-base usado no ÷FM pra TODOS os itens da UP, no lugar do valor
+    bruto individual de cada item — corrige a variação interna de preço
+    entre notas (achado real: "cx12" variando de R$24,90 a R$38,76).
+    "2-ATUALIZE A OCORRÊNCIA": a "Qtd. Ocorrências" já reflete
+    corretamente os itens tratados sem precisar de código extra — o
+    Sumário sempre recalcula do zero (bruto) a cada `st.rerun()`, e
+    "Aplicar" sempre trata TODOS os idunicos daquela linha de uma vez
+    (nunca parcialmente), então a contagem bruta da linha JÁ É a
+    contagem de itens tratados. "3-VOLTE AO DEFAULT AO DESFAZER":
     também automático — "Desfazer" apaga o registro de tratamento
     inteiro (FM/Nova Unidade/Valor Unitário editados juntos), então o
     item volta a mostrar o valor CALCULADO a partir do XML bruto, sem
@@ -3560,7 +3558,7 @@ def _render_sumario_unidades_com_aplicar(
     ]
     colunas_travadas_sumario = [
         c for c in sumario_exibicao.columns
-        if c not in ("Valor Unitario (Min-Max)", "FM Sug", "Nova Unid", "Aplicar", "Desfazer")
+        if c not in ("Valor Minimo", "Valor Maximo", "FM Sug", "Nova Unid", "Aplicar", "Desfazer")
     ]
     chave_container = f"sumario_unidades_alvo_tabela_{sufixo_key}"
     with st.container(key=chave_container):
@@ -3575,17 +3573,20 @@ def _render_sumario_unidades_com_aplicar(
             hide_index=True,
             disabled=colunas_travadas_sumario,
             key=f"editor_sumario_unidades_alvo_{sufixo_key}",
-            # "%g" (mesmo truque do Estágio 9, 2026-07-24: "transforme fm
-            # sugerido 12.000 em 12") — remove zeros à direita sem
-            # esconder casas decimais quando existem de verdade.
-            column_config={"FM Sug": st.column_config.NumberColumn(format="%g")},
+            column_config={
+                # "%g" (mesmo truque do Estágio 9, 2026-07-24: "transforme
+                # fm sugerido 12.000 em 12") — remove zeros à direita sem
+                # esconder casas decimais quando existem de verdade.
+                "FM Sug": st.column_config.NumberColumn(format="%g"),
+                "Valor Minimo": st.column_config.NumberColumn(format="%.2f"),
+                "Valor Maximo": st.column_config.NumberColumn(format="%.2f"),
+            },
         )
     st.caption(
         "Marque \"Aplicar\" nas UPs cujo FM Sug/Nova Unid devem ser lançados nos itens "
-        "individuais dessa UP (preço unitário ÷ FM, quantidade × FM, TRATAMENTO='T'); edite "
-        "\"Valor Unitário (Min-Max)\" pra um número único pra corrigir o preço-base usado nesse "
-        "cálculo; marque \"Desfazer\" pra reverter um tratamento já aplicado (volta ao valor "
-        "bruto do XML)."
+        "individuais dessa UP (preço unitário ÷ FM, quantidade × FM, TRATAMENTO='T'); iguale "
+        "\"Valor Minimo\"/\"Valor Maximo\" pra corrigir o preço-base usado nesse cálculo; marque "
+        "\"Desfazer\" pra reverter um tratamento já aplicado (volta ao valor bruto do XML)."
     )
     if st.button("🔧 Aplicar / Desfazer Tratamento", key=f"btn_aplicar_fm_sumario_{sufixo_key}"):
         marcadas_desfazer = sumario_editado[sumario_editado["Desfazer"] == True]  # noqa: E712
@@ -3609,7 +3610,7 @@ def _render_sumario_unidades_com_aplicar(
                 if pd.isna(fm) or float(fm) == 0:
                     erros.append(f"UP \"{up}\": FM Sug inválido (vazio ou zero), não aplicado.")
                     continue
-                valor_unitario_editado = _parsear_valor_unitario_editado(linha["Valor Unitario (Min-Max)"])
+                valor_unitario_editado = _obter_valor_unitario_editado(linha["Valor Minimo"], linha["Valor Maximo"])
                 idunicos_up = set(idunicos_por_linha.loc[idx])
                 resultado = loader.aplicar_tratamento_fm(
                     idunicos_up, float(fm), str(nova_unid),
