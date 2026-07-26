@@ -3716,22 +3716,20 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
 
     # Diagnóstico de Unidades (2026-07-25, Solicitação Técnica "SUMÁRIO DE
     # UNIDADES PARA FATOR MULTIPLICADOR") — agrupa os itens já confirmados
-    # por unid_prod (ucom do XML), mostrando recorrência + valor unitário
-    # médio, prova estatística pro auditor decidir o Fator Multiplicador
-    # no Estágio 9 (ex.: "cx12" com muitas ocorrências e média alta vs.
-    # "unid" com poucas ocorrências e média baixa sugere fator = razão
-    # entre as médias). "FM Sug"/"Nova Unid" EDITÁVEIS (2026-07-25, pedido
+    # por unid_prod (ucom do XML), mostrando recorrência + faixa de valor
+    # unitário, prova estatística pro auditor decidir o Fator Multiplicador
+    # no Estágio 9. "FM Sug"/"Nova Unid" EDITÁVEIS (2026-07-25, pedido
     # do usuário: "inclua nesta nova tabela o fm_sug e nova unid. ambos
     # devem ser editáveis") — st.data_editor em vez de st.dataframe, só
     # essas 2 colunas destravadas; sem persistência própria (a decisão
     # final continua sendo gravada no Estágio 9), edição vale só pra
-    # revisão na tela — some ao recarregar a página.
+    # revisão na tela — some ao recarregar a página. Layout "up|vl min_
+    # max|qtde|fm|nova up" (2026-07-25, pedido do usuário) — `vl_min_max`
+    # já vem pré-formatado em BR de gerar_sumario_unidades_alvo(), sem
+    # reformatação aqui (troca a média por faixa mín-máx do cluster).
     if not sumario_unidades.empty:
         st.markdown("### 📊 Diagnóstico de Unidades (Visão XML)")
         sumario_exibicao = sumario_unidades.rename(columns=loader.carregar_dicionario_campos())
-        sumario_exibicao["Preco Unitario Medio (XML)"] = sumario_exibicao["Preco Unitario Medio (XML)"].apply(
-            lambda v: _formatar_moeda_br(v) if pd.notna(v) else ""
-        )
         colunas_travadas_sumario = [c for c in sumario_exibicao.columns if c not in ("FM Sug", "Nova Unid")]
         with st.container(key="sumario_unidades_alvo_tabela"):
             st.markdown(

@@ -5294,16 +5294,18 @@ def consultar_grupo_produto_alvo_fiscalizacao(
 # física (erro de digitação numa nota), com preço unitário quase idêntico;
 # agrupar só por texto criava 2 linhas artificiais e diluía o diagnóstico.
 #
-# Rastreabilidade (2026-07-25, pedido do usuário: "vamos tentar
-# rastreabilidade" após perguntar "kd cx012?" — a fusão em 1 linha só
-# escondia por completo a grafia minoritária) — `grafias_cluster` lista,
-# dentro da linha consolidada, quais grafias de texto entraram no cluster
-# e quantas ocorrências cada uma teve (ex.: "cx12 (45), cx012 (1)"),
-# ordenado da mais pra menos frequente. Mantém o benefício da fusão
-# (1 linha, contagem/média/FM consolidados) sem perder a rastreabilidade
-# de qual grafia bruta originou o quê.
+# Layout "up|vl min_max|qtde|fm|nova up" (2026-07-25, pedido do usuário
+# — substitui a versão anterior, que tinha `media_vu` + `grafias_cluster`
+# em colunas separadas): `vl_min_max` mostra a FAIXA (mínimo-máximo) do
+# valor unitário dentro do cluster, em vez da média — resposta direta ao
+# exemplo original do usuário ("cx012 e cx12 | 29-33 | fm 12"), que já
+# pedia faixa, não média. A faixa por si só já sinaliza a dispersão de
+# preço do cluster (ex.: "24,90 - 38,76" avisa que há bastante variação
+# dentro de "cx12"), por isso a coluna de rastreabilidade textual
+# (`grafias_cluster`) foi removida da tela — decisão explícita do
+# usuário via AskUserQuestion ("Substituir tudo pelas 5 colunas").
 _COLUNAS_SUMARIO_UNIDADES_ALVO = [
-    "unid_prod", "grafias_cluster", "qtde_ocorrencia_unid_prod", "media_vu", "fm_sug", "nova_unid",
+    "unid_prod", "vl_min_max", "qtde_ocorrencia_unid_prod", "fm_sug", "nova_unid",
 ]
 
 
@@ -5329,23 +5331,20 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
     época) já passa de 10% (ex.: R$24,90 a R$38,76) — clusterizar item a
     item fragmentava "cx12" em vários pedaços artificiais. Agregando por
     texto primeiro, essa variação interna fica absorvida na própria
-    média do grupo, e o cluster de preço só decide se DOIS GRUPOS DE
+    faixa do grupo, e o cluster de preço só decide se DOIS GRUPOS DE
     TEXTO diferentes devem ser tratados como a mesma unidade real.
 
     `df_detalhado` é o DataFrame já enriquecido com as métricas fiscais
     (uma linha por item/idunico confirmado, com `unid_prod`/`vl_unit_prod`/
     `fm_sugerido` numéricos — chamar ANTES de qualquer formatação BR em
-    texto, que transformaria vl_unit_prod em string e quebraria a média
+    texto, que transformaria vl_unit_prod em string e quebraria o cálculo
     / a clusterização). Colunas devolvidas:
     - unid_prod: MODA do texto de unidade dentro do cluster (grafia mais
       frequente — Regra R07: string).
-    - grafias_cluster: rastreabilidade — todas as grafias de texto que
-      caíram no cluster com sua contagem individual (ex.: "cx12 (45),
-      cx012 (1)"), da mais pra menos frequente.
+    - vl_min_max: faixa mínimo-máximo de vl_unit_prod dentro do cluster
+      (já formatada em BR, "24,90 - 38,76"; só um valor se mín=máx).
     - qtde_ocorrencia_unid_prod: contagem de itens do cluster (soma as
       variações de texto que caíram juntas).
-    - media_vu: média aritmética de vl_unit_prod dentro do cluster
-      (ponderada pelos itens de todos os grupos de texto fundidos).
     - fm_sug: MODA do `fm_sugerido` (já calculado por item na tabela
       "Itens individuais", ver nota da seção) dentro do cluster — NULL se
       `df_detalhado` não tiver a coluna (ex.: enriquecimento
@@ -5365,9 +5364,15 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
         s = serie.dropna()
         return s.mode().iloc[0] if not s.empty else pd.NA
 
-    def _formatar_grafias_cluster(serie: pd.Series) -> str:
-        contagem = serie.value_counts()
-        return ", ".join(f"{texto} ({qtd})" for texto, qtd in contagem.items())
+    def _fmt_br(v: float) -> str:
+        return f"{v:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
+
+    def _formatar_vl_min_max(serie: pd.Series) -> str:
+        s = serie.dropna()
+        if s.empty:
+            return ""
+        minv, maxv = s.min(), s.max()
+        return _fmt_br(minv) if minv == maxv else f"{_fmt_br(minv)} - {_fmt_br(maxv)}"
 
     # 1) agrega primeiro por texto exato — preserva a variação natural de
     #    preço dentro de uma mesma unidade real (ex.: "cx12" entre notas).
@@ -5382,9 +5387,8 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
 
     agg_kwargs = {
         "unid_prod": ("unid_prod", _moda_ou_none),
-        "grafias_cluster": ("unid_prod", _formatar_grafias_cluster),
+        "vl_min_max": ("vl_unit_prod", _formatar_vl_min_max),
         "qtde_ocorrencia_unid_prod": ("unid_prod", "size"),
-        "media_vu": ("vl_unit_prod", "mean"),
     }
     if "fm_sugerido" in base.columns:
         agg_kwargs["fm_sug"] = ("fm_sugerido", _moda_ou_none)

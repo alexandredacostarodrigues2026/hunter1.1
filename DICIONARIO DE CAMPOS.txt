@@ -159,3 +159,6 @@ media_vu;Preco Unitario Medio (XML)
 fm_sug;FM Sug
 nova_unid;Nova Unid
 grafias_cluster;Grafias no Cluster
+
+# Novos campos - 2026-07-25 (Botao 9 - Sumario de Unidades, layout up|vl min_max|qtde|fm|nova up)
+vl_min_max;Valor Unitario (Min-Max)
