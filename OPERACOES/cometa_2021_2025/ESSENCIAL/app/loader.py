@@ -5234,7 +5234,18 @@ def consultar_grupo_produto_alvo_fiscalizacao(
 # cada unidade e o valor unitário médio praticado (prova estatística pra
 # gravar o Fator Multiplicador no Estágio 9 — ex.: "cx12" com 46
 # ocorrências e média de R$30,34 vs. "unid" a R$2,50 sugere fator 12).
-_COLUNAS_SUMARIO_UNIDADES_ALVO = ["unid_prod", "qtde_ocorrencia_unid_prod", "media_vu"]
+#
+# "fm_sug"/"nova_unid" (2026-07-25, pedido do usuário: "inclua nesta nova
+# tabela o fm_sug e nova unid. ambos devem ser editáveis") — `fm_sug` NÃO
+# é recalculado aqui: traz a MODA do `fm_sugerido` já existente na tabela
+# "Itens individuais" (mesmo campo, `_extrair_fator_multiplicador_xml()`,
+# ver consultar_atributos_estoque_por_idunico()) dentro de cada grupo de
+# unidade — pedido explícito do usuário ("trazer da tabela id único"),
+# não uma nova fórmula. `nova_unid` começa em NOVA_UP_PADRAO ("UNID"),
+# mesmo raciocínio do Estágio 9. Editáveis na tela (interface.py), sem
+# persistência própria por ora — a decisão final do Fator Multiplicador
+# continua sendo gravada no Estágio 9 (fm_entradas_curadoria).
+_COLUNAS_SUMARIO_UNIDADES_ALVO = ["unid_prod", "qtde_ocorrencia_unid_prod", "media_vu", "fm_sug", "nova_unid"]
 
 
 def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
@@ -5243,27 +5254,43 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
     enriquecido em consultar_atributos_estoque_por_idunico(), ver
     _render_cruzamento_entradas()). `df_detalhado` é o DataFrame já
     enriquecido com as métricas fiscais (uma linha por item/idunico
-    confirmado, com `unid_prod`/`vl_unit_prod` numéricos — chamar ANTES
-    de qualquer formatação BR em texto, que transformaria vl_unit_prod em
-    string e quebraria a média). Colunas devolvidas:
+    confirmado, com `unid_prod`/`vl_unit_prod`/`fm_sugerido` numéricos —
+    chamar ANTES de qualquer formatação BR em texto, que transformaria
+    vl_unit_prod em string e quebraria a média). Colunas devolvidas:
     - unid_prod: unidade do XML (Regra R07: string).
     - qtde_ocorrencia_unid_prod: contagem de linhas (itens) por unidade.
     - media_vu: média aritmética de vl_unit_prod por unidade.
+    - fm_sug: MODA do `fm_sugerido` (já calculado por item na tabela
+      "Itens individuais", ver nota da seção) dentro do grupo — NULL se
+      `df_detalhado` não tiver a coluna (ex.: enriquecimento
+      indisponível) ou nenhum item do grupo tiver fator calculado.
+    - nova_unid: valor PADRÃO NOVA_UP_PADRAO ("UNID") — ponto de partida
+      editável, mesmo raciocínio do Estágio 9.
     Ordenado por qtde_ocorrencia_unid_prod decrescente. Devolve DataFrame
     vazio (mesmas colunas) se `df_detalhado` vier vazio ou sem a coluna
-    `unid_prod`/`vl_unit_prod` (ex.: enriquecimento fiscal indisponível)."""
+    `unid_prod`/`vl_unit_prod`."""
     colunas = _COLUNAS_SUMARIO_UNIDADES_ALVO
     if df_detalhado.empty or not {"unid_prod", "vl_unit_prod"}.issubset(df_detalhado.columns):
         return pd.DataFrame(columns=colunas)
     base = df_detalhado.copy()
     base["unid_prod"] = base["unid_prod"].astype(str)
+
+    def _moda_ou_none(serie: pd.Series):
+        s = serie.dropna()
+        return s.mode().iloc[0] if not s.empty else pd.NA
+
+    agg_kwargs = {
+        "qtde_ocorrencia_unid_prod": ("unid_prod", "size"),
+        "media_vu": ("vl_unit_prod", "mean"),
+    }
+    if "fm_sugerido" in base.columns:
+        agg_kwargs["fm_sug"] = ("fm_sugerido", _moda_ou_none)
+    agrupado = base.groupby("unid_prod", as_index=False).agg(**agg_kwargs)
+    if "fm_sug" not in agrupado.columns:
+        agrupado["fm_sug"] = pd.NA
+    agrupado["nova_unid"] = NOVA_UP_PADRAO
     agrupado = (
-        base.groupby("unid_prod", as_index=False)
-        .agg(
-            qtde_ocorrencia_unid_prod=("unid_prod", "size"),
-            media_vu=("vl_unit_prod", "mean"),
-        )
-        .sort_values("qtde_ocorrencia_unid_prod", ascending=False)
+        agrupado.sort_values("qtde_ocorrencia_unid_prod", ascending=False)
         .reset_index(drop=True)
     )[colunas]
     return agrupado

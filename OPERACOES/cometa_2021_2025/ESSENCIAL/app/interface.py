@@ -3720,20 +3720,36 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     # médio, prova estatística pro auditor decidir o Fator Multiplicador
     # no Estágio 9 (ex.: "cx12" com muitas ocorrências e média alta vs.
     # "unid" com poucas ocorrências e média baixa sugere fator = razão
-    # entre as médias).
+    # entre as médias). "FM Sug"/"Nova Unid" EDITÁVEIS (2026-07-25, pedido
+    # do usuário: "inclua nesta nova tabela o fm_sug e nova unid. ambos
+    # devem ser editáveis") — st.data_editor em vez de st.dataframe, só
+    # essas 2 colunas destravadas; sem persistência própria (a decisão
+    # final continua sendo gravada no Estágio 9), edição vale só pra
+    # revisão na tela — some ao recarregar a página.
     if not sumario_unidades.empty:
         st.markdown("### 📊 Diagnóstico de Unidades (Visão XML)")
         sumario_exibicao = sumario_unidades.rename(columns=loader.carregar_dicionario_campos())
         sumario_exibicao["Preco Unitario Medio (XML)"] = sumario_exibicao["Preco Unitario Medio (XML)"].apply(
             lambda v: _formatar_moeda_br(v) if pd.notna(v) else ""
         )
+        colunas_travadas_sumario = [c for c in sumario_exibicao.columns if c not in ("FM Sug", "Nova Unid")]
         with st.container(key="sumario_unidades_alvo_tabela"):
             st.markdown(
                 "<style>.st-key-sumario_unidades_alvo_tabela [data-testid='stDataFrame'] "
                 "* { font-size: 10px; }</style>",
                 unsafe_allow_html=True,
             )
-            st.dataframe(sumario_exibicao, use_container_width=True, hide_index=True)
+            st.data_editor(
+                sumario_exibicao,
+                use_container_width=True,
+                hide_index=True,
+                disabled=colunas_travadas_sumario,
+                key="editor_sumario_unidades_alvo",
+                # "%g" (mesmo truque do Estágio 9, 2026-07-24: "transforme fm
+                # sugerido 12.000 em 12") — remove zeros à direita sem
+                # esconder casas decimais quando existem de verdade.
+                column_config={"FM Sug": st.column_config.NumberColumn(format="%g")},
+            )
 
 
 def _obter_criterios_cruzamento_saidas() -> dict:

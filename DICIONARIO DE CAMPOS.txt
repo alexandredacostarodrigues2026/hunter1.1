@@ -156,3 +156,5 @@ dt_decl;Data da Declaracao
 # Novos campos - 2026-07-25 (Botao 9 - Sumario de Unidades para Fator Multiplicador)
 qtde_ocorrencia_unid_prod;Qtd. Ocorrencias
 media_vu;Preco Unitario Medio (XML)
+fm_sug;FM Sug
+nova_unid;Nova Unid
