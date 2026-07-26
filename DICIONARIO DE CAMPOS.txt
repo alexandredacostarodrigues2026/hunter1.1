@@ -158,3 +158,4 @@ qtde_ocorrencia_unid_prod;Qtd. Ocorrencias
 media_vu;Preco Unitario Medio (XML)
 fm_sug;FM Sug
 nova_unid;Nova Unid
+grafias_cluster;Grafias no Cluster

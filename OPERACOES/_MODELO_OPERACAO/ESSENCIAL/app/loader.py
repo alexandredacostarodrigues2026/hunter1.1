@@ -5293,7 +5293,18 @@ def consultar_grupo_produto_alvo_fiscalizacao(
 # e TOLERANCIA_CLUSTER_PRECO_FM. Motivo: "cx12"/"cx012" são a mesma unidade
 # física (erro de digitação numa nota), com preço unitário quase idêntico;
 # agrupar só por texto criava 2 linhas artificiais e diluía o diagnóstico.
-_COLUNAS_SUMARIO_UNIDADES_ALVO = ["unid_prod", "qtde_ocorrencia_unid_prod", "media_vu", "fm_sug", "nova_unid"]
+#
+# Rastreabilidade (2026-07-25, pedido do usuário: "vamos tentar
+# rastreabilidade" após perguntar "kd cx012?" — a fusão em 1 linha só
+# escondia por completo a grafia minoritária) — `grafias_cluster` lista,
+# dentro da linha consolidada, quais grafias de texto entraram no cluster
+# e quantas ocorrências cada uma teve (ex.: "cx12 (45), cx012 (1)"),
+# ordenado da mais pra menos frequente. Mantém o benefício da fusão
+# (1 linha, contagem/média/FM consolidados) sem perder a rastreabilidade
+# de qual grafia bruta originou o quê.
+_COLUNAS_SUMARIO_UNIDADES_ALVO = [
+    "unid_prod", "grafias_cluster", "qtde_ocorrencia_unid_prod", "media_vu", "fm_sug", "nova_unid",
+]
 
 
 def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
@@ -5328,6 +5339,9 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
     / a clusterização). Colunas devolvidas:
     - unid_prod: MODA do texto de unidade dentro do cluster (grafia mais
       frequente — Regra R07: string).
+    - grafias_cluster: rastreabilidade — todas as grafias de texto que
+      caíram no cluster com sua contagem individual (ex.: "cx12 (45),
+      cx012 (1)"), da mais pra menos frequente.
     - qtde_ocorrencia_unid_prod: contagem de itens do cluster (soma as
       variações de texto que caíram juntas).
     - media_vu: média aritmética de vl_unit_prod dentro do cluster
@@ -5351,6 +5365,10 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
         s = serie.dropna()
         return s.mode().iloc[0] if not s.empty else pd.NA
 
+    def _formatar_grafias_cluster(serie: pd.Series) -> str:
+        contagem = serie.value_counts()
+        return ", ".join(f"{texto} ({qtd})" for texto, qtd in contagem.items())
+
     # 1) agrega primeiro por texto exato — preserva a variação natural de
     #    preço dentro de uma mesma unidade real (ex.: "cx12" entre notas).
     media_por_texto = base.groupby("unid_prod")["vl_unit_prod"].mean()
@@ -5364,6 +5382,7 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
 
     agg_kwargs = {
         "unid_prod": ("unid_prod", _moda_ou_none),
+        "grafias_cluster": ("unid_prod", _formatar_grafias_cluster),
         "qtde_ocorrencia_unid_prod": ("unid_prod", "size"),
         "media_vu": ("vl_unit_prod", "mean"),
     }
