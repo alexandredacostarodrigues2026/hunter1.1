@@ -3489,22 +3489,42 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
     return detalhado, sumario_unidades, idunicos_tratados
 
 
-def _obter_valor_unitario_editado(valor_min, valor_max) -> "float | None":
+def _obter_valor_unitario_editado(
+    valor_min_editado, valor_max_editado, valor_min_original, valor_max_original,
+) -> "float | None":
     """Devolve o valor unitário ÚNICO editado pelo auditor no Sumário —
     2026-07-26, "SEPARE EM DIAS COLUNAS MIN E MAX" (antes era um texto
     combinado "min - max", "TRANSFORME O VALOR UNIT MIN-MAX EM
     EDITÁVEL"; virou 2 colunas numéricas, `Valor Minimo`/`Valor
-    Maximo`). Quando `valor_min == valor_max` (um valor único, não uma
-    faixa de verdade), esse valor vira o override usado em loader.
-    aplicar_tratamento_fm() — mesmo raciocínio de antes, sem precisar
-    de parser de texto. Devolve `None` se os 2 valores divergirem
-    (faixa de verdade, preserva o comportamento padrão) ou se algum dos
-    2 vier vazio/inválido."""
-    if pd.isna(valor_min) or pd.isna(valor_max):
-        return None
-    if float(valor_min) != float(valor_max):
-        return None
-    return float(valor_min)
+    Maximo`).
+
+    CORRIGIDO em 2026-07-26 (achado real reportado pelo usuário: "CRAVEI
+    30 NO VALOR MÍNIMO E QUANDO APLIQUEI VOLTOU PARA DEFAULT") — a
+    versão anterior só aceitava override quando `valor_min == valor_max`
+    (exigia editar os 2 campos pro MESMO número); na prática o auditor
+    edita só UM dos 2 campos (ex.: só "Valor Minimo"), esperando que
+    isso já baste. Agora compara cada valor editado contra o ORIGINAL
+    calculado (`valor_min_original`/`valor_max_original`, vindos de
+    `sumario_unidades["vl_min"]`/`["vl_max"]` antes da renomeação) pra
+    descobrir qual campo o auditor de fato mexeu:
+    - só um dos 2 mudou → esse valor é o override.
+    - os 2 mudaram pro MESMO valor → esse valor é o override.
+    - os 2 mudaram pra valores DIFERENTES → ambíguo, sem override
+      (preserva o comportamento padrão; o auditor precisa deixar os 2
+      iguais se quiser um valor único pros dois lados).
+    - nenhum mudou (faixa intocada) → sem override, comportamento
+      padrão (÷FM sobre o bruto de cada item)."""
+    min_valido = pd.notna(valor_min_editado)
+    max_valido = pd.notna(valor_max_editado)
+    min_mudou = min_valido and float(valor_min_editado) != float(valor_min_original)
+    max_mudou = max_valido and float(valor_max_editado) != float(valor_max_original)
+    if min_mudou and max_mudou:
+        return float(valor_min_editado) if float(valor_min_editado) == float(valor_max_editado) else None
+    if min_mudou:
+        return float(valor_min_editado)
+    if max_mudou:
+        return float(valor_max_editado)
+    return None
 
 
 def _render_sumario_unidades_com_aplicar(
@@ -3562,6 +3582,12 @@ def _render_sumario_unidades_com_aplicar(
         return
     st.markdown("### 📊 Diagnóstico de Unidades (Visão XML)")
     idunicos_por_linha = sumario_unidades["_idunicos"]
+    # Valores ORIGINAIS calculados (antes de qualquer edição) — usados
+    # por _obter_valor_unitario_editado() pra descobrir qual dos 2
+    # campos o auditor de fato mexeu (2026-07-26, ver docstring dessa
+    # função: "CRAVEI 30 NO VALOR MÍNIMO ... VOLTOU PARA DEFAULT").
+    vl_min_original_por_linha = sumario_unidades["vl_min"]
+    vl_max_original_por_linha = sumario_unidades["vl_max"]
     sumario_exibicao = sumario_unidades.drop(columns=["_idunicos"]).rename(
         columns=loader.carregar_dicionario_campos(),
     )
@@ -3625,7 +3651,10 @@ def _render_sumario_unidades_com_aplicar(
                 if pd.isna(fm) or float(fm) == 0:
                     erros.append(f"UP \"{up}\": FM Sug inválido (vazio ou zero), não aplicado.")
                     continue
-                valor_unitario_editado = _obter_valor_unitario_editado(linha["Valor Minimo"], linha["Valor Maximo"])
+                valor_unitario_editado = _obter_valor_unitario_editado(
+                    linha["Valor Minimo"], linha["Valor Maximo"],
+                    vl_min_original_por_linha.loc[idx], vl_max_original_por_linha.loc[idx],
+                )
                 idunicos_up = set(idunicos_por_linha.loc[idx])
                 resultado = loader.aplicar_tratamento_fm(
                     idunicos_up, float(fm), str(nova_unid),
