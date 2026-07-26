@@ -4150,7 +4150,7 @@ def _obter_criterios_cruzamento_estoque() -> dict:
 # atributos_estoque_estoque_por_idunico().
 _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE = [
     "codproddecl", "desc_xml", "ncm4", "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod",
-    "fm_sugerido", "TRATAMENTO", "ano_ef", "ano_ei", "dt_decl", "CRITERIO", "TS", "idunico",
+    "fm_sugerido", "TRATAMENTO", "valor_destoante", "ano_ef", "ano_ei", "dt_decl", "CRITERIO", "TS", "idunico",
 ]
 
 
@@ -4337,6 +4337,15 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     detalhado, sumario_unidades, detalhado_unid_bruto, ups_ja_tratadas = _aplicar_tratamento_fm_detalhado(
         detalhado, origem="estoque",
     )
+    # Valor Destoante (2026-07-26, pedido do usuário: "PARA O ESTOQUE
+    # TENHO ISSO: UM VALOR DESTOANDO. QUAL SERIA MELHOR SAIDA PARA ACHAR
+    # ESSE VALOR AUTOMATICAMENTE?" — confirmado "SIM"/"SOMENTE PARA
+    # ESTOQUE, POR ENQUANTO") — calculado ANTES da formatação BR abaixo
+    # (precisa de vl_unit_prod numérico), sinaliza itens cujo preço
+    # unitário destoa (>=3x ou <=1/3x) da mediana do grupo (mesmo
+    # unid_prod) — ver loader.sinalizar_valor_destoante().
+    if "vl_unit_prod" in detalhado.columns and "unid_prod" in detalhado.columns:
+        detalhado["valor_destoante"] = loader.sinalizar_valor_destoante(detalhado)
     for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido"):
         if _col in detalhado.columns:
             detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")

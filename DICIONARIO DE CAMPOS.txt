@@ -165,3 +165,6 @@ vl_min_max;Valor Unitario (Min-Max)
 
 # Novos campos - 2026-07-26 (Botao 9 - Aplicacao do FM/Nova Unidade na tabela id unica)
 TRATAMENTO;Tratamento
+
+# Novos campos - 2026-07-26 (Botao 9 - Estoque, deteccao de valor destoante)
+valor_destoante;Valor Destoante

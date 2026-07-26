@@ -6747,6 +6747,47 @@ def consultar_atributos_estoque_estoque_por_idunico(idunicos: "set | list") -> p
     return base[colunas].reset_index(drop=True)
 
 
+# Detecção de valor destoante (2026-07-26, pedido do usuário: "PARA O
+# ESTOQUE TENHO ISSO: UM VALOR DESTOANDO. QUAL SERIA MELHOR SAIDA PARA
+# ACHAR ESSE VALOR AUTOMATICAMENTE?" — confirmado "SIM", escopo restrito
+# a Estoque por enquanto: "SOMENTE PARA ESTOQUE, POR ENQUANTO") — sinaliza
+# itens cujo vl_unit_prod foge muito da MEDIANA do grupo (mesmo
+# unid_prod), sem depender de faixa fixa por produto (mesmo raciocínio
+# já usado na clusterização por preço do Sumário de Unidades). Mediana
+# escolhida por ser ROBUSTA a um único outlier num grupo pequeno (ex.:
+# 6 anos de estoque) — ao contrário da média, o valor destoante não
+# distorce a própria referência usada pra detectá-lo.
+LIMIAR_VALOR_DESTOANTE = 3.0  # razao >=3x ou <=1/3 da mediana do grupo sinaliza destaque
+
+
+def sinalizar_valor_destoante(df_detalhado: pd.DataFrame, limiar: float = LIMIAR_VALOR_DESTOANTE) -> pd.Series:
+    """Sinaliza, item a item, se `vl_unit_prod` destoa da MEDIANA do
+    grupo (mesmo `unid_prod`) por um fator >= `limiar` (ou <= 1/`limiar`)
+    — ex.: CERV SKOL LATA 350ML no Estoque, 6 anos com UP "LA":
+    R$2,35/17,67/0,53/0,72/1,61/4,01 — mediana R$1,98, 2020 (R$17,67)
+    destoa ~8,9x, sinalizado; os outros 5 anos ficam dentro da faixa
+    normal. Devolve pd.Series de string (mesmo índice de
+    `df_detalhado`): "⚠️ Destoante (Nx da mediana)" ou "" — NÃO remove
+    nem corrige nada, só sinaliza pro auditor revisar (um salto real de
+    preço ao longo dos anos também passaria pelo mesmo teste, por isso
+    não é correção automática). Devolve tudo "" se `df_detalhado` vier
+    vazio ou sem as colunas `unid_prod`/`vl_unit_prod`."""
+    if df_detalhado.empty or not {"unid_prod", "vl_unit_prod"}.issubset(df_detalhado.columns):
+        return pd.Series([""] * len(df_detalhado), index=df_detalhado.index, dtype="object")
+    medianas = df_detalhado.groupby("unid_prod")["vl_unit_prod"].transform("median")
+    resultado = []
+    for valor, mediana in zip(df_detalhado["vl_unit_prod"], medianas):
+        if pd.isna(valor) or pd.isna(mediana) or mediana == 0:
+            resultado.append("")
+            continue
+        razao = valor / mediana
+        if razao >= limiar or razao <= 1 / limiar:
+            resultado.append(f"⚠️ Destoante ({razao:.1f}x da mediana)")
+        else:
+            resultado.append("")
+    return pd.Series(resultado, index=df_detalhado.index, dtype="object")
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio
