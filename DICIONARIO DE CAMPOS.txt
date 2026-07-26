@@ -167,6 +167,12 @@ vl_min_max;Valor Unitario (Min-Max)
 vl_min;Valor Minimo
 vl_max;Valor Maximo
 
+# Novos campos - 2026-07-26 (Botao 9 - Itens Individuais, campos "utilizados" preservando os originais)
+unid_prod_utiliz;Unidade Utilizada
+vu_utilizado;Valor Unitario Utilizado
+quant_utiliz;Quantidade Utilizada
+fm_utilizado;FM Utilizado
+
 # Novos campos - 2026-07-26 (Botao 9 - Aplicacao do FM/Nova Unidade na tabela id unica)
 TRATAMENTO;Tratamento
 

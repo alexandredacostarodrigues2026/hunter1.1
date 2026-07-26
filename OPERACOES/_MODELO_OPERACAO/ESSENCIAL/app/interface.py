@@ -2557,8 +2557,10 @@ _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_AGRUPA
 # do item e id único na ultima coluna"): CHV_NFE logo após vl_prod;
 # idunico vira a ÚLTIMA coluna (depois até de CRITERIO/TS).
 _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO = [
-    "codproddecl", "desc_xml", "ANO_ELEITO", "ncm4", "unid_prod",
-    "vl_unit_prod", "qtde_prod", "vl_prod", "fm_sugerido", "TRATAMENTO",
+    "codproddecl", "desc_xml", "ANO_ELEITO", "ncm4",
+    "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod",
+    "unid_prod_utiliz", "vu_utilizado", "quant_utiliz",
+    "fm_utilizado", "TRATAMENTO",
     "CHV_NFE", "CRITERIO", "TS", "idunico",
 ]
 
@@ -3423,20 +3425,28 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
       FIG"), testando interseção com `_idunicos` de cada linha do
       Sumário (não mais comparação de texto, mesmo motivo acima).
     - detalhado_ajustado: busca o tratamento já persistido (por
-      idunico, ver loader.aplicar_tratamento_fm()) e ajusta vl_unit_prod
-      (÷FM) / qtde_prod (×FM) / unid_prod (=Nova Unidade) nos itens
-      tratados. Sem `VALOR_UNITARIO_APLICADO` (padrão): vl_prod NÃO é
-      recalculado — matematicamente invariante ((v÷f)×(q×f) = v×q), a
-      divisão/multiplicação só muda a "embalagem" do valor, não o
-      total. COM `VALOR_UNITARIO_APLICADO` (2026-07-26, "TRANSFORME O
-      VALOR UNIT MIN-MAX EM EDITÁVEL" — o auditor corrigiu o preço-base
-      manualmente no Sumário): vl_unit_prod = VALOR_UNITARIO_APLICADO÷FM
-      (mesmo valor pra todos os itens do grupo, não mais o bruto de
-      cada item — corrige a variação interna de preço entre notas,
-      achado real de "cx12" variando de R$24,90 a R$38,76); vl_prod
-      passa a ser RECALCULADO (não mais invariante ao total original —
-      correção consciente do auditor). TRATAMENTO vira coluna nova, ""
-      (nunca "None", Regra R07) pra itens não tratados."""
+      idunico, ver loader.aplicar_tratamento_fm()) e calcula os campos
+      "utilizados" — NÃO SOBRESCREVE MAIS os originais (2026-07-26,
+      pedido do usuário: "CRIAR ... OS CAMPOS quant_utiliz|vu_utilizado|
+      unid_prod_utiliz A FIM DE PRESERVAR OS ORIGINAIS CASO HAJA
+      APLICAÇÃO DE FM"). `unid_prod`/`vl_unit_prod`/`qtde_prod`/
+      `vl_prod` ficam SEMPRE com o valor bruto do XML, tratado ou não.
+      4 colunas novas guardam o valor EFETIVO:
+      - unid_prod_utiliz: NOVA_UNIDADE_APLICADA se tratado, senão igual
+        a `unid_prod` (original).
+      - vu_utilizado: sem `VALOR_UNITARIO_APLICADO`, vl_unit_prod÷FM
+        (item a item); com `VALOR_UNITARIO_APLICADO` (auditor corrigiu
+        o preço-base no Sumário), VALOR_UNITARIO_APLICADO÷FM (mesmo
+        valor pro grupo inteiro — corrige a variação interna de preço
+        entre notas, achado real de "cx12" variando de R$24,90 a
+        R$38,76); se não tratado, igual a `vl_unit_prod` (original).
+      - quant_utiliz: qtde_prod×FM se tratado, senão igual a `qtde_prod`
+        (original).
+      - fm_utilizado: FM_APLICADO se tratado, senão 1,0 (fator neutro —
+        2026-07-26, "TROCAR FM SUGERIDO POR FM UTILIZADO (1 CASO NÃO
+        SEJA UTILIZADO E NÃO EDITÁVEL)").
+      TRATAMENTO vira coluna nova, "" (nunca "None", Regra R07) pra
+      itens não tratados."""
     sumario_unidades = loader.gerar_sumario_unidades_alvo_com_destaque(detalhado)
     tratamento_por_idunico = loader.consultar_tratamento_fm_por_idunico(set(detalhado["idunico"]), origem=origem)
     detalhado = detalhado.merge(tratamento_por_idunico, on="idunico", how="left")
@@ -3453,22 +3463,27 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
     idunicos_tratados = set(detalhado.loc[mascara_tratado, "idunico"])
     mascara_com_override = mascara_tratado & detalhado["VALOR_UNITARIO_APLICADO"].notna()
     mascara_sem_override = mascara_tratado & ~mascara_com_override
-    detalhado.loc[mascara_com_override, "vl_unit_prod"] = (
+
+    # Campos "utilizados" — começam iguais aos originais (item não
+    # tratado); só os itens tratados recebem o valor efetivo abaixo.
+    detalhado["unid_prod_utiliz"] = detalhado["unid_prod"]
+    detalhado["vu_utilizado"] = detalhado["vl_unit_prod"]
+    detalhado["quant_utiliz"] = detalhado["qtde_prod"]
+    detalhado["fm_utilizado"] = 1.0
+
+    detalhado.loc[mascara_com_override, "vu_utilizado"] = (
         detalhado.loc[mascara_com_override, "VALOR_UNITARIO_APLICADO"]
         / detalhado.loc[mascara_com_override, "FM_APLICADO"]
     )
-    detalhado.loc[mascara_sem_override, "vl_unit_prod"] = (
+    detalhado.loc[mascara_sem_override, "vu_utilizado"] = (
         detalhado.loc[mascara_sem_override, "vl_unit_prod"] / detalhado.loc[mascara_sem_override, "FM_APLICADO"]
     )
-    detalhado.loc[mascara_tratado, "qtde_prod"] = (
+    detalhado.loc[mascara_tratado, "quant_utiliz"] = (
         detalhado.loc[mascara_tratado, "qtde_prod"] * detalhado.loc[mascara_tratado, "FM_APLICADO"]
     )
-    # vl_prod: invariante (preservado) pra tratamento sem override; pra
-    # tratamento COM override, recalculado a partir do novo preço-base.
-    detalhado.loc[mascara_com_override, "vl_prod"] = (
-        detalhado.loc[mascara_com_override, "vl_unit_prod"] * detalhado.loc[mascara_com_override, "qtde_prod"]
-    )
-    detalhado.loc[mascara_tratado, "unid_prod"] = detalhado.loc[mascara_tratado, "NOVA_UNIDADE_APLICADA"]
+    detalhado.loc[mascara_tratado, "unid_prod_utiliz"] = detalhado.loc[mascara_tratado, "NOVA_UNIDADE_APLICADA"]
+    detalhado.loc[mascara_tratado, "fm_utilizado"] = detalhado.loc[mascara_tratado, "FM_APLICADO"]
+
     detalhado["TRATAMENTO"] = detalhado["TRATAMENTO"].fillna("")
     detalhado = detalhado.drop(columns=["FM_APLICADO", "NOVA_UNIDADE_APLICADA", "VALOR_UNITARIO_APLICADO"], errors="ignore")
     return detalhado, sumario_unidades, idunicos_tratados
@@ -3641,38 +3656,20 @@ def _render_sumario_unidades_com_aplicar(
                 st.rerun()
 
 
-def _render_itens_individuais_editavel(
-    detalhado: pd.DataFrame, colunas_preview: list, escolhido: dict, origem: str, sufixo_key: str,
-) -> None:
-    """Tabela "Itens individuais" com "Unidade do Produto"/"FM Sugerido"
-    editáveis linha a linha (2026-07-26, pedido do usuário: "UNID E FM
-    DEVEM SER EDITÁVEIS, CASO EU NÃO QUEIRA UTILIZAR O SUMÁRIO") —
-    alternativa ao Sumário de Unidades/`_render_sumario_unidades_com_
-    aplicar()`: edita e aplica o tratamento de FM/Nova Unidade item a
-    item, sem precisar passar pelo agrupamento por UP. Editar aqui
-    produz o MESMO efeito de marcar "Aplicar" no Sumário — chama
-    loader.aplicar_tratamento_fm() (por idunico, gravando `escolhido
-    ["DESCR_ALVO"]`/`escolhido["COD_ITEM"]` junto, mesmo raciocínio de
-    2026-07-26 "ISSO DEVE FICAR SALVO NO PRODUTO ALVO") — só que direto
-    na linha do item, com um botão dedicado "💾 Salvar edições desta
-    tabela" (confirmado via AskUserQuestion: toda ação de gravação
-    exige clique explícito, nunca auto-aplica só por editar a célula,
-    mesmo padrão do resto do app).
-
-    Detecta quais linhas foram DE FATO editadas via `st.session_state
-    [chave_editor]["edited_rows"]` (dict {posição: {coluna: valor
-    novo}} mantido pelo próprio Streamlit) — só processa essas, não a
-    tabela inteira; para uma linha onde só 1 das 2 colunas foi editada,
-    usa o valor ATUAL da outra coluna (via `preview.iloc[idx]`) como
-    fallback, já que `aplicar_tratamento_fm()` precisa de FM e Nova
-    Unidade juntos. `detalhado` é resetado pro índice 0..n-1 ANTES de
-    montar a tabela — `edited_rows` do Streamlit é posicional, `.iloc`
-    garante alinhamento correto independente do índice original."""
-    detalhado = detalhado.reset_index(drop=True)
+def _render_itens_individuais(detalhado: pd.DataFrame, colunas_preview: list, sufixo_key: str) -> None:
+    """Tabela "Itens individuais" (Botão 9) — somente leitura. Voltou a
+    ser assim em 2026-07-26 (revertendo a edição direta de "Unidade do
+    Produto"/"FM Sugerido" criada mais cedo no mesmo dia): "Campo de
+    unidade de produto deixa de ser editável" + "FM Utilizado" (que
+    substituiu "FM Sugerido" no mesmo pedido) também "não editável" —
+    toda decisão de tratamento de FM passa a ser feita exclusivamente
+    pelo Sumário de Unidades (`_render_sumario_unidades_com_aplicar()`,
+    Aplicar/Desfazer). Esta tabela agora é só relatório: mostra os
+    campos ORIGINAIS (brutos do XML, nunca sobrescritos) lado a lado
+    com os campos "utilizados" (efetivos após tratamento, ou iguais aos
+    originais quando não há tratamento — ver _aplicar_tratamento_fm_
+    detalhado())."""
     preview = _preparar_preview(detalhado, colunas_preview)
-    colunas_editaveis = ("Unidade do Produto", "FM Sugerido")
-    colunas_travadas = [c for c in preview.columns if c not in colunas_editaveis]
-    chave_editor = f"editor_itens_individuais_{sufixo_key}"
     chave_container = f"cruzamento_{sufixo_key}_detalhado_tabela"
     with st.container(key=chave_container):
         st.markdown(
@@ -3680,46 +3677,7 @@ def _render_itens_individuais_editavel(
             "* { font-size: 12px; }</style>",
             unsafe_allow_html=True,
         )
-        st.data_editor(
-            preview,
-            use_container_width=True,
-            hide_index=True,
-            disabled=colunas_travadas,
-            key=chave_editor,
-            column_config={"FM Sugerido": st.column_config.NumberColumn(format="%g")},
-        )
-    st.caption(
-        "Edite \"Unidade do Produto\"/\"FM Sugerido\" direto numa linha e clique em \"Salvar edições\" "
-        "pra aplicar o tratamento só nesse item (alternativa ao Sumário de Unidades abaixo)."
-    )
-    if st.button("💾 Salvar edições desta tabela", key=f"btn_salvar_itens_individuais_{sufixo_key}"):
-        linhas_editadas = st.session_state.get(chave_editor, {}).get("edited_rows", {})
-        if not linhas_editadas:
-            st.warning("Nenhuma edição feita em \"Unidade do Produto\"/\"FM Sugerido\".")
-        else:
-            total_aplicado = 0
-            erros = []
-            for idx_str, mudancas in linhas_editadas.items():
-                idx = int(idx_str)
-                idunico = str(detalhado.iloc[idx]["idunico"])
-                nova_unid = mudancas.get("Unidade do Produto", preview.iloc[idx]["Unidade do Produto"])
-                fm = mudancas.get("FM Sugerido", preview.iloc[idx]["FM Sugerido"])
-                if pd.isna(fm) or float(fm) == 0:
-                    erros.append(f"Item {idunico[:8]}...: FM Sugerido inválido (vazio ou zero), não aplicado.")
-                    continue
-                resultado = loader.aplicar_tratamento_fm(
-                    {idunico}, float(fm), str(nova_unid),
-                    descr_alvo=escolhido["DESCR_ALVO"], cod_item=escolhido["COD_ITEM"], origem=origem,
-                )
-                if "erro" in resultado:
-                    erros.append(f"Item {idunico[:8]}...: {resultado['erro']}")
-                else:
-                    total_aplicado += resultado["total_aplicado"]
-            for erro in erros:
-                st.error(erro)
-            if total_aplicado:
-                st.success(f"✅ {total_aplicado} item(ns) atualizado(s).")
-                st.rerun()
+        st.dataframe(preview, use_container_width=True, hide_index=True)
 
 
 def _render_cruzamento_entradas(escolhido: dict) -> None:
@@ -4032,15 +3990,14 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     )
     # Formatação BR (milhar '.', decimal ',') pras colunas de valor/quantidade
     # — pedido explícito da Solicitação Técnica ("separadores de milhar e 2
-    # casas decimais"), mesmo padrão já usado no painel 7.2. `fm_sugerido`
-    # fica de fora (2026-07-26) — precisa continuar numérico pra ser
-    # editável (NumberColumn) em _render_itens_individuais_editavel().
-    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod"):
+    # casas decimais"), mesmo padrão já usado no painel 7.2. Inclui os
+    # campos "utilizados" (2026-07-26) — voltou a ser tabela só leitura,
+    # sem precisar ficar numérico pra edição.
+    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "vu_utilizado", "quant_utiliz", "fm_utilizado"):
         detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
     st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
-    _render_itens_individuais_editavel(
-        detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO, escolhido,
-        origem="entradas", sufixo_key="entradas",
+    _render_itens_individuais(
+        detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO, sufixo_key="entradas",
     )
 
     # Diagnóstico de Unidades + aplicação de FM/Nova Unidade — ver
@@ -4248,13 +4205,12 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     detalhado, sumario_unidades, idunicos_tratados = _aplicar_tratamento_fm_detalhado(
         detalhado, origem="saidas",
     )
-    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod"):
+    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "vu_utilizado", "quant_utiliz", "fm_utilizado"):
         if _col in detalhado.columns:
             detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
     st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
-    _render_itens_individuais_editavel(
-        detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO, escolhido,
-        origem="saidas", sufixo_key="saidas",
+    _render_itens_individuais(
+        detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO, sufixo_key="saidas",
     )
 
     # Diagnóstico de Unidades + aplicação de FM/Nova Unidade (2026-07-26,
@@ -4299,8 +4255,11 @@ def _obter_criterios_cruzamento_estoque() -> dict:
 # — enriquecimento ao vivo por idunico sintético, ver loader.consultar_
 # atributos_estoque_estoque_por_idunico().
 _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE = [
-    "codproddecl", "desc_xml", "ncm4", "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod",
-    "fm_sugerido", "TRATAMENTO", "ano_ef", "ano_ei", "dt_decl", "CRITERIO", "TS", "idunico",
+    "codproddecl", "desc_xml", "ncm4",
+    "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod",
+    "unid_prod_utiliz", "vu_utilizado", "quant_utiliz",
+    "fm_utilizado", "TRATAMENTO",
+    "ano_ef", "ano_ei", "dt_decl", "CRITERIO", "TS", "idunico",
 ]
 
 
@@ -4487,13 +4446,12 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     detalhado, sumario_unidades, idunicos_tratados = _aplicar_tratamento_fm_detalhado(
         detalhado, origem="estoque",
     )
-    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod"):
+    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "vu_utilizado", "quant_utiliz", "fm_utilizado"):
         if _col in detalhado.columns:
             detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
     st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
-    _render_itens_individuais_editavel(
-        detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE, escolhido,
-        origem="estoque", sufixo_key="estoque",
+    _render_itens_individuais(
+        detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE, sufixo_key="estoque",
     )
 
     # Diagnóstico de Unidades + aplicação de FM/Nova Unidade (2026-07-26,
