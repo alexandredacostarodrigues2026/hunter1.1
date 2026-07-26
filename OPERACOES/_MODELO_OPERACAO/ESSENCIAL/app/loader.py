@@ -5267,6 +5267,23 @@ _COLUNAS_SUMARIO_UNIDADES_ALVO = [
 ]
 
 
+def _moda_ou_none(serie: pd.Series):
+    s = serie.dropna()
+    return s.mode().iloc[0] if not s.empty else pd.NA
+
+
+def _formatar_numero_br(v: float) -> str:
+    return f"{v:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
+
+
+def _formatar_vl_min_max(serie: pd.Series) -> str:
+    s = serie.dropna()
+    if s.empty:
+        return ""
+    minv, maxv = s.min(), s.max()
+    return _formatar_numero_br(minv) if minv == maxv else f"{_formatar_numero_br(minv)} - {_formatar_numero_br(maxv)}"
+
+
 def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
     """Agrupa os itens já confirmados na Rubrica do Produto Alvo (Botão 9)
     por TEXTO EXATO de `unid_prod` (UCOM do XML) — cada grafia distinta
@@ -5301,20 +5318,6 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
     base = df_detalhado.copy()
     base["unid_prod"] = base["unid_prod"].astype(str)
 
-    def _moda_ou_none(serie: pd.Series):
-        s = serie.dropna()
-        return s.mode().iloc[0] if not s.empty else pd.NA
-
-    def _fmt_br(v: float) -> str:
-        return f"{v:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
-
-    def _formatar_vl_min_max(serie: pd.Series) -> str:
-        s = serie.dropna()
-        if s.empty:
-            return ""
-        minv, maxv = s.min(), s.max()
-        return _fmt_br(minv) if minv == maxv else f"{_fmt_br(minv)} - {_fmt_br(maxv)}"
-
     agg_kwargs = {
         "vl_min_max": ("vl_unit_prod", _formatar_vl_min_max),
         "qtde_ocorrencia_unid_prod": ("unid_prod", "size"),
@@ -5330,6 +5333,54 @@ def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
         .reset_index(drop=True)
     )[colunas]
     return agrupado
+
+
+def gerar_sumario_unidades_alvo_com_destaque(df_detalhado: pd.DataFrame) -> pd.DataFrame:
+    """Mirror de gerar_sumario_unidades_alvo(), só que SEPARA em linhas
+    próprias os itens sinalizados como valor destoante (ver
+    sinalizar_valor_destoante()) — 2026-07-26, pedido do usuário (depois
+    de ver 6 anos do CERV SKOL LATA 350ML, todos com `unid_prod="LA"`,
+    2 deles destoantes): "SEPARE AS LINHAS DO SUMÁRIO, DENTRO DA MESMA
+    UNID." Confirmado via AskUserQuestion: os itens NÃO destoantes
+    continuam agrupados numa linha por `unid_prod` (como antes); cada
+    item DESTOANTE vira sua PRÓPRIA linha (não agrupa com outros
+    destoantes da mesma UNID, mesmo que o texto seja igual) — ex.: "LA"
+    com 6 itens (4 normais + 2020 e 2021 destoantes) vira 3 linhas: "LA"
+    (4 itens, faixa normal), "LA" (só 2020), "LA" (só 2021).
+
+    Só usada no Estoque por enquanto (mesmo escopo de sinalizar_valor_
+    destoante() — "SOMENTE PARA ESTOQUE, POR ENQUANTO"). Mesmas colunas
+    de gerar_sumario_unidades_alvo(); linhas de item destoante têm
+    `vl_min_max` com um valor só (o próprio item) e `qtde_ocorrencia_
+    unid_prod=1`."""
+    colunas = _COLUNAS_SUMARIO_UNIDADES_ALVO
+    if df_detalhado.empty or not {"unid_prod", "vl_unit_prod"}.issubset(df_detalhado.columns):
+        return pd.DataFrame(columns=colunas)
+    base = df_detalhado.copy()
+    base["unid_prod"] = base["unid_prod"].astype(str)
+    destaque = sinalizar_valor_destoante(base)
+    normal = base[destaque == ""]
+    destoante = base[destaque != ""]
+
+    partes = []
+    if not normal.empty:
+        partes.append(gerar_sumario_unidades_alvo(normal))
+    if not destoante.empty:
+        linhas = []
+        for _, item in destoante.iterrows():
+            fm_item = item["fm_sugerido"] if "fm_sugerido" in destoante.columns else pd.NA
+            linhas.append({
+                "unid_prod": str(item["unid_prod"]),
+                "vl_min_max": _formatar_numero_br(item["vl_unit_prod"]) if pd.notna(item["vl_unit_prod"]) else "",
+                "qtde_ocorrencia_unid_prod": 1,
+                "fm_sug": fm_item,
+                "nova_unid": NOVA_UP_PADRAO,
+            })
+        partes.append(pd.DataFrame(linhas, columns=colunas))
+    if not partes:
+        return pd.DataFrame(columns=colunas)
+    resultado = pd.concat(partes, ignore_index=True)
+    return resultado.sort_values("qtde_ocorrencia_unid_prod", ascending=False).reset_index(drop=True)[colunas]
 
 
 # ── Aplicação do FM/Nova Unidade na tabela "Itens individuais" (Botão 9) ─

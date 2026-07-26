@@ -3402,6 +3402,10 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
     - sumario_unidades: calculado ANTES do tratamento abaixo, sempre
       reflete a unidade/preço BRUTOS do XML (independente de
       tratamentos já aplicados) — ver loader.gerar_sumario_unidades_alvo().
+      No Estoque (`origem="estoque"`), usa gerar_sumario_unidades_alvo_
+      com_destaque() — separa em linha própria os itens com valor
+      destoante dentro da mesma UNID (2026-07-26, "SEPARE AS LINHAS DO
+      SUMÁRIO, DENTRO DA MESMA UNID").
     - detalhado_unid_bruto: mapa idunico -> unid_prod BRUTO, usado por
       _render_sumario_unidades_com_aplicar() pra localizar quais itens
       pertencem a uma UP do Sumário.
@@ -3417,7 +3421,14 @@ def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tu
       "embalagem" do valor, não o total. TRATAMENTO vira coluna nova,
       "" (nunca "None", Regra R07) pra itens não tratados."""
     detalhado_unid_bruto = detalhado[["idunico", "unid_prod"]].copy()
-    sumario_unidades = loader.gerar_sumario_unidades_alvo(detalhado)
+    # Estoque separa em linha própria os itens com valor destoante dentro
+    # da mesma UNID (2026-07-26, "SEPARE AS LINHAS DO SUMÁRIO, DENTRO DA
+    # MESMA UNID") — só nessa origem, mesmo escopo de sinalizar_valor_
+    # destoante() ("SOMENTE PARA ESTOQUE, POR ENQUANTO").
+    if origem == "estoque":
+        sumario_unidades = loader.gerar_sumario_unidades_alvo_com_destaque(detalhado)
+    else:
+        sumario_unidades = loader.gerar_sumario_unidades_alvo(detalhado)
     tratamento_por_idunico = loader.consultar_tratamento_fm_por_idunico(set(detalhado["idunico"]), origem=origem)
     detalhado = detalhado.merge(tratamento_por_idunico, on="idunico", how="left")
     # FM_APLICADO precisa ser float mesmo quando NENHUM item foi tratado
