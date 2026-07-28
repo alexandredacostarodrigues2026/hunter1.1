@@ -2262,7 +2262,7 @@ def render_menu_principal() -> None:
         st.session_state["pagina_ativa"] = "estagio_9"
         st.rerun()
     if col_produtos_alvo_salvos.button(
-        "🎯 PRODUTOS ALVOS SALVOS", key="btn_menu_produtos_alvo_salvos", use_container_width=True,
+        "🎯 ESTÁGIO 10 - PRODUTOS ALVOS SALVOS", key="btn_menu_produtos_alvo_salvos", use_container_width=True,
     ):
         st.session_state["pagina_ativa"] = "produtos_alvo_salvos"
         st.rerun()
@@ -4544,7 +4544,7 @@ def render_produtos_alvo_salvos() -> None:
     contra estagio8_agrupado, ver _render_cruzamento_entradas_
     criterio1()/loader.cruzar_produto_escolhido_entradas()); mais
     critérios/abas (Saídas, Estoques) ficam pra próximas rodadas."""
-    st.subheader("Produtos Alvos Salvos")
+    st.subheader("Estágio 10 - Produtos Alvos Salvos")
     st.caption(
         "Produtos já marcados como ativos no Grupo de Produto Alvo (Estágio 7.3.2). Marque "
         "\"Escolher p/ Cruzamento\" pra um deles e confirme abaixo."
@@ -4621,10 +4621,12 @@ def render_produtos_alvo_salvos() -> None:
 
 
 def render_pagina_produtos_alvo_salvos() -> None:
-    """Painel 'PRODUTOS ALVOS SALVOS' (Botão 9, 2026-07-23), botão da 2ª
-    linha do Menu Principal: ver loader.consultar_grupo_produto_alvo_
-    fiscalizacao()/render_produtos_alvo_salvos(). Exige dados_carregados
-    (mesmo padrão das outras páginas)."""
+    """Painel 'ESTÁGIO 10 - PRODUTOS ALVOS SALVOS' (batizado assim
+    2026-07-28 — antes chamado só de "Botão 9" nos comentários daqui
+    até essa data, criado 2026-07-23), botão da 2ª linha do Menu
+    Principal: ver loader.consultar_grupo_produto_alvo_fiscalizacao()/
+    render_produtos_alvo_salvos(). Exige dados_carregados (mesmo
+    padrão das outras páginas)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
