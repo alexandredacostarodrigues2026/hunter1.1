@@ -2746,7 +2746,7 @@ _COLUNAS_FM_ENTRADAS_AGRUPADO = [
 ]
 
 _REGEX_PARTICULA_FM = re.compile(
-    r"(C/\s*\d+|CX\s*\d+|FD\s*\d+|\d+\s*UNID|\d+\s*X\s*\d+\s*ML)", re.IGNORECASE
+    r"(C/\s*\d+|CX\s*\d+|FD\s*\d+|\d+\s*UNID|\d+\s*X\s*\d+\s*(?:GR|KG|ML|G|L))", re.IGNORECASE
 )
 
 NOVA_UP_PADRAO = "UNID"
@@ -2754,16 +2754,19 @@ NOVA_UP_PADRAO = "UNID"
 
 def _extrair_particula_fm(desc) -> str:
     """Extrai indício de embalagem/quantidade da descrição do XML via
-    regex — padrões "C/N", "CX N", "FD N", "N UNID", "N X N ML"
-    (Solicitação Técnica do Estágio 9; o padrão "N X N ML" — ex.:
-    "12X965ML" — adicionado 2026-07-28 depois de um caso real na
-    geraldo, AGUARDENTE PITU GARRAFEIRA 12X965ML, onde a caixa de 12
-    não tinha nenhum dos hints anteriores embutidos na descrição, só
-    contagem×volume). Só um HINT informativo pro auditor cross-checar
-    contra `fm_sugerido`/`up_xml` — não tenta decidir o fator sozinho
-    (ex.: "CX15KG" também bate no padrão "CX N", mesmo quando o número
-    é peso, não quantidade de unidades — fica a critério do auditor).
-    Vazio se não achar nenhum dos padrões."""
+    regex — padrões "C/N", "CX N", "FD N", "N UNID", "N X N <unidade>"
+    (Solicitação Técnica do Estágio 9; o padrão "N X N <unidade>" — ex.:
+    "12X965ML", "6X24GR", "16 X 50 G" — adicionado 2026-07-28 depois de
+    vários casos reais na geraldo, AGUARDENTE PITU (.../965ML), CLUB
+    SOCIAL (6X24GR), NESTON 3 CEREAIS (12x210g), COCO RALADO (16 X 50
+    G), LEITE FERMENTADO ISINHO (15 X 110 G), onde a caixa não tinha
+    nenhum dos hints anteriores embutidos na descrição, só
+    contagem×peso/volume — cobre as unidades GR/KG/ML/G/L, com ou sem
+    espaço em volta do "X"). Só um HINT informativo pro auditor
+    cross-checar contra `fm_sugerido`/`up_xml` — não tenta decidir o
+    fator sozinho (ex.: "CX15KG" também bate no padrão "CX N", mesmo
+    quando o número é peso, não quantidade de unidades — fica a
+    critério do auditor). Vazio se não achar nenhum dos padrões."""
     m = _REGEX_PARTICULA_FM.search(str(desc).upper())
     return m.group(1) if m else ""
 
@@ -2786,15 +2789,15 @@ def _extrair_fator_multiplicador_xml(desc) -> float:
     só o XML dá um fator ESTÁVEL pro mesmo produto físico.
 
     Reaproveita o mesmo regex de _extrair_particula_fm() (`C/N`,
-    `CX N`, `FD N`, `N UNID`, `N X N ML`), mas devolve o NÚMERO
-    embutido como fator (não o texto do hint) — no padrão `N X N ML`,
-    o PRIMEIRO número (antes do "X") é a contagem/fator, o segundo é o
-    volume da embalagem individual, e como a extração de dígitos pega
-    só o primeiro grupo numérico do match inteiro, já devolve o valor
-    certo sem precisar de lógica extra. Sem nenhum padrão de embalagem
-    reconhecido na descrição, assume fator=1 (nenhuma multiplicação
-    necessária — mesma interpretação de "fator=1 = unidades
-    compatíveis" já usada no Matching)."""
+    `CX N`, `FD N`, `N UNID`, `N X N <unidade>`), mas devolve o NÚMERO
+    embutido como fator (não o texto do hint) — no padrão `N X N
+    <unidade>`, o PRIMEIRO número (antes do "X") é a contagem/fator, o
+    segundo é o peso/volume da embalagem individual, e como a extração
+    de dígitos pega só o primeiro grupo numérico do match inteiro, já
+    devolve o valor certo sem precisar de lógica extra. Sem nenhum
+    padrão de embalagem reconhecido na descrição, assume fator=1
+    (nenhuma multiplicação necessária — mesma interpretação de
+    "fator=1 = unidades compatíveis" já usada no Matching)."""
     m = _REGEX_PARTICULA_FM.search(str(desc).upper())
     if not m:
         return 1.0
