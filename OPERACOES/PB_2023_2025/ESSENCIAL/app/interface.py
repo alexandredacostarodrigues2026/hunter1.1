@@ -3685,6 +3685,19 @@ def _render_sumario_unidades_com_aplicar(
                 st.rerun()
 
 
+def _render_kpis_itens_individuais(detalhado: pd.DataFrame) -> None:
+    """KPIs da tabela "Itens individuais" (Botão 9): soma de `quant_utiliz`
+    (quantidade utilizada, após tratamento de FM) e média de `vu_utilizado`
+    (valor unitário utilizado) — chamar com `detalhado` ainda NUMÉRICO,
+    antes do loop que converte essas colunas em string BR (ver chamadas em
+    _render_cruzamento_entradas/saidas/estoque)."""
+    soma_quant = detalhado["quant_utiliz"].sum(skipna=True)
+    media_vu = detalhado["vu_utilizado"].mean(skipna=True)
+    col1, col2 = st.columns(2)
+    col1.metric("Soma Quantidade Utilizada", _formatar_moeda_br(soma_quant) if pd.notna(soma_quant) else "-")
+    col2.metric("Média Valor Unitário Utilizado", _formatar_moeda_br(media_vu) if pd.notna(media_vu) else "-")
+
+
 def _render_itens_individuais(detalhado: pd.DataFrame, colunas_preview: list, sufixo_key: str) -> None:
     """Tabela "Itens individuais" (Botão 9) — somente leitura. Voltou a
     ser assim em 2026-07-26 (revertendo a edição direta de "Unidade do
@@ -4022,6 +4035,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     # casas decimais"), mesmo padrão já usado no painel 7.2. Inclui os
     # campos "utilizados" (2026-07-26) — voltou a ser tabela só leitura,
     # sem precisar ficar numérico pra edição.
+    _render_kpis_itens_individuais(detalhado)
     for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "vu_utilizado", "quant_utiliz", "fm_utilizado"):
         detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
     st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
@@ -4234,6 +4248,7 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     detalhado, sumario_unidades, idunicos_tratados = _aplicar_tratamento_fm_detalhado(
         detalhado, origem="saidas",
     )
+    _render_kpis_itens_individuais(detalhado)
     for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "vu_utilizado", "quant_utiliz", "fm_utilizado"):
         if _col in detalhado.columns:
             detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
@@ -4475,6 +4490,7 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     detalhado, sumario_unidades, idunicos_tratados = _aplicar_tratamento_fm_detalhado(
         detalhado, origem="estoque",
     )
+    _render_kpis_itens_individuais(detalhado)
     for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "vu_utilizado", "quant_utiliz", "fm_utilizado"):
         if _col in detalhado.columns:
             detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
