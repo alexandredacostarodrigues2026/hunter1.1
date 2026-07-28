@@ -3376,9 +3376,12 @@ def _obter_criterios_cruzamento_entradas() -> dict:
     certa conforme o que está selecionado. Rótulo do Critério 3
     (2026-07-28, pedido do usuário: "mudar o nome do critério3 para:
     'nome_prod_decl do alvo = nome_prod_xml' em entradas") usa
-    `CRITERIO_BUSCA3_NOME_XML_ENTRADAS`, diferente do rótulo de Saídas
-    (`CRITERIO_BUSCA3_CODIGO_DIVERGENTE`, inalterado) — mesma função de
-    cruzamento nos dois casos, só o texto exibido no selectbox muda."""
+    `CRITERIO_BUSCA3_NOME_XML_ENTRADAS` — mesmo texto usado no rótulo
+    "Busca2" de Saídas (`CRITERIO_BUSCA2_NOME_XML_SAIDAS`, ver
+    _obter_criterios_cruzamento_saidas()), só a NUMERAÇÃO difere (aqui
+    "3" porque Entradas tem 3 critérios; lá "2" porque Saídas só tem
+    2) — mesma função de cruzamento nos dois casos, só o texto exibido
+    no selectbox muda."""
     return {
         loader.CRITERIO_BUSCA1_MESMO_CODIGO: (
             loader.cruzar_produto_escolhido_entradas,
@@ -4060,16 +4063,21 @@ def _obter_criterios_cruzamento_saidas() -> dict:
     """Mapa criterio -> (fn_agrupado, fn_detalhado) usado pelo selectbox de
     _render_cruzamento_saidas() — mirror de _obter_criterios_cruzamento_
     entradas() (2026-07-25, Solicitação Técnica "BUSCA DE CORRESPONDENTES
-    NAS SAÍDAS"), mas só com Critério 1 e Critério 3: SEM Critério 2 (nome
-    de declaração igual) porque em Saídas a auditada é a EMITENTE — não há
-    um "nome de declaração" do candidato separado de `desc_xml` pra
-    comparar, já é a própria descrição da auditada."""
+    NAS SAÍDAS"), mas só com 2 critérios: "Busca1" (mesmo código) e
+    "Busca2" (código divergente, mesma comparação do Critério 3 de
+    Entradas — SIMILARIDADE_DESCRICAO entre desc_xml do candidato e
+    DESCR_ALVO — só RENUMERADO pra "2" aqui, 2026-07-28, pedido do
+    usuário: "nas saídas transforme busca3 em 2 e mude o texto conforme
+    entradas", já que Saídas nunca teve um "Busca2" próprio: não há
+    Critério de nome-de-declaração-igual em Saídas, a auditada é a
+    EMITENTE — não há um "nome de declaração" do candidato separado de
+    `desc_xml` pra comparar, já é a própria descrição da auditada)."""
     return {
         loader.CRITERIO_BUSCA1_MESMO_CODIGO: (
             loader.cruzar_produto_escolhido_saidas,
             loader.cruzar_produto_escolhido_saidas_detalhado,
         ),
-        loader.CRITERIO_BUSCA3_CODIGO_DIVERGENTE: (
+        loader.CRITERIO_BUSCA2_NOME_XML_SAIDAS: (
             loader.cruzar_produto_escolhido_saidas_criterio3,
             loader.cruzar_produto_escolhido_saidas_criterio3_detalhado,
         ),
@@ -4082,16 +4090,17 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     DE CORRESPONDENTES NAS SAÍDAS": compara o produto escolhido com
     estagio8_saidas_agrupado usando o critério selecionado no selectbox.
 
-    Só dois critérios (sem Critério 2 — ver _obter_criterios_cruzamento_
-    saidas()):
+    Só dois critérios (ver _obter_criterios_cruzamento_saidas()):
 
-    **Critério 1** (loader.cruzar_produto_escolhido_saidas()) — MESMO
+    **Busca1** (loader.cruzar_produto_escolhido_saidas()) — MESMO
     código de produto (normalizado) + SIMILARIDADE_DESCRICAO só pra
     ordenar, mesmo raciocínio do Critério 1 de Entradas.
 
-    **Critério 3** (loader.cruzar_produto_escolhido_saidas_criterio3())
-    — código DIVERGENTE do alvo, similaridade de descrição vira FILTRO
-    (≥ LIMIAR_SIMILARIDADE_CRITERIO3), mesmo raciocínio do Critério 3 de
+    **Busca2** (loader.cruzar_produto_escolhido_saidas_criterio3(), nome
+    de função preservado apesar do rótulo ter virado "2" — ver nota de
+    _obter_criterios_cruzamento_saidas()) — código DIVERGENTE do alvo,
+    similaridade de descrição vira FILTRO (≥
+    LIMIAR_SIMILARIDADE_CRITERIO3), mesmo raciocínio do Critério 3 de
     Entradas.
 
     Mesma UI de Entradas: checkbox "Salvar"/"Desfazer", botão "Salvar na

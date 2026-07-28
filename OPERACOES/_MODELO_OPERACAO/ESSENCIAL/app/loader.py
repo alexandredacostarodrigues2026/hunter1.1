@@ -5981,15 +5981,20 @@ def cruzar_produto_escolhido_entradas_criterio2_detalhado() -> "tuple[pd.DataFra
 # Rótulo renomeado 2026-07-23 (mesma sessão): "mude os nomes dos
 # criterios: ... 3-sem correspondência com declaração" — era "Código de
 # Produto Divergente".
-CRITERIO_BUSCA3_CODIGO_DIVERGENTE = "Critério de Busca3: sem correspondência com declaração"
 # Rótulo específico de Entradas (2026-07-28, pedido do usuário: "mudar o
 # nome do critério3 para: 'nome_prod_decl do alvo = nome_prod_xml' em
 # entradas") — mesma comparação de sempre (SIMILARIDADE_DESCRICAO entre
 # desc_xml do candidato e DESCR_ALVO), só o RÓTULO ficou mais descritivo
-# (segue o padrão "X do alvo = Y do candidato" de CRITERIO_BUSCA1/2) —
-# escopo restrito a Entradas por pedido explícito; Saídas continua
-# usando CRITERIO_BUSCA3_CODIGO_DIVERGENTE (rótulo antigo).
+# (segue o padrão "X do alvo = Y do candidato" de CRITERIO_BUSCA1/2).
 CRITERIO_BUSCA3_NOME_XML_ENTRADAS = "Critério de Busca3: nome_prod_decl do alvo = nome_prod_xml"
+# Rótulo de Saídas (2026-07-28, mesmo dia, pedido seguinte: "nas saídas
+# transforme busca3 em 2 e mude o texto conforme entradas") —
+# renumerado de "Busca3" pra "Busca2" (Saídas só tem 2 critérios: 1 e
+# este, "3" ficava com um buraco no meio) e texto igualado ao de
+# Entradas; substituiu CRITERIO_BUSCA3_CODIGO_DIVERGENTE (rótulo antigo
+# "sem correspondência com declaração", removido — sem mais nenhum uso
+# no código depois desta troca).
+CRITERIO_BUSCA2_NOME_XML_SAIDAS = "Critério de Busca2: nome_prod_decl do alvo = nome_prod_xml"
 LIMIAR_SIMILARIDADE_CRITERIO3 = 20.0
 
 
