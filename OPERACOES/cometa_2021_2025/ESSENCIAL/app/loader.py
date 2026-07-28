@@ -2745,29 +2745,64 @@ _COLUNAS_FM_ENTRADAS_AGRUPADO = [
     "desc_xml", "_valor_unit_grupo", "up_xml", "particula", "fm_sugerido", "nova_up", "qtde_ocorrencias",
 ]
 
-_REGEX_PARTICULA_FM = re.compile(
-    r"(C/\s*\d+|CX\s*\d+|FD\s*\d+|\d+\s*UNID|\d+\s*X\s*\d+\s*(?:GR|KG|ML|G|L))", re.IGNORECASE
+_UNIDADE_PESO_VOLUME = r"(?:GR|KG|ML|G|L|M|UNID|UN)"
+# COM unidade reconhecida (GR/KG/ML/G/L/M) OU "N UNID"/"N UN" — usado
+# PRIMEIRO (ver _extrair_particula_fm()): "N X N" sem nenhuma unidade
+# no fim é ambíguo (pode ser embalagem OU dimensão física do produto,
+# ex.: "28X30" de um pano de prato 28x30cm), então só é aceito como
+# ÚLTIMO recurso, quando não sobra nenhum candidato melhor na mesma
+# descrição — ver achado real 2026-07-28, "GUARDANAPO MALU 21X23
+# 50UN" pegando "21X23" (dimensão) em vez de "50UN" (embalagem real,
+# mais à direita na descrição).
+_REGEX_PARTICULA_FM_COM_UNIDADE = re.compile(
+    r"(C/\s*\d+|CX\s*\d+|FD\s*\d+|\d+\s*UNID"
+    rf"|\d+\s*UN\s*X\s*\d+(?:[.,]\d+)?\s*{_UNIDADE_PESO_VOLUME}"
+    rf"|\d+\s*X\s*\d+(?:[.,]\d+)?\s*{_UNIDADE_PESO_VOLUME}"
+    r"|\d+\s*UN\b)",
+    re.IGNORECASE,
 )
+# SEM nenhuma unidade no fim ("N X N" solto, ex.: "24X 500", "SABÃO EM
+# PÃO... 24X 500" — 2026-07-28) — só usado quando o regex COM unidade
+# não achou nada na descrição inteira.
+_REGEX_PARTICULA_FM_SEM_UNIDADE = re.compile(
+    r"(\d+\s*UN\s*X\s*\d+(?:[.,]\d+)?|\d+\s*X\s*\d+(?:[.,]\d+)?)", re.IGNORECASE
+)
+
+
+def _buscar_particula_fm(desc_upper: str):
+    """Escolhe o melhor match de partícula de embalagem numa descrição
+    JÁ em maiúsculas — tenta primeiro o regex COM unidade reconhecida
+    (mais confiável), só cai pro regex SEM unidade (mais ambíguo,
+    pode ser dimensão física em vez de embalagem) se nada melhor for
+    encontrado na descrição inteira. Ver comentário de
+    _REGEX_PARTICULA_FM_COM_UNIDADE."""
+    return (
+        _REGEX_PARTICULA_FM_COM_UNIDADE.search(desc_upper)
+        or _REGEX_PARTICULA_FM_SEM_UNIDADE.search(desc_upper)
+    )
+
 
 NOVA_UP_PADRAO = "UNID"
 
 
 def _extrair_particula_fm(desc) -> str:
     """Extrai indício de embalagem/quantidade da descrição do XML via
-    regex — padrões "C/N", "CX N", "FD N", "N UNID", "N X N <unidade>"
-    (Solicitação Técnica do Estágio 9; o padrão "N X N <unidade>" — ex.:
-    "12X965ML", "6X24GR", "16 X 50 G" — adicionado 2026-07-28 depois de
-    vários casos reais na geraldo, AGUARDENTE PITU (.../965ML), CLUB
-    SOCIAL (6X24GR), NESTON 3 CEREAIS (12x210g), COCO RALADO (16 X 50
-    G), LEITE FERMENTADO ISINHO (15 X 110 G), onde a caixa não tinha
-    nenhum dos hints anteriores embutidos na descrição, só
-    contagem×peso/volume — cobre as unidades GR/KG/ML/G/L, com ou sem
-    espaço em volta do "X"). Só um HINT informativo pro auditor
+    _buscar_particula_fm() — padrões "C/N", "CX N", "FD N", "N UNID",
+    "N UN", "N UN X N <unidade>", "N X N <unidade>" (Solicitação
+    Técnica do Estágio 9, estendidos ao longo de 2026-07-28 com vários
+    casos reais da geraldo — ver comentário de
+    _REGEX_PARTICULA_FM_COM_UNIDADE/_SEM_UNIDADE pro detalhe de cada
+    padrão e exemplo). Unidades reconhecidas: GR/KG/ML/G/L/M/UNID/UN,
+    com ou sem espaço em volta do "X", com ou sem casa decimal (ponto
+    ou vírgula) no segundo número. Só um HINT informativo pro auditor
     cross-checar contra `fm_sugerido`/`up_xml` — não tenta decidir o
     fator sozinho (ex.: "CX15KG" também bate no padrão "CX N", mesmo
-    quando o número é peso, não quantidade de unidades — fica a
-    critério do auditor). Vazio se não achar nenhum dos padrões."""
-    m = _REGEX_PARTICULA_FM.search(str(desc).upper())
+    quando o número é peso, não quantidade de unidades; "N X N" SEM
+    nenhuma unidade reconhecida no fim pode ser dimensão física do
+    produto em vez de embalagem, ex.: um pano de prato "28X30" — a
+    decisão final é sempre do auditor no Estágio 9, antes de propagar
+    pro Botão 9). Vazio se não achar nenhum dos padrões."""
+    m = _buscar_particula_fm(str(desc).upper())
     return m.group(1) if m else ""
 
 
@@ -2777,28 +2812,31 @@ def _extrair_fator_multiplicador_xml(desc) -> float:
     olhe para o sped, olhe apenas para o xml". Substitui o cálculo
     anterior (FATOR_MULTIPLICADOR_SUGERIDO do Matching, Estágio 2 —
     Valor Unitário do XML ÷ Valor Unitário Declarado no SPED) em
-    gerar_curadoria_fm_entradas()/gerar_curadoria_fm_saidas() e em
-    consultar_atributos_estoque_por_idunico(). Achado real que motivou
-    a troca: comparado com dado real da geraldo (CERV SKOL LATA 350ML,
-    UCOM "cx12" nas duas notas — fisicamente a MESMA caixa de 12), o
-    fator baseado no SPED vinha 12 numa nota e 1 noutra — não porque o
-    produto físico mudou, mas porque a AUDITADA desmembrou a caixa em
-    12 latas no próprio estoque numa nota e não desmembrou na outra
-    (erro de escrituração dela, não do cálculo). Como a descrição do
-    XML e a UCOM não mudam com o jeito que a auditada escriturou, usar
-    só o XML dá um fator ESTÁVEL pro mesmo produto físico.
+    gerar_curadoria_fm_entradas()/gerar_curadoria_fm_saidas() — ÚNICO
+    lugar que ainda chama esta função desde 2026-07-28 (ver nota em
+    consultar_atributos_estoque_por_idunico(), que passou a ler só o
+    FM_ELEITO do Estágio 9, sem chamar o regex diretamente). Achado
+    real que motivou a troca: comparado com dado real da geraldo (CERV
+    SKOL LATA 350ML, UCOM "cx12" nas duas notas — fisicamente a MESMA
+    caixa de 12), o fator baseado no SPED vinha 12 numa nota e 1
+    noutra — não porque o produto físico mudou, mas porque a AUDITADA
+    desmembrou a caixa em 12 latas no próprio estoque numa nota e não
+    desmembrou na outra (erro de escrituração dela, não do cálculo).
+    Como a descrição do XML e a UCOM não mudam com o jeito que a
+    auditada escriturou, usar só o XML dá um fator ESTÁVEL pro mesmo
+    produto físico.
 
-    Reaproveita o mesmo regex de _extrair_particula_fm() (`C/N`,
-    `CX N`, `FD N`, `N UNID`, `N X N <unidade>`), mas devolve o NÚMERO
-    embutido como fator (não o texto do hint) — no padrão `N X N
-    <unidade>`, o PRIMEIRO número (antes do "X") é a contagem/fator, o
-    segundo é o peso/volume da embalagem individual, e como a extração
-    de dígitos pega só o primeiro grupo numérico do match inteiro, já
+    Reaproveita _buscar_particula_fm() (mesmos padrões de
+    _extrair_particula_fm()), mas devolve o NÚMERO embutido como fator
+    (não o texto do hint) — no padrão `N X N <unidade>`, o PRIMEIRO
+    número (antes do "X") é a contagem/fator, o segundo é o peso/
+    volume/comprimento da embalagem individual, e como a extração de
+    dígitos pega só o primeiro grupo numérico do match inteiro, já
     devolve o valor certo sem precisar de lógica extra. Sem nenhum
     padrão de embalagem reconhecido na descrição, assume fator=1
     (nenhuma multiplicação necessária — mesma interpretação de
     "fator=1 = unidades compatíveis" já usada no Matching)."""
-    m = _REGEX_PARTICULA_FM.search(str(desc).upper())
+    m = _buscar_particula_fm(str(desc).upper())
     if not m:
         return 1.0
     digitos = re.search(r"\d+", m.group(1))
@@ -6664,33 +6702,33 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
     fm_sugerido — 2026-07-25, pedido do usuário: "insira fm sugerido
     para as tabelas ids únicos de entradas, saídas e estoques", depois
     corrigido no mesmo dia: "para o fm, nas entradas e saídas não olhe
-    para o sped, olhe apenas para o xml". Primeira versão usava
-    `FATOR_MULTIPLICADOR_SUGERIDO` (Matching, Estágio 2 — compara XML
-    contra SPED); TROCADO pra `_extrair_fator_multiplicador_xml(desc_
-    xml)` — número embutido na própria descrição do XML (ex.: "C/12" →
-    12) — achado real que motivou: o fator via SPED podia variar pro
-    MESMO produto físico (CERV SKOL LATA 350ML, sempre UCOM "cx12")
-    dependendo de como a auditada escriturou cada nota (ora
-    desmembrando a caixa em latas no estoque dela, ora não), enquanto
-    o fator via XML é ESTÁVEL — não depende da escrituração da
-    auditada.
+    para o sped, olhe apenas para o xml" (regex `_extrair_fator_
+    multiplicador_xml()` sobre `desc_xml` em vez de `FATOR_
+    MULTIPLICADOR_SUGERIDO` do Matching, achado real: fator via SPED
+    variava pro MESMO produto físico dependendo de como a auditada
+    escriturou cada nota).
 
-    2026-07-28: `fm_sugerido` passou a dar PRECEDÊNCIA ao `FM_ELEITO`
-    já confirmado pelo auditor no Estágio 9 (`fm_entradas_curadoria`/
-    `fm_saidas_curadoria`, chave `DESC_XML`+`VALOR_UNIT_GRUPO` — o
-    mesmo valor unitário arredondado ao inteiro usado no agrupamento
-    de `gerar_curadoria_fm_entradas()`/`_saidas()`), só caindo no
-    regex `_extrair_fator_multiplicador_xml()` como FALLBACK quando o
-    grupo ainda não foi curado no Estágio 9 — mesmo padrão que
+    2026-07-28: REVERTIDO o uso do regex AQUI — `fm_sugerido` passou a
+    vir EXCLUSIVAMENTE do `FM_ELEITO` já confirmado no Estágio 9
+    (`fm_entradas_curadoria`/`fm_saidas_curadoria`, chave `DESC_XML`+
+    `VALOR_UNIT_GRUPO` — o mesmo valor unitário arredondado ao inteiro
+    usado no agrupamento de `gerar_curadoria_fm_entradas()`/
+    `_saidas()`), SEM fallback pro regex quando o grupo ainda não foi
+    curado (`fm_sugerido` fica `NA` nesse caso) — mesmo padrão que
     `consultar_atributos_estoque_estoque_por_idunico()` (Estoque) já
-    usava desde 2026-07-25 (lookup em `fm_estoque_curadoria`), agora
-    também em Entradas/Saídas. Motivado por pedido explícito do
-    usuário: o Fator Multiplicador "deve nascer no estágio 9 de forma
-    'pré' e só então propagado a produtos alvos salvos" — o Estágio 9
-    é o lugar de CURADORIA EM MASSA (o auditor revisa/ajusta grupos
-    inteiros de uma vez); o Botão 9 (Rubrica do Produto Alvo) deve
-    HERDAR essa decisão já tomada, não recalculá-la do zero ignorando
-    o que já foi confirmado.
+    usava desde 2026-07-25 (lookup em `fm_estoque_curadoria`, também
+    sem fallback). Motivado por pedido explícito do usuário, em 2
+    rodadas: primeiro "deve nascer no estágio 9 de forma 'pré' e só
+    então propagado a produtos alvos salvos"; depois, ao perguntar se
+    o Estoque deveria GANHAR um fallback de regex (pra ficar simétrico
+    com Entradas/Saídas), a resposta foi na direção OPOSTA — "o fm
+    somente é utilizado de fato nos produtos alvos salvos e deve ter
+    como fonte o estágio 9, conforme [decidido] de cada grupo" — ou
+    seja, é Entradas/Saídas que deveriam perder o fallback, não o
+    Estoque ganhar um. O regex CONTINUA rodando normalmente dentro do
+    Estágio 9 (`gerar_curadoria_fm_entradas()`/`_saidas()`, calcula
+    `fm_sugerido` pro editor de curadoria em massa) — só não roda mais
+    aqui, na leitura por idunico do Botão 9.
 
     `origem="saidas"` — a suposição original (2026-07-25, mesma
     sessão) de que `estoque_saidas` não teria ANO_ELEITO/NCM/UCOM/
@@ -6741,7 +6779,6 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
         df["ANO_ELEITO"] = df["ANO_ELEITO"].astype(str)
         df["ncm4"] = df["ncm4"].astype(str)
         df["vl_prod"] = df["vl_unit_prod"] * df["qtde_prod"]
-        df["fm_sugerido"] = df["desc_xml"].apply(_extrair_fator_multiplicador_xml)
         df["_valor_unit_grupo"] = df["vl_unit_prod"].round(0)
         funcao_curadoria = consultar_curadoria_fm if origem == "entradas" else consultar_curadoria_fm_saidas
         curadoria, _ = funcao_curadoria(limite=None)
@@ -6753,8 +6790,10 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
                 curadoria_fm, left_on=["desc_xml", "_valor_unit_grupo"],
                 right_on=["DESC_XML", "VALOR_UNIT_GRUPO"], how="left",
             )
-            df["fm_sugerido"] = df["FM_ELEITO"].where(df["FM_ELEITO"].notna(), df["fm_sugerido"])
+            df["fm_sugerido"] = df["FM_ELEITO"]
             df = df.drop(columns=["DESC_XML", "VALOR_UNIT_GRUPO", "FM_ELEITO"])
+        else:
+            df["fm_sugerido"] = pd.NA
         df = df.drop(columns=["_valor_unit_grupo"])
         return df[colunas]
     except Exception:
