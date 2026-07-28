@@ -3361,13 +3361,20 @@ def consultar_curadoria_fm_saidas_detalhado(limite: "int | None" = 200) -> "tupl
 # dá pra agrupar por (descrição + valor unitário) como em Entradas/Saídas.
 # Confirmado explicitamente: agrupa só por DESCR_ITEM_DECLARACAO; "up_estoque"
 # vem da MODA do campo UNIDADE (único campo de unidade que o Bloco H tem,
-# pode variar de grafia entre anos do mesmo item); SEM fm_sugerido (Bloco H
-# não tem nenhuma ligação com Matching/BC3 — o auditor digita o FM_ELEITO do
-# zero, sem sugestão nenhuma, diferente até de Saídas que ao menos tem 0,3%
-# de cobertura). Fonte de `idunico` no detalhado: reaproveita
-# estagio8_estoque_detalhado (já filtrado por QUANTIDADE_FINAL IS NOT NULL,
-# ver gerar_estagio_8_estoque()) em vez de recalcular o hash sintético aqui.
-_COLUNAS_FM_ESTOQUE_AGRUPADO = ["descrição_decl", "up_estoque", "particula", "nova_up", "qtde_ocorrencias"]
+# pode variar de grafia entre anos do mesmo item). `fm_sugerido` (2026-07-28,
+# pedido do usuário: "nos moldes de entradas e saídas, replique em estoque o
+# fm sugerido em vez de fm eleito, assim como partículas") passou a usar a
+# MESMA técnica de Entradas/Saídas desde o revert de 2026-07-25 — regex
+# sobre a própria descrição via _extrair_fator_multiplicador_xml(), NÃO o
+# FATOR_MULTIPLICADOR_SUGERIDO do Matching — então a ausência de ligação com
+# Matching/BC3 no Bloco H deixou de ser um obstáculo: o cálculo não depende
+# de Matching em nenhuma das três telas. Fonte de `idunico` no detalhado:
+# reaproveita estagio8_estoque_detalhado (já filtrado por QUANTIDADE_FINAL IS
+# NOT NULL, ver gerar_estagio_8_estoque()) em vez de recalcular o hash
+# sintético aqui.
+_COLUNAS_FM_ESTOQUE_AGRUPADO = [
+    "descrição_decl", "up_estoque", "particula", "fm_sugerido", "nova_up", "qtde_ocorrencias",
+]
 
 
 def gerar_curadoria_fm_estoque() -> dict:
@@ -3378,10 +3385,15 @@ def gerar_curadoria_fm_estoque() -> dict:
     - up_estoque: MODA do campo UNIDADE (único campo de unidade
       disponível no Bloco H) dentro do grupo.
     - particula: extraída via _extrair_particula_fm() da descrição.
+    - fm_sugerido: 2026-07-28, pedido do usuário: mesma técnica de
+      Entradas/Saídas — _extrair_fator_multiplicador_xml(descrição_decl),
+      número embutido na própria descrição declarada (ex.: "C/12" → 12),
+      fator=1 se nenhum padrão de embalagem for reconhecido. Não depende
+      de Matching/BC3 (é regex puro sobre texto), então funciona igual
+      mesmo sem a ligação que Entradas tem via Estágio 2.
     - nova_up: valor PADRÃO NOVA_UP_PADRAO ("UNID"), mesmo raciocínio
       de Entradas/Saídas.
     - qtde_ocorrencias: contagem de linhas (ANO_REFERENCIA) no grupo.
-    SEM fm_sugerido: Bloco H não tem ligação nenhuma com Matching/BC3.
     Exclui linhas com QUANTIDADE_FINAL NULL (mesmo filtro de
     gerar_estagio_8_estoque(), achado real 2026-07-25 — ano ainda não
     fechado, saldo inicial carregado do último inventário mas sem
@@ -3418,6 +3430,7 @@ def gerar_curadoria_fm_estoque() -> dict:
         )
     )
     agrupado["particula"] = agrupado["descrição_decl"].apply(_extrair_particula_fm)
+    agrupado["fm_sugerido"] = agrupado["descrição_decl"].apply(_extrair_fator_multiplicador_xml)
     agrupado["nova_up"] = NOVA_UP_PADRAO
     agrupado = (
         agrupado.sort_values("qtde_ocorrencias", ascending=False)[_COLUNAS_FM_ESTOQUE_AGRUPADO]

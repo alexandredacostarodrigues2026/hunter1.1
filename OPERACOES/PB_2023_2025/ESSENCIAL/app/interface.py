@@ -3182,7 +3182,9 @@ def render_curadoria_fm_saidas() -> None:
 
 
 _CHAVE_EDITOR_FM_ESTOQUE = "editor_curadoria_fm_estoque"
-_COLUNAS_PREVIEW_FM_ESTOQUE_AGRUPADO = ["descrição_decl", "up_estoque", "particula", "nova_up", "qtde_ocorrencias"]
+_COLUNAS_PREVIEW_FM_ESTOQUE_AGRUPADO = [
+    "descrição_decl", "up_estoque", "particula", "fm_sugerido", "nova_up", "qtde_ocorrencias",
+]
 _COLUNAS_PREVIEW_FM_ESTOQUE_DETALHADO = ["descrição_decl", "idunico", "FM_ELEITO", "NOVA_UP"]
 
 
@@ -3193,18 +3195,23 @@ def render_curadoria_fm_estoque() -> None:
     estrutural real confirmada com o usuário ANTES de implementar: essa
     tabela não tem valor unitário nem UCOM — agrupa só por Descrição
     Declarada (sem "_valor_unit_grupo"); "UP Estoque" vem da MODA do
-    campo UNIDADE (único campo de unidade do Bloco H); SEM "FM
-    Sugerido" pré-calculado (Bloco H não tem ligação com Matching/BC3)
-    — o auditor digita o "FM Eleito" do zero, coluna em branco por
-    padrão (só populada de novo quando já houver curadoria salva)."""
+    campo UNIDADE (único campo de unidade do Bloco H). "FM Sugerido"
+    (2026-07-28, pedido do usuário: "nos moldes de entradas e saídas,
+    replique em estoque o fm sugerido em vez de fm eleito, assim como
+    partículas") passou a ser calculado igual a Entradas/Saídas —
+    _extrair_fator_multiplicador_xml() sobre a própria Descrição
+    Declarada — e é a própria coluna editável (igual às outras duas
+    telas: o auditor ajusta o valor sugerido em vez de digitar do zero
+    num campo "FM Eleito" separado)."""
     st.subheader("Estágio 9 — Curadoria de Fator Multiplicador (Estoque)")
     st.caption(
         "Agrupa itens de Estoque (Estágio 5, Bloco H) por Descrição Declarada — sem valor "
         "unitário (o Bloco H não declara valor por item, só quantidade por ano). \"UP Estoque\" "
-        "é a Unidade declarada no Bloco H (moda do grupo); \"FM Eleito\" fica em branco por "
-        "padrão (Bloco H não tem ligação com Matching/BC3) — o auditor digita manualmente; "
-        "\"Partícula\" é uma pista de embalagem extraída da própria descrição; \"Nova UP\" "
-        "começa como \"UNID\" (ajustável)."
+        "é a Unidade declarada no Bloco H (moda do grupo); \"FM Sugerido\" vem do número "
+        "embutido na própria Descrição Declarada (ex.: \"C/12\" — mesma técnica de Entradas/"
+        "Saídas, fator=1 se nenhum padrão de embalagem for reconhecido); \"Partícula\" é a "
+        "pista de embalagem que originou o FM Sugerido; \"Nova UP\" começa como \"UNID\" "
+        "(ajustável)."
     )
 
     if "estagio9_fm_estoque_gerado" not in st.session_state:
@@ -3247,21 +3254,14 @@ def render_curadoria_fm_estoque() -> None:
             salvos_por_chave[linha["DESCR_ITEM_DECL"]] = linha
 
     editor_base = agrupado[_COLUNAS_PREVIEW_FM_ESTOQUE_AGRUPADO].copy()
-    # "fm_eleito" não vem de estagio9_fm_estoque_agrupado (não existe
-    # fm_sugerido no Bloco H) — coluna editável em branco, só populada
-    # de volta quando já houver curadoria salva pra essa descrição.
-    editor_base.insert(
-        editor_base.columns.get_loc("nova_up"), "fm_eleito",
-        pd.array([pd.NA] * len(editor_base), dtype="Float64"),
-    )
     for idx, linha in editor_base.iterrows():
         salvo = salvos_por_chave.get(linha["descrição_decl"])
         if salvo is not None:
-            editor_base.at[idx, "fm_eleito"] = salvo["FM_ELEITO"]
+            editor_base.at[idx, "fm_sugerido"] = salvo["FM_ELEITO"]
             editor_base.at[idx, "nova_up"] = salvo["NOVA_UP"]
 
     editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
-    colunas_travadas = [c for c in editor_exibicao.columns if c not in ("FM Eleito", "Nova UP")]
+    colunas_travadas = [c for c in editor_exibicao.columns if c not in ("FM Sugerido", "Nova UP")]
     with st.container(key="curadoria_fm_estoque_tabela"):
         st.markdown(
             "<style>.st-key-curadoria_fm_estoque_tabela [data-testid='stDataFrame'] "
@@ -3274,13 +3274,13 @@ def render_curadoria_fm_estoque() -> None:
             hide_index=True,
             disabled=colunas_travadas,
             key=_CHAVE_EDITOR_FM_ESTOQUE,
-            column_config={"FM Eleito": st.column_config.NumberColumn(format="%g")},
+            column_config={"FM Sugerido": st.column_config.NumberColumn(format="%g")},
         )
 
     if st.button("💾 Salvar Curadoria de Fator Multiplicador", key="btn_salvar_curadoria_fm_estoque"):
         selecionadas = pd.DataFrame({
             "DESCR_ITEM_DECL": editor_base["descrição_decl"],
-            "FM_ELEITO": editado["FM Eleito"],
+            "FM_ELEITO": editado["FM Sugerido"],
             "NOVA_UP": editado["Nova UP"],
         })
         universo_chaves = set(editor_base["descrição_decl"])
