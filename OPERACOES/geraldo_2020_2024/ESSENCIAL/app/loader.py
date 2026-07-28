@@ -6675,6 +6675,23 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
     o fator via XML é ESTÁVEL — não depende da escrituração da
     auditada.
 
+    2026-07-28: `fm_sugerido` passou a dar PRECEDÊNCIA ao `FM_ELEITO`
+    já confirmado pelo auditor no Estágio 9 (`fm_entradas_curadoria`/
+    `fm_saidas_curadoria`, chave `DESC_XML`+`VALOR_UNIT_GRUPO` — o
+    mesmo valor unitário arredondado ao inteiro usado no agrupamento
+    de `gerar_curadoria_fm_entradas()`/`_saidas()`), só caindo no
+    regex `_extrair_fator_multiplicador_xml()` como FALLBACK quando o
+    grupo ainda não foi curado no Estágio 9 — mesmo padrão que
+    `consultar_atributos_estoque_estoque_por_idunico()` (Estoque) já
+    usava desde 2026-07-25 (lookup em `fm_estoque_curadoria`), agora
+    também em Entradas/Saídas. Motivado por pedido explícito do
+    usuário: o Fator Multiplicador "deve nascer no estágio 9 de forma
+    'pré' e só então propagado a produtos alvos salvos" — o Estágio 9
+    é o lugar de CURADORIA EM MASSA (o auditor revisa/ajusta grupos
+    inteiros de uma vez); o Botão 9 (Rubrica do Produto Alvo) deve
+    HERDAR essa decisão já tomada, não recalculá-la do zero ignorando
+    o que já foi confirmado.
+
     `origem="saidas"` — a suposição original (2026-07-25, mesma
     sessão) de que `estoque_saidas` não teria ANO_ELEITO/NCM/UCOM/
     VUNCOM/QCOM nunca foi checada com dado real; confirmado depois que
@@ -6725,6 +6742,20 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
         df["ncm4"] = df["ncm4"].astype(str)
         df["vl_prod"] = df["vl_unit_prod"] * df["qtde_prod"]
         df["fm_sugerido"] = df["desc_xml"].apply(_extrair_fator_multiplicador_xml)
+        df["_valor_unit_grupo"] = df["vl_unit_prod"].round(0)
+        funcao_curadoria = consultar_curadoria_fm if origem == "entradas" else consultar_curadoria_fm_saidas
+        curadoria, _ = funcao_curadoria(limite=None)
+        if not curadoria.empty:
+            curadoria_fm = curadoria.drop_duplicates(["DESC_XML", "VALOR_UNIT_GRUPO"])[
+                ["DESC_XML", "VALOR_UNIT_GRUPO", "FM_ELEITO"]
+            ]
+            df = df.merge(
+                curadoria_fm, left_on=["desc_xml", "_valor_unit_grupo"],
+                right_on=["DESC_XML", "VALOR_UNIT_GRUPO"], how="left",
+            )
+            df["fm_sugerido"] = df["FM_ELEITO"].where(df["FM_ELEITO"].notna(), df["fm_sugerido"])
+            df = df.drop(columns=["DESC_XML", "VALOR_UNIT_GRUPO", "FM_ELEITO"])
+        df = df.drop(columns=["_valor_unit_grupo"])
         return df[colunas]
     except Exception:
         logger.exception("Erro ao consultar atributos de estoque por idunico em %s", _BANCO_PATH)
