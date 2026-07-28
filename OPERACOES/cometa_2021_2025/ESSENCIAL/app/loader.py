@@ -2801,7 +2801,7 @@ def _extrair_particula_fm(desc) -> str:
     nenhuma unidade reconhecida no fim pode ser dimensão física do
     produto em vez de embalagem, ex.: um pano de prato "28X30" — a
     decisão final é sempre do auditor no Estágio 9, antes de propagar
-    pro Botão 9). Vazio se não achar nenhum dos padrões."""
+    pro Estágio 10). Vazio se não achar nenhum dos padrões."""
     m = _buscar_particula_fm(str(desc).upper())
     return m.group(1) if m else ""
 
@@ -2973,7 +2973,7 @@ def consultar_curadoria_fm_entradas_agrupado(limite: "int | None" = 200) -> "tup
 # Tabela própria (fm_entradas_curadoria) — o auditor marca "Gravar" pros
 # grupos cujo FM_ELEITO/NOVA_UP ele confirma (ou ajusta manualmente,
 # sobrescrevendo fm_sugerido), igual à mecânica de Rubrica do Produto Alvo
-# (Botão 9, 2026-07-23): checkbox sempre desmarcado por padrão, coluna
+# (Estágio 10, 2026-07-23): checkbox sempre desmarcado por padrão, coluna
 # "Observação" sinaliza o que já está salvo, e salvar_curadoria_fm() usa a
 # mesma semântica de SINCRONIZAÇÃO (universo_chaves) — desmarcar e salvar
 # remove de fato, não só deixa de adicionar.
@@ -2985,7 +2985,7 @@ def salvar_curadoria_fm(selecionadas: pd.DataFrame, universo_chaves: "set | None
     Fator Multiplicador de grupos de Entradas (Estágio 9).
     `selecionadas` tem as colunas DESC_XML/VALOR_UNIT_GRUPO/FM_ELEITO/
     NOVA_UP das linhas marcadas "Gravar". Mesma semântica de
-    sincronização já usada em salvar_cruzamento_confirmado() (Botão 9):
+    sincronização já usada em salvar_cruzamento_confirmado() (Estágio 10):
     com `universo_chaves` informado (todas as combinações desc_xml+
     valor_unit_grupo mostradas na tela, marcadas ou não), o estado final
     vira exatamente `selecionadas` — desmarcar e salvar remove de fato.
@@ -3070,7 +3070,7 @@ def consultar_curadoria_fm_entradas_detalhado(limite: "int | None" = 200) -> "tu
     item individual coberto por um grupo já salvo — 2026-07-24, pedido
     do usuário: "tabela deve estar vinckada à tabela com id único"
     (mesmo espírito da tabela "Itens individuais (com ID Único)" do
-    Botão 9/Rubrica do Produto Alvo). Devolve (DataFrame com colunas
+    Estágio 10/Rubrica do Produto Alvo). Devolve (DataFrame com colunas
     desc_xml/idunico/FM_ELEITO/NOVA_UP, total) — vazio se
     fm_entradas_curadoria ainda não tiver nenhuma linha salva, ou
     estoque_entradas não existir."""
@@ -3134,7 +3134,7 @@ def gerar_curadoria_fm_saidas() -> dict:
     estoque_saidas (Estágio 4) em vez de estoque_entradas. Exclui
     autoemissão (mesmo filtro de gerar_estagio_8_saidas(), 2026-07-25
     — transferência interna, emit_cnpj==dest_cnpj, não é venda pra
-    terceiro) pra manter consistência com o Estágio 8.1/Botão 9.
+    terceiro) pra manter consistência com o Estágio 8.1/Estágio 10.
     Devolve {'agrupado': DataFrame, 'erros': list} — erros não-vazio
     quando estoque_saidas (Estágio 4) ainda não foi gerada."""
     vazio = {"agrupado": pd.DataFrame(columns=_COLUNAS_FM_SAIDAS_AGRUPADO)}
@@ -3386,7 +3386,7 @@ def gerar_curadoria_fm_estoque() -> dict:
     gerar_estagio_8_estoque(), achado real 2026-07-25 — ano ainda não
     fechado, saldo inicial carregado do último inventário mas sem
     encerramento declarado; sem o filtro aqui, `qtde_ocorrencias`
-    ficaria inconsistente com o Estágio 8.2/Botão 9, ex.: CERV SKOL
+    ficaria inconsistente com o Estágio 8.2/Estágio 10, ex.: CERV SKOL
     LATA 350ML mostraria 7 aqui contra 6 nos outros dois). Devolve
     {'agrupado': DataFrame, 'erros': list} — erros não-vazio quando
     estoque_anual_consolidado (Estágio 5) ainda não foi gerada."""
@@ -3647,7 +3647,7 @@ def gerar_estagio_8_saidas() -> dict:
     VIEIRA" em emit e dest) contados como "saída"/venda, quando na
     verdade é movimentação INTERNA, não venda pra terceiro. Usuário
     confirmou explicitamente excluir autoemissão de Saídas (Estágio
-    8.1 e Botão 9); 172-2=170, batendo exato com o controle. Devolve
+    8.1 e Estágio 10); 172-2=170, batendo exato com o controle. Devolve
     {'detalhado': DataFrame, 'agrupado': DataFrame, 'erros': list} —
     erros não-vazio quando estoque_saidas (Estágio 4) ainda não foi
     gerada."""
@@ -5277,7 +5277,7 @@ def consultar_grupo_produto_alvo_fiscalizacao(
         return pd.DataFrame(columns=colunas), 0
 
 
-# ── Sumário de Unidades para Fator Multiplicador (Botão 9, Entradas) ─────
+# ── Sumário de Unidades para Fator Multiplicador (Estágio 10, Entradas) ─────
 # Solicitação Técnica (2026-07-25): ao analisar um produto alvo, o auditor
 # precisa decidir se as unidades vindas do XML (`ucom`, aqui `unid_prod`)
 # exigem conversão — este sumário consolida as métricas das unidades já
@@ -5333,7 +5333,7 @@ def _moda_ou_none(serie: pd.Series):
 
 
 def gerar_sumario_unidades_alvo(df_detalhado: pd.DataFrame) -> pd.DataFrame:
-    """Agrupa os itens já confirmados na Rubrica do Produto Alvo (Botão 9)
+    """Agrupa os itens já confirmados na Rubrica do Produto Alvo (Estágio 10)
     por TEXTO EXATO de `unid_prod` (UCOM do XML) — cada grafia distinta
     (ex.: "cx12", "cx012", "LAT") vira sua PRÓPRIA linha, sem fusão entre
     unidades diferentes (2026-07-26, pedido explícito do usuário: "não
@@ -5464,7 +5464,7 @@ def gerar_sumario_unidades_alvo_com_destaque(df_detalhado: pd.DataFrame) -> pd.D
     )[colunas + ["_idunicos"]]
 
 
-# ── Aplicação do FM/Nova Unidade na tabela "Itens individuais" (Botão 9) ─
+# ── Aplicação do FM/Nova Unidade na tabela "Itens individuais" (Estágio 10) ─
 # Solicitação Técnica (2026-07-26): "crie o campo 'TRATAMENTO' na tabela
 # de id único. agora crie uma caixa no sumário para aplicar o fm e a nova
 # unidade na tabela id única. o preço unitário deve ser dividido pelo fm
@@ -5477,7 +5477,7 @@ def gerar_sumario_unidades_alvo_com_destaque(df_detalhado: pd.DataFrame) -> pd.D
 # só a "embalagem" do valor muda, não o total). Persistido POR IDUNICO
 # (não por UP/grupo) — cada item confirmado guarda seu próprio FM/Nova
 # Unidade aplicados, já que idunico é a chave granular e determinística
-# usada em toda a Rubrica do Botão 9. Recomputa vl_unit_prod/qtde_prod
+# usada em toda a Rubrica do Estágio 10. Recomputa vl_unit_prod/qtde_prod
 # AO VIVO a partir do valor bruto + FM salvo (não grava o número final
 # já dividido/multiplicado) — evita duplicar fonte de verdade; reverter
 # bastaria limpar o registro de tratamento (ainda não implementado, sem
@@ -5531,7 +5531,7 @@ def consultar_tratamento_fm_por_idunico(idunicos: "set | list", origem: str = "e
     """Busca, pra um conjunto de `idunico`, o tratamento de FM/Nova
     Unidade já aplicado (tabela tratamento_fm_entradas/_saidas/_estoque,
     conforme `origem`) — usado pra ajustar vl_unit_prod/qtde_prod na
-    tabela "Itens individuais" do Botão 9. Devolve DataFrame vazio
+    tabela "Itens individuais" do Estágio 10. Devolve DataFrame vazio
     (mesmas colunas) se `idunicos` vier vazio, o banco não existir, ou a
     tabela ainda não tiver sido criada (nenhum tratamento aplicado
     ainda). Colunas ausentes na tabela real (2026-07-26: tabelas já
@@ -5620,7 +5620,7 @@ def aplicar_tratamento_fm(
 def desfazer_tratamento_fm(idunicos: "set | list", origem: str = "entradas") -> dict:
     """Remove o tratamento de FM/Nova Unidade já aplicado nos itens
     (idunico) informados — 2026-07-26, pedido do usuário (checkbox
-    "Desfazer" dedicado no Sumário, mesmo padrão da Rubrica do Botão 9:
+    "Desfazer" dedicado no Sumário, mesmo padrão da Rubrica do Estágio 10:
     "aqui abrir a oportunidade de desfazer", 2026-07-24). A tabela
     "Itens individuais" volta a mostrar vl_unit_prod/qtde_prod/unid_prod
     BRUTOS (sem FM aplicado) e TRATAMENTO="" pros itens removidos.
@@ -5649,7 +5649,7 @@ def desfazer_tratamento_fm(idunicos: "set | list", origem: str = "entradas") -> 
         return {"erro": str(e)}
 
 
-# ── Produto Escolhido para Cruzamento (Botão 9) ──────────────────────────
+# ── Produto Escolhido para Cruzamento (Estágio 10) ──────────────────────────
 # Solicitação Técnica (2026-07-23): "SERÁ UM PAINEL EM QUE ESCOLHEREU UM
 # PRODUTO A SER CRUZADO" — painel "PRODUTOS ALVOS SALVOS" onde o auditor
 # escolhe, dentre os produtos já salvos e ativos no Grupo de Produto Alvo
@@ -5663,7 +5663,7 @@ _COLUNAS_PRODUTO_CRUZAMENTO_ESCOLHIDO = ["DESCR_ALVO", "COD_ITEM", "TS"]
 
 def escolher_produto_cruzamento(descr_alvo: str, cod_item: str) -> dict:
     """Persiste qual produto (dentre os já salvos no Grupo de Produto
-    Alvo) foi escolhido pra ser o objeto do cruzamento — Botão 9
+    Alvo) foi escolhido pra ser o objeto do cruzamento — Estágio 10
     "PRODUTOS ALVOS SALVOS". Substitui qualquer escolha anterior (só
     existe UM produto escolhido por vez). Regra R07: DESCR_ALVO/COD_ITEM
     sempre string. Devolve {'ok': True} ou {'erro': str}."""
@@ -5690,7 +5690,7 @@ def escolher_produto_cruzamento(descr_alvo: str, cod_item: str) -> dict:
 
 
 def consultar_produto_cruzamento_escolhido() -> "dict | None":
-    """Lê o produto atualmente escolhido pra cruzamento (Botão 9), se
+    """Lê o produto atualmente escolhido pra cruzamento (Estágio 10), se
     houver. Devolve {'DESCR_ALVO': str, 'COD_ITEM': str, 'TS': str} ou
     None se nenhum produto foi escolhido ainda ou a tabela não existir."""
     if not _BANCO_PATH.exists():
@@ -5711,7 +5711,7 @@ def consultar_produto_cruzamento_escolhido() -> "dict | None":
 # Solicitação Técnica (2026-07-23): "CRIE UMA ABA DE ENTRADAS. NELA VAMOS
 # COMPARAR COM OS PRODUTOS AGRUPADOS DAS ENTRADAS DO ESTÁGIO 8 USANDO O
 # CRITÉRIO1: SIMILARIDADE 100% DO CODIGO DE PRODUTO" — primeiro critério de
-# cruzamento do produto escolhido (Botão 9, produto_cruzamento_escolhido)
+# cruzamento do produto escolhido (Estágio 10, produto_cruzamento_escolhido)
 # contra estagio8_agrupado (Entradas, Estágio 8): Critério 1 = MESMO
 # código de produto (normalizado, zero à esquerda não conta como
 # diferença) E similaridade de descrição entre o XML buscado (desc_xml)
@@ -6728,7 +6728,7 @@ def consultar_atributos_estoque_por_idunico(idunicos: "set | list", origem: str 
     Estoque ganhar um. O regex CONTINUA rodando normalmente dentro do
     Estágio 9 (`gerar_curadoria_fm_entradas()`/`_saidas()`, calcula
     `fm_sugerido` pro editor de curadoria em massa) — só não roda mais
-    aqui, na leitura por idunico do Botão 9.
+    aqui, na leitura por idunico do Estágio 10.
 
     `origem="saidas"` — a suposição original (2026-07-25, mesma
     sessão) de que `estoque_saidas` não teria ANO_ELEITO/NCM/UCOM/
@@ -6809,7 +6809,7 @@ _COLUNAS_ATRIBUTOS_ESTOQUE_ESTOQUE_POR_IDUNICO = [
 
 def consultar_atributos_estoque_estoque_por_idunico(idunicos: "set | list") -> pd.DataFrame:
     """Enriquecimento fiscal da tabela "Itens individuais" do Estoque
-    (Botão 9/Estágio 9) — 2026-07-25, pedido do usuário: "inclua aqui
+    (Estágio 10/Estágio 9) — 2026-07-25, pedido do usuário: "inclua aqui
     os campos: ncm4|unid_prod|vl_unit_prod|qte_prod|vl_total_prod|
     ano_ef|ano_ei|dt_decl" (mesmos nomes usados no enriquecimento de
     Entradas/Saídas onde já existe equivalente — `qtde_prod`/`vl_prod`

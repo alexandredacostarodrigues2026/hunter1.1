@@ -2536,7 +2536,7 @@ def render_pagina_rn1_simulada_30() -> None:
 _COLUNAS_PREVIEW_ESTAGIO8_DETALHADO = ["codproddecl", "desc_xml", "descrição_decl", "idunico"]
 _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO = ["codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias"]
 
-# Critério 1 do Cruzamento (Botão 9, Entradas) inclui SIMILARIDADE_DESCRICAO
+# Critério 1 do Cruzamento (Estágio 10, Entradas) inclui SIMILARIDADE_DESCRICAO
 # além das colunas do Estágio 8 — ver loader.cruzar_produto_escolhido_entradas().
 # "descrição_decl" continua na base (loader.salvar_cruzamento_confirmado()
 # exige a coluna), mas sai só da EXIBIÇÃO do editor (2026-07-23, pedido do
@@ -2896,7 +2896,7 @@ def render_curadoria_fm_entradas() -> None:
     Estágio 8 — fonte 10px, hide_index), SEM checkbox de seleção nem
     coluna "Observação" (2026-07-24, pedido do usuário: "retire a
     coluna 'gravar' e observação'" — diferente da Rubrica do Produto
-    Alvo, Botão 9, que exige marcar linha a linha, aqui TODA a tabela
+    Alvo, Estágio 10, que exige marcar linha a linha, aqui TODA a tabela
     fica editável e "Salvar" grava o estado atual de TODOS os grupos de
     uma vez, edição em massa de verdade). FM Sugerido exibido sem zeros
     à direita (2026-07-24: "transforme fm sugerido 12.000 em 12" —
@@ -2905,7 +2905,7 @@ def render_curadoria_fm_entradas() -> None:
     junta fm_entradas_curadoria com estoque_entradas pela mesma chave
     de agrupamento, trazendo o ID_UNICO de cada item coberto por um
     grupo já salvo (loader.consultar_curadoria_fm_entradas_detalhado()),
-    mesmo espírito da tabela homônima do Botão 9."""
+    mesmo espírito da tabela homônima do Estágio 10."""
     st.subheader("Estágio 9 — Curadoria de Fator Multiplicador (Entradas)")
     st.caption(
         "Agrupa itens de Entradas (Estágio 4) por Descrição XML + Valor Unitário XML "
@@ -3024,7 +3024,7 @@ def render_curadoria_fm_entradas() -> None:
     # mesma chave de agrupamento (Descrição XML + Valor Unitário
     # arredondado), trazendo o ID_UNICO de cada item individual coberto
     # por um grupo já salvo — mesmo espírito da tabela "Itens individuais
-    # (com ID Único)" do Botão 9 (Rubrica do Produto Alvo).
+    # (com ID Único)" do Estágio 10 (Rubrica do Produto Alvo).
     st.divider()
     st.markdown("**Itens individuais (com ID Único)**")
     detalhado, total_detalhado = loader.consultar_curadoria_fm_entradas_detalhado(limite=200)
@@ -3391,7 +3391,7 @@ def _obter_criterios_cruzamento_entradas() -> dict:
 
 
 def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tuple:
-    """Sumário de Unidades + aplicação de FM/Nova Unidade (Botão 9) —
+    """Sumário de Unidades + aplicação de FM/Nova Unidade (Estágio 10) —
     mirror entre Entradas/Saídas/Estoque, extraído em 2026-07-26 (pedido
     do usuário: "ESTENDA PARA SAIDAS E ESTOQUES") pra não triplicar a
     mesma lógica nas 3 abas de `_render_cruzamento_*()`.
@@ -3686,7 +3686,7 @@ def _render_sumario_unidades_com_aplicar(
 
 
 def _render_kpis_itens_individuais(detalhado: pd.DataFrame) -> None:
-    """KPIs da tabela "Itens individuais" (Botão 9): soma de `quant_utiliz`
+    """KPIs da tabela "Itens individuais" (Estágio 10): soma de `quant_utiliz`
     (quantidade utilizada, após tratamento de FM) e média de `vu_utilizado`
     (valor unitário utilizado) — chamar com `detalhado` ainda NUMÉRICO,
     antes do loop que converte essas colunas em string BR (ver chamadas em
@@ -3699,7 +3699,7 @@ def _render_kpis_itens_individuais(detalhado: pd.DataFrame) -> None:
 
 
 def _render_itens_individuais(detalhado: pd.DataFrame, colunas_preview: list, sufixo_key: str) -> None:
-    """Tabela "Itens individuais" (Botão 9) — somente leitura. Voltou a
+    """Tabela "Itens individuais" (Estágio 10) — somente leitura. Voltou a
     ser assim em 2026-07-26 (revertendo a edição direta de "Unidade do
     Produto"/"FM Sugerido" criada mais cedo no mesmo dia): "Campo de
     unidade de produto deixa de ser editável" + "FM Utilizado" (que
@@ -3723,7 +3723,7 @@ def _render_itens_individuais(detalhado: pd.DataFrame, colunas_preview: list, su
 
 
 def _render_cruzamento_entradas(escolhido: dict) -> None:
-    """Aba 'Entradas' do cruzamento (Botão 9): compara o produto
+    """Aba 'Entradas' do cruzamento (Estágio 10): compara o produto
     escolhido com estagio8_agrupado (Entradas) usando o critério
     selecionado no selectbox — DESPACHA pra função diferente conforme o
     critério (2026-07-23, renomeada de `_render_cruzamento_entradas_
@@ -4072,7 +4072,7 @@ def _obter_criterios_cruzamento_saidas() -> dict:
 
 
 def _render_cruzamento_saidas(escolhido: dict) -> None:
-    """Aba 'Saídas' do cruzamento (Botão 9) — mirror de
+    """Aba 'Saídas' do cruzamento (Estágio 10) — mirror de
     _render_cruzamento_entradas(), 2026-07-25, Solicitação Técnica "BUSCA
     DE CORRESPONDENTES NAS SAÍDAS": compara o produto escolhido com
     estagio8_saidas_agrupado usando o critério selecionado no selectbox.
@@ -4308,7 +4308,7 @@ _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE = [
 
 
 def _render_cruzamento_estoque(escolhido: dict) -> None:
-    """Aba 'Estoque' do cruzamento (Botão 9) — mirror de
+    """Aba 'Estoque' do cruzamento (Estágio 10) — mirror de
     _render_cruzamento_entradas(), 2026-07-25, Solicitação Técnica "BUSCA
     DE CORRESPONDENTES NO ESTOQUE": compara o produto escolhido com
     estagio8_estoque_agrupado (Estágio 8.2, Bloco H) usando o critério
