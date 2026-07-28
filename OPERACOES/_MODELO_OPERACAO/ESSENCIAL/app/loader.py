@@ -5982,6 +5982,14 @@ def cruzar_produto_escolhido_entradas_criterio2_detalhado() -> "tuple[pd.DataFra
 # criterios: ... 3-sem correspondência com declaração" — era "Código de
 # Produto Divergente".
 CRITERIO_BUSCA3_CODIGO_DIVERGENTE = "Critério de Busca3: sem correspondência com declaração"
+# Rótulo específico de Entradas (2026-07-28, pedido do usuário: "mudar o
+# nome do critério3 para: 'nome_prod_decl do alvo = nome_prod_xml' em
+# entradas") — mesma comparação de sempre (SIMILARIDADE_DESCRICAO entre
+# desc_xml do candidato e DESCR_ALVO), só o RÓTULO ficou mais descritivo
+# (segue o padrão "X do alvo = Y do candidato" de CRITERIO_BUSCA1/2) —
+# escopo restrito a Entradas por pedido explícito; Saídas continua
+# usando CRITERIO_BUSCA3_CODIGO_DIVERGENTE (rótulo antigo).
+CRITERIO_BUSCA3_NOME_XML_ENTRADAS = "Critério de Busca3: nome_prod_decl do alvo = nome_prod_xml"
 LIMIAR_SIMILARIDADE_CRITERIO3 = 20.0
 
 

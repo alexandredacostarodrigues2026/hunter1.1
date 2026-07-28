@@ -3373,7 +3373,12 @@ def _obter_criterios_cruzamento_entradas() -> dict:
     o critério 2 em critério3") quando o Critério 2 "de verdade" (nome
     de declaração igual ao alvo) foi definido — motivo pelo qual esta
     função existe: com 3 critérios, a tela precisa DESPACHAR pra função
-    certa conforme o que está selecionado."""
+    certa conforme o que está selecionado. Rótulo do Critério 3
+    (2026-07-28, pedido do usuário: "mudar o nome do critério3 para:
+    'nome_prod_decl do alvo = nome_prod_xml' em entradas") usa
+    `CRITERIO_BUSCA3_NOME_XML_ENTRADAS`, diferente do rótulo de Saídas
+    (`CRITERIO_BUSCA3_CODIGO_DIVERGENTE`, inalterado) — mesma função de
+    cruzamento nos dois casos, só o texto exibido no selectbox muda."""
     return {
         loader.CRITERIO_BUSCA1_MESMO_CODIGO: (
             loader.cruzar_produto_escolhido_entradas,
@@ -3383,7 +3388,7 @@ def _obter_criterios_cruzamento_entradas() -> dict:
             loader.cruzar_produto_escolhido_entradas_criterio2,
             loader.cruzar_produto_escolhido_entradas_criterio2_detalhado,
         ),
-        loader.CRITERIO_BUSCA3_CODIGO_DIVERGENTE: (
+        loader.CRITERIO_BUSCA3_NOME_XML_ENTRADAS: (
             loader.cruzar_produto_escolhido_entradas_criterio3,
             loader.cruzar_produto_escolhido_entradas_criterio3_detalhado,
         ),
