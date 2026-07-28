@@ -2248,23 +2248,23 @@ def render_menu_principal() -> None:
     # "inicie com o 8 uma nova linha de botões"). 12 colunas ficavam
     # espremidas numa linha só; a 2ª linha também dá espaço pros próximos
     # estágios sem precisar espremer mais a 1ª.
-    col_estagio8, col_produtos_alvo_salvos, col_estagio9 = st.columns(3)
+    col_estagio8, col_estagio9, col_produtos_alvo_salvos = st.columns(3)
     if col_estagio8.button(
         "📋 ESTÁGIO 8: RESUMO DE ENTRADAS / SAÍDAS / ESTOQUES",
         key="btn_menu_estagio_8", use_container_width=True,
     ):
         st.session_state["pagina_ativa"] = "estagio_8"
         st.rerun()
-    if col_produtos_alvo_salvos.button(
-        "🎯 PRODUTOS ALVOS SALVOS", key="btn_menu_produtos_alvo_salvos", use_container_width=True,
-    ):
-        st.session_state["pagina_ativa"] = "produtos_alvo_salvos"
-        st.rerun()
     if col_estagio9.button(
         "⚖️ ESTÁGIO 9: FATOR MULTIPLICADOR (ENTRADAS)",
         key="btn_menu_estagio_9", use_container_width=True,
     ):
         st.session_state["pagina_ativa"] = "estagio_9"
+        st.rerun()
+    if col_produtos_alvo_salvos.button(
+        "🎯 PRODUTOS ALVOS SALVOS", key="btn_menu_produtos_alvo_salvos", use_container_width=True,
+    ):
+        st.session_state["pagina_ativa"] = "produtos_alvo_salvos"
         st.rerun()
 
 
