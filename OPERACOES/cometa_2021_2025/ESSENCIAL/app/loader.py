@@ -5995,6 +5995,16 @@ def cruzar_produto_escolhido_entradas_criterio2_detalhado() -> "tuple[pd.DataFra
 # CRITERIO_BUSCA2_NOME_XML_SAIDAS, ambas sem uso depois desta troca).
 CRITERIO_BUSCA3_NOME_XML = "Critério de Busca3: nome_prod_decl do alvo = nome_prod_xml"
 LIMIAR_SIMILARIDADE_CRITERIO3 = 20.0
+# Critério 4 — pesquisa livre (Solicitação Técnica 2026-07-29): discutido
+# tirar o piso de 20% do Critério 3 pra não perder candidatos reais de 0%
+# de similaridade, mas descartado por volume (a base inteira de
+# estagio8_agrupado seria devolvida de uma vez — 5.091 grupos em Entradas
+# na geraldo). Em vez disso, um critério NOVO, sem filtro de código nem
+# piso nenhum, cuja tabela só aparece na UI depois que o auditor digita um
+# termo na busca por descrição do XML (ver _render_cruzamento_entradas()/
+# _saidas()/_estoque() em interface.py) — o próprio auditor filtra
+# manualmente, cobrindo o caso de similaridade 0% sem sobrecarregar a tela.
+CRITERIO_BUSCA4_PESQUISA_LIVRE = "Critério de Busca4: pesquisa livre (sem filtro de código/similaridade)"
 
 
 def cruzar_produto_escolhido_entradas_criterio3() -> "tuple[pd.DataFrame, dict | None]":
@@ -6077,6 +6087,73 @@ def cruzar_produto_escolhido_entradas_criterio3_detalhado() -> "tuple[pd.DataFra
     candidatos = candidatos[candidatos["SIMILARIDADE_DESCRICAO"] >= LIMIAR_SIMILARIDADE_CRITERIO3]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    candidatos = candidatos.sort_values(
+        "SIMILARIDADE_DESCRICAO", ascending=False
+    )[_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO].reset_index(drop=True)
+    return candidatos, escolhido
+
+
+def cruzar_produto_escolhido_entradas_criterio4() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 4 (Entradas) — PESQUISA LIVRE, ver comentário de
+    `CRITERIO_BUSCA4_PESQUISA_LIVRE`. SEM filtro de código (nem igual,
+    nem divergente) e SEM piso de similaridade — devolve TODOS os
+    grupos de `estagio8_agrupado`, só excluindo os já atribuídos a
+    OUTRO alvo (mesma regra dos outros critérios).
+    `SIMILARIDADE_DESCRICAO` calculada só informativamente (não
+    filtra nada aqui — quem filtra é o auditor, via busca manual na
+    UI). Ordenado por SIMILARIDADE_DESCRICAO desc, qtde_ocorrencias
+    desc — mesma ordenação de referência do Critério 1/3. Devolve
+    (DataFrame, dict do produto escolhido) — DataFrame vazio se nenhum
+    produto foi escolhido ainda, estagio8_agrupado não existir, ou
+    todos os grupos já pertencerem a outro alvo; escolhido=None só no
+    primeiro caso."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), None
+    agrupado, _ = consultar_estagio8_agrupado(limite=None)
+    if agrupado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    candidatos = agrupado.copy()
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "entradas")
+    if chaves_bloqueadas:
+        candidatos = candidatos[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(candidatos["codproddecl"], candidatos["desc_xml"])]
+        ]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    candidatos = candidatos.sort_values(
+        ["SIMILARIDADE_DESCRICAO", "qtde_ocorrencias"], ascending=[False, False]
+    )[_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO].reset_index(drop=True)
+    return candidatos, escolhido
+
+
+def cruzar_produto_escolhido_entradas_criterio4_detalhado() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 4 (Entradas) — tabela DETALHADA, mesma lógica de
+    cruzar_produto_escolhido_entradas_criterio4() (pesquisa livre, sem
+    filtro de código nem piso), mas contra estagio8_detalhado. Mesmas
+    regras de vazio/None."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), None
+    detalhado, _ = consultar_estagio8_detalhado(limite=None)
+    if detalhado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    candidatos = detalhado.copy()
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "entradas")
+    if chaves_bloqueadas:
+        candidatos = candidatos[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(candidatos["codproddecl"], candidatos["desc_xml"])]
+        ]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
     candidatos = candidatos.sort_values(
         "SIMILARIDADE_DESCRICAO", ascending=False
     )[_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO].reset_index(drop=True)
@@ -6245,6 +6322,66 @@ def cruzar_produto_escolhido_saidas_criterio3_detalhado() -> "tuple[pd.DataFrame
     return candidatos, escolhido
 
 
+def cruzar_produto_escolhido_saidas_criterio4() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 4 (Saídas) — PESQUISA LIVRE, mesma lógica de
+    cruzar_produto_escolhido_entradas_criterio4() (ver comentário de
+    `CRITERIO_BUSCA4_PESQUISA_LIVRE`), mas contra
+    estagio8_saidas_agrupado — SEM filtro de código nem piso de
+    similaridade, exclusão cross-alvo com `origem="saidas"`. Devolve
+    (DataFrame, dict do produto escolhido) — mesmas regras de
+    vazio/None do Critério 4 de Entradas."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), None
+    agrupado, _ = consultar_estagio8_saidas_agrupado(limite=None)
+    if agrupado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
+    candidatos = agrupado.copy()
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "saidas")
+    if chaves_bloqueadas:
+        candidatos = candidatos[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(candidatos["codproddecl"], candidatos["desc_xml"])]
+        ]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    candidatos = candidatos.sort_values(
+        ["SIMILARIDADE_DESCRICAO", "qtde_ocorrencias"], ascending=[False, False]
+    )[_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO].reset_index(drop=True)
+    return candidatos, escolhido
+
+
+def cruzar_produto_escolhido_saidas_criterio4_detalhado() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 4 (Saídas) — tabela DETALHADA, mesma lógica de
+    cruzar_produto_escolhido_saidas_criterio4() (pesquisa livre), mas
+    contra estagio8_saidas_detalhado. Mesmas regras de vazio/None."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), None
+    detalhado, _ = consultar_estagio8_saidas_detalhado(limite=None)
+    if detalhado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
+    candidatos = detalhado.copy()
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "saidas")
+    if chaves_bloqueadas:
+        candidatos = candidatos[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(candidatos["codproddecl"], candidatos["desc_xml"])]
+        ]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    candidatos = candidatos.sort_values(
+        "SIMILARIDADE_DESCRICAO", ascending=False
+    )[_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO].reset_index(drop=True)
+    return candidatos, escolhido
+
+
 # ── Cruzamento do Produto Escolhido — Critérios 1 e 2 (Estoque) ──────────
 # Solicitação Técnica (2026-07-25): "BUSCA DE CORRESPONDENTES NO ESTOQUE
 # (BOTÃO 9)" — replica a mecânica de Entradas pro Estoque (Bloco H,
@@ -6401,6 +6538,72 @@ def cruzar_produto_escolhido_estoque_criterio2_detalhado() -> "tuple[pd.DataFram
     candidatos = detalhado[nomes_decl_normalizados == nome_alvo_normalizado].copy()
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "estoque")
+    if chaves_bloqueadas:
+        candidatos = candidatos[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(candidatos["codproddecl"], candidatos["desc_xml"])]
+        ]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["descrição_decl"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    candidatos = candidatos.sort_values(
+        "SIMILARIDADE_DESCRICAO", ascending=False
+    )[_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO].reset_index(drop=True)
+    return candidatos, escolhido
+
+
+def cruzar_produto_escolhido_estoque_criterio4() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 4 (Estoque) — PESQUISA LIVRE, mesma lógica de
+    cruzar_produto_escolhido_entradas_criterio4() (ver comentário de
+    `CRITERIO_BUSCA4_PESQUISA_LIVRE`), mas contra
+    estagio8_estoque_agrupado — SEM filtro de código nem piso de
+    similaridade, exclusão cross-alvo com `origem="estoque"`.
+    `desc_xml` preenchido como alias de `descrição_decl` (mesmo
+    padrão do Critério 1/2 de Estoque — Bloco H não tem XML separado
+    da declaração). Devolve (DataFrame, dict do produto escolhido) —
+    mesmas regras de vazio/None do Critério 4 de Entradas."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), None
+    agrupado, _ = consultar_estagio8_estoque_agrupado(limite=None)
+    if agrupado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
+    agrupado = agrupado.copy()
+    agrupado["desc_xml"] = agrupado["descrição_decl"]
+    candidatos = agrupado.copy()
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "estoque")
+    if chaves_bloqueadas:
+        candidatos = candidatos[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(candidatos["codproddecl"], candidatos["desc_xml"])]
+        ]
+    if candidatos.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
+    descr_alvo = escolhido["DESCR_ALVO"]
+    candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["descrição_decl"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    candidatos = candidatos.sort_values(
+        ["SIMILARIDADE_DESCRICAO", "qtde_ocorrencias"], ascending=[False, False]
+    )[_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO].reset_index(drop=True)
+    return candidatos, escolhido
+
+
+def cruzar_produto_escolhido_estoque_criterio4_detalhado() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 4 (Estoque) — tabela DETALHADA, mesma lógica de
+    cruzar_produto_escolhido_estoque_criterio4() (pesquisa livre), mas
+    contra estagio8_estoque_detalhado. Mesmas regras de vazio/None."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), None
+    detalhado, _ = consultar_estagio8_estoque_detalhado(limite=None)
+    if detalhado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
+    detalhado = detalhado.copy()
+    detalhado["desc_xml"] = detalhado["descrição_decl"]
+    candidatos = detalhado.copy()
     chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "estoque")
     if chaves_bloqueadas:
         candidatos = candidatos[

@@ -3394,6 +3394,10 @@ def _obter_criterios_cruzamento_entradas() -> dict:
             loader.cruzar_produto_escolhido_entradas_criterio3,
             loader.cruzar_produto_escolhido_entradas_criterio3_detalhado,
         ),
+        loader.CRITERIO_BUSCA4_PESQUISA_LIVRE: (
+            loader.cruzar_produto_escolhido_entradas_criterio4,
+            loader.cruzar_produto_escolhido_entradas_criterio4_detalhado,
+        ),
     }
 
 
@@ -3822,6 +3826,15 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
             "sem exigir nenhuma relação de código. Ordenadas por similaridade de descrição (overlap "
             "de tokens) entre o produto do XML e a descrição do alvo — aqui informativa, não filtra."
         )
+    elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+        st.caption(
+            "Pesquisa livre em `estagio8_agrupado` (Entradas, Estágio 8) — SEM filtro de código "
+            "(nem igual, nem divergente) e SEM piso de similaridade. Útil quando o candidato certo "
+            "tem pouca ou nenhuma semelhança de texto com o alvo (nomenclatura muito diferente), "
+            "caso em que o Critério 3 nunca o encontraria. Digite um termo na busca abaixo pra ver "
+            "candidatos — sem termo, a tabela fica oculta (evita carregar milhares de grupos de "
+            "uma vez)."
+        )
     else:
         st.caption(
             f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com código DIVERGENTE (diferente) "
@@ -3845,6 +3858,11 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
                 f"⚠️ Nenhum item declarado com o mesmo nome de **{escolhido['DESCR_ALVO']}** encontrado "
                 "em `estagio8_agrupado`."
             )
+        elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+            st.warning(
+                "⚠️ `estagio8_agrupado` está vazio, ou todos os grupos já pertencem a outro alvo — "
+                "nada disponível pra pesquisa livre."
+            )
         else:
             st.warning(
                 f"⚠️ Nenhum candidato de código divergente com similaridade ≥ "
@@ -3852,9 +3870,15 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
                 "em `estagio8_agrupado`."
             )
         return
-    st.success(
-        f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
-    )
+    if criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+        st.info(
+            f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
+            "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
+        )
+    else:
+        st.success(
+            f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
+        )
 
     # Checkbox "Salvar" (2026-07-23, pedido do usuário: "CRIE CAIXA PARA
     # GRAVAR O PRODUTO QUE FARÁ PARTE DA RUBRICA DO PRODUTO ALVO. GERE 1
@@ -3929,6 +3953,18 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         editor_base = editor_base[mask_busca]
         editor_exibicao = editor_exibicao.loc[editor_base.index]
         st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
+    elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+        # Pesquisa livre (Solicitação Técnica 2026-07-29) não tem filtro
+        # de código nem piso de similaridade — sem um termo de busca, a
+        # tabela renderizaria a base inteira de uma vez (5.091 grupos em
+        # Entradas na geraldo), pesado pro st.data_editor. EXIGE busca
+        # antes de mostrar qualquer linha (reaproveita o MESMO campo de
+        # busca acima, em vez de um segundo widget).
+        st.info(
+            "🔎 Digite um termo de busca acima pra ver candidatos — a pesquisa livre não tem "
+            "filtro de código nem de similaridade, então a tabela só aparece depois de buscar."
+        )
+        return
 
     colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
     with st.container(key="cruzamento_entradas_tabela"):
@@ -4097,6 +4133,10 @@ def _obter_criterios_cruzamento_saidas() -> dict:
             loader.cruzar_produto_escolhido_saidas_criterio3,
             loader.cruzar_produto_escolhido_saidas_criterio3_detalhado,
         ),
+        loader.CRITERIO_BUSCA4_PESQUISA_LIVRE: (
+            loader.cruzar_produto_escolhido_saidas_criterio4,
+            loader.cruzar_produto_escolhido_saidas_criterio4_detalhado,
+        ),
     }
 
 
@@ -4139,6 +4179,14 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
             "(zero à esquerda em código numérico não conta como diferença) — ordenadas por "
             "similaridade de descrição (overlap de tokens) entre o produto vendido e a descrição do alvo."
         )
+    elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+        st.caption(
+            "Pesquisa livre em `estagio8_saidas_agrupado` (Saídas, Estágio 8) — SEM filtro de "
+            "código e SEM piso de similaridade. Útil quando o candidato certo tem pouca ou "
+            "nenhuma semelhança de texto com o alvo, caso em que o Critério 3 nunca o "
+            "encontraria. Digite um termo na busca abaixo pra ver candidatos — sem termo, a "
+            "tabela fica oculta (evita carregar milhares de grupos de uma vez)."
+        )
     else:
         st.caption(
             f"Combinações em `estagio8_saidas_agrupado` (Saídas, Estágio 8) com código DIVERGENTE (diferente) "
@@ -4157,6 +4205,11 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
                 "em `estagio8_saidas_agrupado`, mesmo após normalizar zero à esquerda — o produto "
                 "provavelmente não aparece nas saídas com esse código."
             )
+        elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+            st.warning(
+                "⚠️ `estagio8_saidas_agrupado` está vazio, ou todos os grupos já pertencem a "
+                "outro alvo — nada disponível pra pesquisa livre."
+            )
         else:
             st.warning(
                 f"⚠️ Nenhum candidato de código divergente com similaridade ≥ "
@@ -4164,9 +4217,15 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
                 "em `estagio8_saidas_agrupado`."
             )
         return
-    st.success(
-        f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
-    )
+    if criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+        st.info(
+            f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
+            "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
+        )
+    else:
+        st.success(
+            f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
+        )
 
     ja_confirmadas, _ = loader.consultar_cruzamento_confirmado(descr_alvo=escolhido["DESCR_ALVO"], limite=None)
     ja_confirmadas_saidas = (
@@ -4200,6 +4259,14 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
         editor_base = editor_base[mask_busca]
         editor_exibicao = editor_exibicao.loc[editor_base.index]
         st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
+    elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+        # Pesquisa livre — ver comentário equivalente em
+        # _render_cruzamento_entradas().
+        st.info(
+            "🔎 Digite um termo de busca acima pra ver candidatos — a pesquisa livre não tem "
+            "filtro de código nem de similaridade, então a tabela só aparece depois de buscar."
+        )
+        return
 
     colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
     with st.container(key="cruzamento_saidas_tabela"):
@@ -4324,6 +4391,10 @@ def _obter_criterios_cruzamento_estoque() -> dict:
             loader.cruzar_produto_escolhido_estoque_criterio2,
             loader.cruzar_produto_escolhido_estoque_criterio2_detalhado,
         ),
+        loader.CRITERIO_BUSCA4_PESQUISA_LIVRE: (
+            loader.cruzar_produto_escolhido_estoque_criterio4,
+            loader.cruzar_produto_escolhido_estoque_criterio4_detalhado,
+        ),
     }
 
 
@@ -4396,6 +4467,14 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
             "(zero à esquerda em código numérico não conta como diferença) — ordenadas por "
             "similaridade de descrição (overlap de tokens) entre a descrição declarada e a do alvo."
         )
+    elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+        st.caption(
+            "Pesquisa livre em `estagio8_estoque_agrupado` (Estoque, Estágio 8.2) — SEM filtro de "
+            "código e SEM piso de similaridade. Útil quando o candidato certo tem pouca ou "
+            "nenhuma semelhança de texto com o alvo. Digite um termo na busca abaixo pra ver "
+            "candidatos — sem termo, a tabela fica oculta (evita carregar milhares de grupos de "
+            "uma vez)."
+        )
     else:
         st.caption(
             f"Combinações em `estagio8_estoque_agrupado` (Estoque, Estágio 8.2) cujo nome de declaração "
@@ -4411,15 +4490,26 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
                 f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
                 "em `estagio8_estoque_agrupado`, mesmo após normalizar zero à esquerda."
             )
+        elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+            st.warning(
+                "⚠️ `estagio8_estoque_agrupado` está vazio, ou todos os grupos já pertencem a "
+                "outro alvo — nada disponível pra pesquisa livre."
+            )
         else:
             st.warning(
                 f"⚠️ Nenhum item declarado com o mesmo nome de **{escolhido['DESCR_ALVO']}** encontrado "
                 "em `estagio8_estoque_agrupado`."
             )
         return
-    st.success(
-        f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
-    )
+    if criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+        st.info(
+            f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
+            "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
+        )
+    else:
+        st.success(
+            f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
+        )
 
     ja_confirmadas, _ = loader.consultar_cruzamento_confirmado(descr_alvo=escolhido["DESCR_ALVO"], limite=None)
     ja_confirmadas_estoque = (
@@ -4459,6 +4549,14 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
         editor_base = editor_base[mask_busca]
         editor_exibicao = editor_exibicao.loc[editor_base.index]
         st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
+    elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+        # Pesquisa livre — ver comentário equivalente em
+        # _render_cruzamento_entradas().
+        st.info(
+            "🔎 Digite um termo de busca acima pra ver candidatos — a pesquisa livre não tem "
+            "filtro de código nem de similaridade, então a tabela só aparece depois de buscar."
+        )
+        return
 
     colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
     with st.container(key="cruzamento_estoque_tabela"):
