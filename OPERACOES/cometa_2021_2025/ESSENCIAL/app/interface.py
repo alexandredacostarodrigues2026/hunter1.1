@@ -3805,6 +3805,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         key="select_criterio_busca_entradas",
     )
     fn_agrupado, fn_detalhado = criterios[criterio_busca]
+    sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
 
     if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
         st.caption(
@@ -3908,15 +3909,28 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
         for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
     ])
+
+    # Busca por descrição do XML (pedido do usuário: campo no topo da
+    # tabela pra facilitar a comparação visual com o alvo) — filtro
+    # client-side (substring, case-insensitive) sobre `desc_xml`, não
+    # refaz a busca de candidatos nem muda a contagem de "combinação(ões)
+    # encontrada(s)" acima (essa reflete o total do critério, não o
+    # filtrado). Aplicado em editor_base E editor_exibicao com a MESMA
+    # máscara pra manter os índices alinhados — o botão "Salvar na
+    # Rubrica" usa editor_base.index como referência pro que veio do
+    # st.data_editor.
+    termo_busca_xml = st.text_input(
+        "🔎 Buscar por descrição do XML",
+        key=f"busca_xml_entradas_{sufixo_criterio}",
+        placeholder="Filtrar as combinações abaixo pela descrição do XML...",
+    )
+    if termo_busca_xml:
+        mask_busca = editor_base["desc_xml"].str.contains(termo_busca_xml, case=False, na=False, regex=False)
+        editor_base = editor_base[mask_busca]
+        editor_exibicao = editor_exibicao.loc[editor_base.index]
+        st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
+
     colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
-    # Key do editor/botão varia por critério (2026-07-23, a partir do
-    # Critério 2) — evita estado de widget "vazado" do Streamlit quando
-    # o auditor troca de critério no selectbox (a tabela muda de linhas/
-    # conteúdo, mas uma key fixa poderia reaproveitar edição em memória
-    # da tabela anterior). Extrai "1"/"2"/"3" do próprio texto do
-    # critério (`"Critério de BuscaN: ..."`) em vez de comparação
-    # explícita por critério — não precisa crescer a cada critério novo.
-    sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
     with st.container(key="cruzamento_entradas_tabela"):
         st.markdown(
             "<style>.st-key-cruzamento_entradas_tabela [data-testid='stDataFrame'] "
@@ -4116,6 +4130,7 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
         key="select_criterio_busca_saidas",
     )
     fn_agrupado, fn_detalhado = criterios[criterio_busca]
+    sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
 
     if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
         st.caption(
@@ -4172,8 +4187,21 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
         "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
         for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
     ])
+
+    # Busca por descrição do XML — ver comentário equivalente em
+    # _render_cruzamento_entradas().
+    termo_busca_xml = st.text_input(
+        "🔎 Buscar por descrição do XML",
+        key=f"busca_xml_saidas_{sufixo_criterio}",
+        placeholder="Filtrar as combinações abaixo pela descrição do XML...",
+    )
+    if termo_busca_xml:
+        mask_busca = editor_base["desc_xml"].str.contains(termo_busca_xml, case=False, na=False, regex=False)
+        editor_base = editor_base[mask_busca]
+        editor_exibicao = editor_exibicao.loc[editor_base.index]
+        st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
+
     colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
-    sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
     with st.container(key="cruzamento_saidas_tabela"):
         st.markdown(
             "<style>.st-key-cruzamento_saidas_tabela [data-testid='stDataFrame'] "
@@ -4359,6 +4387,7 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
         key="select_criterio_busca_estoque",
     )
     fn_agrupado, fn_detalhado = criterios[criterio_busca]
+    sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
 
     if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
         st.caption(
@@ -4413,8 +4442,25 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
         "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
         for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
     ])
+
+    # Busca por descrição do XML — ver comentário equivalente em
+    # _render_cruzamento_entradas(). No Estoque, "desc_xml" é um alias
+    # interno de "descrição_decl" (não existe XML separado no Bloco H,
+    # ver cruzar_produto_escolhido_estoque() em loader.py) — o filtro
+    # funciona igual, mesmo com a coluna "Descricao XML" oculta na
+    # exibição.
+    termo_busca_xml = st.text_input(
+        "🔎 Buscar por descrição do XML",
+        key=f"busca_xml_estoque_{sufixo_criterio}",
+        placeholder="Filtrar as combinações abaixo pela descrição do XML...",
+    )
+    if termo_busca_xml:
+        mask_busca = editor_base["desc_xml"].str.contains(termo_busca_xml, case=False, na=False, regex=False)
+        editor_base = editor_base[mask_busca]
+        editor_exibicao = editor_exibicao.loc[editor_base.index]
+        st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
+
     colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
-    sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
     with st.container(key="cruzamento_estoque_tabela"):
         st.markdown(
             "<style>.st-key-cruzamento_estoque_tabela [data-testid='stDataFrame'] "
