@@ -5766,8 +5766,24 @@ def escolher_produto_cruzamento(descr_alvo: str, cod_item: str) -> dict:
 
 def consultar_produto_cruzamento_escolhido() -> "dict | None":
     """Lê o produto atualmente escolhido pra cruzamento (Estágio 10), se
-    houver. Devolve {'DESCR_ALVO': str, 'COD_ITEM': str, 'TS': str} ou
-    None se nenhum produto foi escolhido ainda ou a tabela não existir."""
+    houver. Devolve {'DESCR_ALVO': str, 'COD_ITEM': str, 'TS': str,
+    'IS_ST': bool} ou None se nenhum produto foi escolhido ainda ou a
+    tabela não existir.
+
+    IS_ST (2026-07-29, Solicitação Técnica: "ESSA INFORMAÇÃO 'ST'
+    DEVERÁ ACOMPANHAR O PRODUTO ALVO NO DECORRER DE TODOS OS
+    PROCEDIMENTOS DA APLICAÇÃO. SEMPRE QUE REQUISITADO") — anexado AQUI
+    (não só na tabela de origem, produto_alvo_fiscalizacao) porque
+    `escolhido` é o dict que atravessa TODOS os procedimentos do
+    cruzamento (Entradas/Saídas/Estoque, Rubrica, Sumário de Unidades,
+    Itens Individuais) — enriquecer nesta única função central propaga
+    o campo pra tudo que já recebe `escolhido` como parâmetro, sem
+    precisar de lookup redundante em cada tela. Lookup AO VIVO (não
+    congelado no momento da escolha) — reflete a decisão mais recente
+    do Estágio 10 (botão "Salvar ST"), mesmo que tenha mudado DEPOIS do
+    produto ter sido escolhido pra cruzamento. `False` se o produto não
+    for encontrado em produto_alvo_fiscalizacao (não deveria acontecer
+    em uso normal, mas evita erro)."""
     if not _BANCO_PATH.exists():
         return None
     try:
@@ -5776,7 +5792,20 @@ def consultar_produto_cruzamento_escolhido() -> "dict | None":
             if "produto_cruzamento_escolhido" not in tabelas:
                 return None
             df = con.execute("SELECT * FROM produto_cruzamento_escolhido LIMIT 1").df()
-        return None if df.empty else df.iloc[0].to_dict()
+            if df.empty:
+                return None
+            escolhido = df.iloc[0].to_dict()
+        # Lookup via consultar_grupo_produto_alvo_fiscalizacao() (não SQL
+        # direto) — reaproveita a migração de schema já tratada lá
+        # (tabelas persistidas ANTES de IS_ST existir não têm a coluna
+        # de verdade; SQL direto quebraria com "coluna não encontrada").
+        grupo, _ = consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=False)
+        escolhido["IS_ST"] = False
+        if not grupo.empty:
+            linha = grupo[grupo["DESCR_ALVO"] == escolhido["DESCR_ALVO"]]
+            if not linha.empty and pd.notna(linha.iloc[0]["IS_ST"]):
+                escolhido["IS_ST"] = bool(linha.iloc[0]["IS_ST"])
+        return escolhido
     except Exception:
         logger.exception("Erro ao consultar produto_cruzamento_escolhido em %s", _BANCO_PATH)
         return None

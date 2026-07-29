@@ -994,6 +994,18 @@ def _formatar_moeda_br(v: float) -> str:
     return f"{v:,.2f}".translate(_TRANS_MILHAR_BR)
 
 
+def _badge_st(escolhido: dict) -> str:
+    """Rótulo curto "ST" (Substituição Tributária) pra anexar onde o
+    produto alvo é identificado no Estágio 10 — Solicitação Técnica
+    (2026-07-29): "ESSA INFORMAÇÃO 'ST' DEVERÁ ACOMPANHAR O PRODUTO
+    ALVO NO DECORRER DE TODOS OS PROCEDIMENTOS DA APLICAÇÃO. SEMPRE QUE
+    REQUISITADO" — lê `escolhido["IS_ST"]` (já enriquecido ao vivo por
+    loader.consultar_produto_cruzamento_escolhido(), a partir de
+    produto_alvo_fiscalizacao). String vazia se não for ST, pra usar
+    direto em f-string/concatenação sem `if` repetido em cada tela."""
+    return " 🏷️ **ST**" if escolhido.get("IS_ST") else ""
+
+
 def _formatar_pct_br(v: float) -> str:
     """% Diverg do painel 7.2: acima de 1000% vira '>1000%' — evita número
     gigante na tela quando o denominador é ~0 (ver gerar_cruzamento_
@@ -2561,7 +2573,7 @@ _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO = [
     "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod",
     "unid_prod_utiliz", "vu_utilizado", "quant_utiliz",
     "fm_utilizado", "TRATAMENTO",
-    "CHV_NFE", "CRITERIO", "TS", "idunico",
+    "CHV_NFE", "CRITERIO", "TS", "idunico", "IS_ST",
 ]
 
 
@@ -3810,6 +3822,8 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     )
     fn_agrupado, fn_detalhado = criterios[criterio_busca]
     sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
+    if escolhido.get("IS_ST"):
+        st.caption(f"🏷️ **{escolhido['DESCR_ALVO']}** é **ST** (Substituição Tributária).")
 
     if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
         st.caption(
@@ -4089,6 +4103,11 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     detalhado, sumario_unidades, idunicos_tratados = _aplicar_tratamento_fm_detalhado(
         detalhado, origem="entradas",
     )
+    # IS_ST (2026-07-29) acompanha o produto alvo até a tabela de Itens
+    # Individuais — mesmo valor pra todas as linhas (propriedade do
+    # PRODUTO, não do item), ver _badge_st()/consultar_produto_
+    # cruzamento_escolhido().
+    detalhado["IS_ST"] = escolhido.get("IS_ST", False)
     # Formatação BR (milhar '.', decimal ',') pras colunas de valor/quantidade
     # — pedido explícito da Solicitação Técnica ("separadores de milhar e 2
     # casas decimais"), mesmo padrão já usado no painel 7.2. Inclui os
@@ -4173,6 +4192,8 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     )
     fn_agrupado, fn_detalhado = criterios[criterio_busca]
     sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
+    if escolhido.get("IS_ST"):
+        st.caption(f"🏷️ **{escolhido['DESCR_ALVO']}** é **ST** (Substituição Tributária).")
 
     if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
         st.caption(
@@ -4361,6 +4382,8 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     detalhado, sumario_unidades, idunicos_tratados = _aplicar_tratamento_fm_detalhado(
         detalhado, origem="saidas",
     )
+    # IS_ST — ver comentário equivalente em _render_cruzamento_entradas().
+    detalhado["IS_ST"] = escolhido.get("IS_ST", False)
     _render_kpis_itens_individuais(detalhado)
     for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "vu_utilizado", "quant_utiliz", "fm_utilizado"):
         if _col in detalhado.columns:
@@ -4420,7 +4443,7 @@ _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE = [
     "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod",
     "unid_prod_utiliz", "vu_utilizado", "quant_utiliz",
     "fm_utilizado", "TRATAMENTO",
-    "ano_ef", "ano_ei", "dt_decl", "CRITERIO", "TS", "idunico",
+    "ano_ef", "ano_ei", "dt_decl", "CRITERIO", "TS", "idunico", "IS_ST",
 ]
 
 
@@ -4463,6 +4486,8 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     )
     fn_agrupado, fn_detalhado = criterios[criterio_busca]
     sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
+    if escolhido.get("IS_ST"):
+        st.caption(f"🏷️ **{escolhido['DESCR_ALVO']}** é **ST** (Substituição Tributária).")
 
     if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
         st.caption(
@@ -4654,6 +4679,8 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     detalhado, sumario_unidades, idunicos_tratados = _aplicar_tratamento_fm_detalhado(
         detalhado, origem="estoque",
     )
+    # IS_ST — ver comentário equivalente em _render_cruzamento_entradas().
+    detalhado["IS_ST"] = escolhido.get("IS_ST", False)
     _render_kpis_itens_individuais(detalhado)
     for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "vu_utilizado", "quant_utiliz", "fm_utilizado"):
         if _col in detalhado.columns:
@@ -4730,6 +4757,7 @@ def render_produtos_alvo_salvos() -> None:
         st.success(
             f"🎯 Produto atualmente escolhido pra cruzamento: **{escolhido_atual['DESCR_ALVO']}** "
             f"(Cód. {escolhido_atual['COD_ITEM']}) — escolhido em {escolhido_atual['TS']}."
+            + _badge_st(escolhido_atual)
         )
 
     st.markdown(f"**{total:,} produto(s)** no grupo salvo.".replace(",", "."))
