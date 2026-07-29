@@ -3828,12 +3828,14 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         )
     elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
         st.caption(
-            "Pesquisa livre em `estagio8_agrupado` (Entradas, Estágio 8) — SEM filtro de código "
+            f"Pesquisa livre em `estagio8_agrupado` (Entradas, Estágio 8) pra comparar com "
+            f"**{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — SEM filtro de código "
             "(nem igual, nem divergente) e SEM piso de similaridade. Útil quando o candidato certo "
             "tem pouca ou nenhuma semelhança de texto com o alvo (nomenclatura muito diferente), "
-            "caso em que o Critério 3 nunca o encontraria. Digite um termo na busca abaixo pra ver "
-            "candidatos — sem termo, a tabela fica oculta (evita carregar milhares de grupos de "
-            "uma vez)."
+            "caso em que o Critério 3 nunca o encontraria. Digite um termo na busca abaixo (ex.: "
+            "parte do nome do alvo) pra ver candidatos, incluindo o próprio produto alvo se ele "
+            "aparecer em `estagio8_agrupado` — sem termo, a tabela fica oculta (evita carregar "
+            "milhares de grupos de uma vez)."
         )
     else:
         st.caption(
@@ -4181,11 +4183,13 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
         )
     elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
         st.caption(
-            "Pesquisa livre em `estagio8_saidas_agrupado` (Saídas, Estágio 8) — SEM filtro de "
-            "código e SEM piso de similaridade. Útil quando o candidato certo tem pouca ou "
-            "nenhuma semelhança de texto com o alvo, caso em que o Critério 3 nunca o "
-            "encontraria. Digite um termo na busca abaixo pra ver candidatos — sem termo, a "
-            "tabela fica oculta (evita carregar milhares de grupos de uma vez)."
+            f"Pesquisa livre em `estagio8_saidas_agrupado` (Saídas, Estágio 8) pra comparar com "
+            f"**{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — SEM filtro de código e SEM "
+            "piso de similaridade. Útil quando o candidato certo tem pouca ou nenhuma semelhança "
+            "de texto com o alvo, caso em que o Critério 3 nunca o encontraria. Digite um termo na "
+            "busca abaixo (ex.: parte do nome do alvo) pra ver candidatos, incluindo o próprio "
+            "produto alvo se ele aparecer em `estagio8_saidas_agrupado` — sem termo, a tabela fica "
+            "oculta (evita carregar milhares de grupos de uma vez)."
         )
     else:
         st.caption(
@@ -4469,11 +4473,13 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
         )
     elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
         st.caption(
-            "Pesquisa livre em `estagio8_estoque_agrupado` (Estoque, Estágio 8.2) — SEM filtro de "
-            "código e SEM piso de similaridade. Útil quando o candidato certo tem pouca ou "
-            "nenhuma semelhança de texto com o alvo. Digite um termo na busca abaixo pra ver "
-            "candidatos — sem termo, a tabela fica oculta (evita carregar milhares de grupos de "
-            "uma vez)."
+            f"Pesquisa livre em `estagio8_estoque_agrupado` (Estoque, Estágio 8.2) pra comparar "
+            f"com **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — SEM filtro de código e "
+            "SEM piso de similaridade. Útil quando o candidato certo tem pouca ou nenhuma "
+            "semelhança de texto com o alvo. Digite um termo na busca abaixo (ex.: parte do nome "
+            "do alvo) pra ver candidatos, incluindo o próprio produto alvo se ele aparecer em "
+            "`estagio8_estoque_agrupado` — sem termo, a tabela fica oculta (evita carregar "
+            "milhares de grupos de uma vez)."
         )
     else:
         st.caption(
