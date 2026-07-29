@@ -178,3 +178,6 @@ TRATAMENTO;Tratamento
 
 # Novos campos - 2026-07-26 (Botao 9 - Estoque, deteccao de valor destoante)
 valor_destoante;Valor Destoante
+
+# Novos campos - 2026-07-29 (Estagio 10 - Produtos Alvos Salvos, campo ST)
+IS_ST;E ST (Substituicao Tributaria)

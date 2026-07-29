@@ -4675,8 +4675,11 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     )
 
 
-_COLUNAS_PRODUTOS_ALVO_SALVOS = ["DESCR_ALVO", "COD_ITEM"]
+_COLUNAS_PRODUTOS_ALVO_SALVOS = ["DESCR_ALVO", "COD_ITEM", "IS_ST"]
 _COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS = "🎯 Escolher p/ Cruzamento"
+# Rótulo de exibição de IS_ST (ver DICIONARIO DE CAMPOS.txt) — usado pra
+# achar a coluna DEPOIS do rename via loader.carregar_dicionario_campos().
+_COLUNA_IS_ST_PRODUTOS_ALVO_SALVOS = "E ST (Substituicao Tributaria)"
 
 
 def render_produtos_alvo_salvos() -> None:
@@ -4737,7 +4740,8 @@ def render_produtos_alvo_salvos() -> None:
         editor_base["DESCR_ALVO"].eq(escolhido_atual["DESCR_ALVO"]) if escolhido_atual else False,
     )
     editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
-    colunas_travadas = [c for c in editor_exibicao.columns if c != _COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS]
+    colunas_editaveis = (_COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS, _COLUNA_IS_ST_PRODUTOS_ALVO_SALVOS)
+    colunas_travadas = [c for c in editor_exibicao.columns if c not in colunas_editaveis]
     with st.container(key="produtos_alvo_salvos_tabela"):
         st.markdown(
             "<style>.st-key-produtos_alvo_salvos_tabela [data-testid='stDataFrame'] "
@@ -4751,6 +4755,26 @@ def render_produtos_alvo_salvos() -> None:
             disabled=colunas_travadas,
             key="editor_produtos_alvo_salvos",
         )
+
+    # "É ST" (Substituição Tributária, 2026-07-29, pedido do usuário:
+    # "crie uma campo para selecionar e o produto é ST") — botão PRÓPRIO,
+    # independente de "Confirmar produto pra cruzamento" (que só afeta 1
+    # produto por vez): salva o estado de TODOS os produtos exibidos de
+    # uma vez, via loader.salvar_st_produto_alvo() (UPDATE parcial só da
+    # coluna IS_ST, preserva o resto do grupo intocado). Campo puramente
+    # informativo por enquanto — confirmado com o usuário (AskUserQuestion)
+    # que não deve influenciar nenhum cálculo ainda.
+    if st.button("💾 Salvar ST", key="btn_salvar_st_produtos_alvo"):
+        atualizacoes = editor_base[["DESCR_ALVO"]].copy()
+        atualizacoes["IS_ST"] = (
+            editado[_COLUNA_IS_ST_PRODUTOS_ALVO_SALVOS].reindex(editor_base.index).fillna(False)
+        )
+        resultado_st = loader.salvar_st_produto_alvo(atualizacoes)
+        if "erro" in resultado_st:
+            st.error(f"Erro: {resultado_st['erro']}")
+        else:
+            st.success(f"✅ {resultado_st['total_atualizado']} produto(s) atualizado(s).")
+            st.rerun()
 
     if st.button("🎯 Confirmar produto pra cruzamento", key="btn_confirmar_produto_cruzamento"):
         marcados = editado[_COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS].reindex(editor_base.index).fillna(False)

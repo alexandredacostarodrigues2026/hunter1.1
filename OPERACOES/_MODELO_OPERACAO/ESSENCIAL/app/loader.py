@@ -5202,7 +5202,7 @@ def consultar_rn1_simulada_30(limite: "int | None" = 200) -> "tuple[pd.DataFrame
 # nomenclatura por Descrição Relevante, propósito e schema diferentes).
 _COLUNAS_PRODUTO_ALVO_FISCALIZACAO = [
     "DESCR_ALVO", "COD_ITEM", "TS", "STATUS", "DIVERGENCIA", "INFRACAO",
-    "PCT_DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO", "OBSERVACAO",
+    "PCT_DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO", "OBSERVACAO", "IS_ST",
 ]
 STATUS_PRODUTO_ALVO_ATIVO = "ativo"
 STATUS_PRODUTO_ALVO_CANCELADO = "cancelado"
@@ -5231,6 +5231,15 @@ def salvar_grupo_produto_alvo_fiscalizacao(selecoes: pd.DataFrame) -> dict:
         )
         novo["TS"] = datetime.now().isoformat(timespec="seconds")
         novo = novo.drop(columns=["SELECIONADO"])
+        # IS_ST não é editável nesta tela (7.3.2) — preserva o valor já
+        # salvo pra cada produto (Estágio 10 tem tela própria,
+        # salvar_st_produto_alvo()); produto novo (nunca salvo antes)
+        # começa False.
+        if not existente.empty and "IS_ST" in existente.columns:
+            is_st_existente = existente.set_index("DESCR_ALVO")["IS_ST"]
+            novo["IS_ST"] = novo["DESCR_ALVO"].map(is_st_existente).fillna(False)
+        else:
+            novo["IS_ST"] = False
 
         if not existente.empty:
             preservar = existente[~existente["DESCR_ALVO"].isin(novo["DESCR_ALVO"])]
@@ -5269,7 +5278,10 @@ def consultar_grupo_produto_alvo_fiscalizacao(
     """Lê produto_alvo_fiscalizacao já persistida (sem reprocessar).
     apenas_ativos=True (padrão) só devolve STATUS='ativo' — histórico de
     cancelados fica de fora da leitura normal, mas continua na tabela.
-    limite=None devolve tudo."""
+    limite=None devolve tudo. IS_ST (2026-07-29) pode estar ausente em
+    tabelas persistidas ANTES desse campo existir — completada aqui com
+    False (migração de schema em leitura, sem precisar reprocessar o
+    banco; a próxima gravação, de qualquer tela, já persiste a coluna)."""
     colunas = _COLUNAS_PRODUTO_ALVO_FISCALIZACAO
     if not _BANCO_PATH.exists():
         return pd.DataFrame(columns=colunas), 0
@@ -5284,10 +5296,60 @@ def consultar_grupo_produto_alvo_fiscalizacao(
             if limite is not None:
                 query += f" LIMIT {limite}"
             df = con.execute(query).df()
+        if "IS_ST" not in df.columns:
+            df["IS_ST"] = False
         return df, total
     except Exception:
         logger.exception("Erro ao consultar produto_alvo_fiscalizacao em %s", _BANCO_PATH)
         return pd.DataFrame(columns=colunas), 0
+
+
+def salvar_st_produto_alvo(atualizacoes: pd.DataFrame) -> dict:
+    """Persiste o campo IS_ST (Substituição Tributária, Estágio 10 —
+    "PRODUTOS ALVOS SALVOS") pra um ou mais produtos do grupo já salvo
+    em produto_alvo_fiscalizacao. Solicitação Técnica (2026-07-29):
+    "crie uma campo para selecionar e o produto é ST" — campo puramente
+    INFORMATIVO por enquanto (confirmado com o usuário via
+    AskUserQuestion: não influencia nenhum cálculo ainda), com tela e
+    botão "Salvar" PRÓPRIOS, independentes do "Confirmar produto pra
+    cruzamento" (que só afeta 1 produto por vez) — aqui o auditor marca
+    quantos produtos quiser de uma vez, mesmo padrão de UPDATE parcial
+    por chave já usado noutras telas.
+
+    `atualizacoes` tem uma linha por produto EXIBIDO na tela (todos os
+    ativos do grupo, marcados ou não) com colunas DESCR_ALVO/IS_ST —
+    faz UPDATE só da coluna IS_ST por DESCR_ALVO, preservando todas as
+    outras colunas (DIVERGENCIA/STATUS/OBSERVACAO/etc.) intocadas;
+    produtos fora da tela (ex. já cancelados) ficam como estavam.
+    Devolve {'total_atualizado': int} ou {'erro': str} se
+    produto_alvo_fiscalizacao ainda não existir ou falhar."""
+    resultado = {}
+    try:
+        existente, _ = consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=False)
+        if existente.empty:
+            resultado["erro"] = "Nenhum Grupo de Produto Alvo salvo ainda (Estágio 7.3.2)."
+            return resultado
+        novo_is_st = atualizacoes.set_index("DESCR_ALVO")["IS_ST"]
+        mascara_atualizada = existente["DESCR_ALVO"].isin(novo_is_st.index)
+        existente.loc[mascara_atualizada, "IS_ST"] = (
+            existente.loc[mascara_atualizada, "DESCR_ALVO"].map(novo_is_st)
+        )
+        combinado = existente[_COLUNAS_PRODUTO_ALVO_FISCALIZACAO].reset_index(drop=True)
+
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            con.register("_df_produto_alvo_fiscalizacao", combinado)
+            con.execute(
+                "CREATE OR REPLACE TABLE produto_alvo_fiscalizacao AS "
+                "SELECT * FROM _df_produto_alvo_fiscalizacao"
+            )
+            con.unregister("_df_produto_alvo_fiscalizacao")
+
+        resultado["total_atualizado"] = int(mascara_atualizada.sum())
+    except Exception as exc:
+        logger.exception("Erro ao salvar IS_ST em produto_alvo_fiscalizacao: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
 
 
 # ── Sumário de Unidades para Fator Multiplicador (Estágio 10, Entradas) ─────
