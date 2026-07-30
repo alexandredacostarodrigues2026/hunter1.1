@@ -4826,43 +4826,61 @@ def render_produtos_alvo_salvos() -> None:
         st.info("Escolha um produto acima pra ver o cruzamento com o Estágio 8.")
     else:
         # Execução Automática da Rubrica (Estágio 10.1, Solicitação Técnica
-        # 2026-07-30) — botão posicionado à DIREITA da linha de abas (não
-        # dá pra colocar um widget dentro do próprio st.tabs(), então o
-        # layout usa 2 colunas: uma larga com as abas, outra estreita com
-        # o botão, lado a lado na mesma linha visual). Aplica em sequência
-        # os critérios "óbvios" (código igual/nome igual, sem revisão
-        # manual) + Critério 3 com piso de confiança de 60% (mais rígido
-        # que o piso manual de 20%, já que aqui ninguém revisa linha a
-        # linha antes de confirmar) — ver loader.executar_confirmacao_
-        # automatica_rubrica().
-        col_abas, col_automatico = st.columns([4, 1.4])
-        with col_abas:
+        # 2026-07-30) — botão posicionado à DIREITA da linha de abas.
+        # PRIMEIRA versão usava st.columns([4, 1.4]) com as abas dentro da
+        # coluna larga — funcionava visualmente, mas encolhia TODO o
+        # conteúdo de dentro das abas (tabelas de correspondências, Itens
+        # Individuais, Sumário de Unidades) pra 4/5.4 da largura da tela,
+        # já que o container das abas fica travado na largura de onde foi
+        # criado (2026-07-30, achado do usuário: "as tabelas inferiores
+        # estão mais estreitas"). Corrigido com CSS (posicionamento
+        # absoluto) em vez de coluna: as abas continuam sendo criadas em
+        # LARGURA TOTAL (sem nenhuma coluna estreitando), e só o botão
+        # fica flutuando por cima, no canto superior direito do container
+        # — mesmo truque de CSS-por-key já usado noutras telas deste
+        # arquivo (`.st-key-...`), aqui pra LAYOUT em vez de font-size.
+        chave_header = "cruzamento_estagio10_header"
+        chave_botao = "cruzamento_estagio10_botao_automatico"
+        with st.container(key=chave_header):
+            st.markdown(
+                f"""
+                <style>
+                .st-key-{chave_header} {{ position: relative !important; }}
+                .st-key-{chave_botao} {{
+                    position: absolute !important;
+                    top: 0.3rem !important;
+                    right: 0 !important;
+                    z-index: 10 !important;
+                    width: auto !important;
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+            with st.container(key=chave_botao):
+                if st.button(
+                    "⚡ Execução Automática (Crit. 1-3 | Confiança > 60%)",
+                    key="btn_execucao_automatica_rubrica",
+                ):
+                    with st.spinner("Aplicando Critérios 1-3 de Entradas/Saídas/Estoque..."):
+                        resultado_auto = loader.executar_confirmacao_automatica_rubrica(escolhido_atual)
+                    if "erro" in resultado_auto:
+                        st.error(f"Erro: {resultado_auto['erro']}")
+                    else:
+                        for erro in resultado_auto["erros"]:
+                            st.warning(f"⚠️ {erro}")
+                        partes_origem = ", ".join(
+                            f"{n} em {o}" for o, n in resultado_auto["por_origem"].items()
+                        )
+                        detalhe = f" ({partes_origem})" if partes_origem else ""
+                        st.success(
+                            f"✅ +{resultado_auto['total_adicionado']} item(ns) adicionados à Rubrica"
+                            f"{detalhe}."
+                        )
+                        st.rerun()
             aba_cruzamento_entradas, aba_cruzamento_saidas, aba_cruzamento_estoque = st.tabs(
                 ["📥 Entradas", "📤 Saídas", "📦 Estoque"]
             )
-        with col_automatico:
-            st.write("")
-            if st.button(
-                "⚡ Execução Automática (Crit. 1-3 | Confiança > 60%)",
-                key="btn_execucao_automatica_rubrica",
-                use_container_width=True,
-            ):
-                with st.spinner("Aplicando Critérios 1-3 de Entradas/Saídas/Estoque..."):
-                    resultado_auto = loader.executar_confirmacao_automatica_rubrica(escolhido_atual)
-                if "erro" in resultado_auto:
-                    st.error(f"Erro: {resultado_auto['erro']}")
-                else:
-                    for erro in resultado_auto["erros"]:
-                        st.warning(f"⚠️ {erro}")
-                    partes_origem = ", ".join(
-                        f"{n} em {o}" for o, n in resultado_auto["por_origem"].items()
-                    )
-                    detalhe = f" ({partes_origem})" if partes_origem else ""
-                    st.success(
-                        f"✅ +{resultado_auto['total_adicionado']} item(ns) adicionados à Rubrica"
-                        f"{detalhe}."
-                    )
-                    st.rerun()
         with aba_cruzamento_entradas:
             _render_cruzamento_entradas(escolhido_atual)
         with aba_cruzamento_estoque:
