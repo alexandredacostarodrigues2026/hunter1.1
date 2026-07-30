@@ -4859,7 +4859,7 @@ def render_produtos_alvo_salvos() -> None:
             )
             with st.container(key=chave_botao):
                 if st.button(
-                    "⚡ Execução Automática (Crit. 1-3 | Confiança > 60%)",
+                    "⚡ Execução Automática (Crit. 1-3 | Confiança > 60% | + FM)",
                     key="btn_execucao_automatica_rubrica",
                 ):
                     with st.spinner("Aplicando Critérios 1-3 de Entradas/Saídas/Estoque..."):
@@ -4867,15 +4867,33 @@ def render_produtos_alvo_salvos() -> None:
                     if "erro" in resultado_auto:
                         st.error(f"Erro: {resultado_auto['erro']}")
                     else:
+                        # "Próximo passo" (2026-07-30, Solicitação Técnica:
+                        # "aplique nos mesmos moldes fm caso seja > 1") —
+                        # depois de confirmar as correspondências, aplica
+                        # automaticamente o FM sugerido em toda UP com "FM
+                        # Sug" > 1, mesmo botão/clique — ver loader.
+                        # executar_aplicacao_automatica_fm().
+                        with st.spinner("Aplicando FM nas UPs com FM Sugerido > 1..."):
+                            resultado_fm = loader.executar_aplicacao_automatica_fm(escolhido_atual)
                         for erro in resultado_auto["erros"]:
-                            st.warning(f"⚠️ {erro}")
+                            st.warning(f"⚠️ Rubrica — {erro}")
+                        if "erro" in resultado_fm:
+                            st.warning(f"⚠️ FM: {resultado_fm['erro']}")
+                        else:
+                            for erro in resultado_fm["erros"]:
+                                st.warning(f"⚠️ FM — {erro}")
                         partes_origem = ", ".join(
                             f"{n} em {o}" for o, n in resultado_auto["por_origem"].items()
                         )
                         detalhe = f" ({partes_origem})" if partes_origem else ""
+                        total_fm = resultado_fm.get("total_aplicado", 0) if "erro" not in resultado_fm else 0
+                        partes_fm = ", ".join(
+                            f"{n} em {o}" for o, n in resultado_fm.get("por_origem", {}).items()
+                        )
+                        detalhe_fm = f" ({partes_fm})" if partes_fm else ""
                         st.success(
                             f"✅ +{resultado_auto['total_adicionado']} item(ns) adicionados à Rubrica"
-                            f"{detalhe}."
+                            f"{detalhe}; {total_fm} item(ns) com FM aplicado{detalhe_fm}."
                         )
                         st.rerun()
             aba_cruzamento_entradas, aba_cruzamento_saidas, aba_cruzamento_estoque = st.tabs(

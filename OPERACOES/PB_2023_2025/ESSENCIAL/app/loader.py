@@ -7135,6 +7135,100 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict) -> dict:
     }
 
 
+def executar_aplicacao_automatica_fm(escolhido: dict) -> dict:
+    """"Próximo passo" da Execução Automática da Rubrica (Estágio 10.1,
+    Solicitação Técnica 2026-07-30: "aplique nos mesmos moldes fm caso
+    seja > 1") — depois de confirmar as correspondências (`executar_
+    confirmacao_automatica_rubrica()`), aplica automaticamente o Fator
+    Multiplicador em toda UP (Unidade de Produto) do Sumário de
+    Unidades cujo "FM Sug" seja > 1, pras 3 origens (Entradas/Saídas/
+    Estoque) — mesmos "moldes" da automação anterior: reaproveita as
+    MESMAS funções já usadas pela tela manual "📊 Diagnóstico de
+    Unidades" (`gerar_sumario_unidades_alvo_com_destaque()`,
+    `aplicar_tratamento_fm()`) em vez de duplicar o cálculo de FM.
+
+    FM=1 (fator neutro — nenhum padrão de embalagem reconhecido na
+    descrição) NUNCA é aplicado automaticamente: não há "embalagem"
+    nenhuma pra corrigir nesse caso, aplicar seria um no-op que só
+    marcaria TRATAMENTO='T' à toa. FM ausente (NA — grupo ainda não
+    curado no Estágio 9, mesmo raciocínio de "tudo nasce do Estágio 9"
+    de 2026-07-28/29) também é ignorado — sem sugestão confirmada, não
+    há o que aplicar.
+
+    Considera só itens JÁ CONFIRMADOS na Rubrica (`cruzamento_
+    confirmado_detalhado`) — pensada pra rodar LOGO DEPOIS de
+    `executar_confirmacao_automatica_rubrica()` (mesmo botão, mesma
+    sequência: primeiro confirma, depois aplica FM sobre o que acabou
+    de ser confirmado + o que já estava), mas funciona sozinha/
+    idempotente se chamada isolada. `aplicar_tratamento_fm()` já faz
+    upsert por idunico (item já tratado antes é atualizado, não
+    duplicado) — nenhuma lógica de sincronização extra necessária
+    aqui.
+
+    Devolve {'ok': True, 'total_aplicado': int (itens com TRATAMENTO
+    aplicado ou reaplicado nesta rodada — upsert, não é saldo líquido
+    como no motor de confirmação, já que reaplicar o MESMO FM numa UP
+    já tratada não é incorreto, só redundante), 'por_origem': {
+    'entradas': int, 'saidas': int, 'estoque': int}, 'erros': list} —
+    ou {'erro': str} se nenhum produto estiver escolhido."""
+    if not escolhido:
+        return {"erro": "Nenhum produto escolhido pra cruzamento."}
+
+    descr_alvo = escolhido["DESCR_ALVO"]
+    cod_item = escolhido["COD_ITEM"]
+    por_origem: dict = {}
+    erros: list = []
+
+    for origem in ("entradas", "saidas", "estoque"):
+        try:
+            detalhado, _ = consultar_cruzamento_confirmado_detalhado(
+                descr_alvo=descr_alvo, origem=origem, limite=None,
+            )
+            if detalhado.empty:
+                continue
+            idunicos = set(detalhado["idunico"])
+            if origem == "estoque":
+                atributos = consultar_atributos_estoque_estoque_por_idunico(idunicos)
+            else:
+                atributos = consultar_atributos_estoque_por_idunico(idunicos, origem=origem)
+            if atributos.empty:
+                continue
+            detalhado = detalhado.merge(atributos, left_on="idunico", right_on="ID_UNICO", how="left")
+
+            sumario = gerar_sumario_unidades_alvo_com_destaque(detalhado)
+            if sumario.empty:
+                continue
+
+            total_origem = 0
+            for _, linha in sumario.iterrows():
+                fm = linha["fm_sug"]
+                if pd.isna(fm) or float(fm) <= 1.0:
+                    continue
+                idunicos_up = set(linha["_idunicos"])
+                if not idunicos_up:
+                    continue
+                resultado = aplicar_tratamento_fm(
+                    idunicos_up, float(fm), str(linha["nova_unid"]),
+                    descr_alvo=descr_alvo, cod_item=cod_item, origem=origem,
+                )
+                if "erro" in resultado:
+                    erros.append(f"{origem} — UP \"{linha['unid_prod']}\": {resultado['erro']}")
+                    continue
+                total_origem += resultado["total_aplicado"]
+            if total_origem:
+                por_origem[origem] = total_origem
+        except Exception as exc:
+            logger.exception("Erro na aplicação automática de FM (%s): %s", origem, exc)
+            erros.append(f"{origem}: {exc}")
+
+    return {
+        "ok": True,
+        "total_aplicado": sum(por_origem.values()),
+        "por_origem": por_origem,
+        "erros": erros,
+    }
+
+
 _COLUNAS_ATRIBUTOS_ESTOQUE_POR_IDUNICO = [
     "ID_UNICO", "CHV_NFE", "ANO_ELEITO", "ncm4", "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod",
     "fm_sugerido",
