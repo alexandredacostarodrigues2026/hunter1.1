@@ -6997,16 +6997,20 @@ def consultar_cruzamento_confirmado_detalhado(
 # motor que aplica sequencialmente os critérios de busca "óbvios" (mesmo
 # código, nome de declaração igual) sem exigir clique manual em cada aba/
 # critério, poupando o auditor de revisar linha a linha em casos de alta
-# confiança. Critério 3 (código DIVERGENTE, único onde SIMILARIDADE_
-# DESCRICAO é a ÚNICA evidência disponível) usa uma TRAVA DE QUALIDADE
-# própria da automação — piso de 60% em vez dos 20% do modo manual — já
-# que aqui NINGUÉM revisa a linha antes de confirmar; Critério 1/2 (código
-# igual / nome declarado igual) não recebem esse piso adicional porque a
-# evidência que already os filtra (código, nome) é mais forte que a
-# similaridade de texto, que ali é só informativa/ordenação — exigir
-# também >60% de overlap de tokens arriscaria descartar matches
-# LEGÍTIMOS de código/nome idênticos com descrição de XML só um pouco
-# diferente (exatamente o caso que o Critério 1 existe pra cobrir).
+# confiança.
+#
+# TRAVA DE QUALIDADE — piso de similaridade >= 60% aplicado a TODOS os
+# critérios (1, 2 e 3), não só ao 3. Versão original (mesmo dia) só
+# aplicava o piso ao Critério 3, argumentando que código/nome igual já
+# seria evidência forte o suficiente sozinha — CORRIGIDO pelo usuário
+# com dado real: código/nome podem coincidir por REUSO/erro de cadastro
+# entre produtos fisicamente diferentes (achado real, geraldo: código
+# 07891149200504 — CERV SKOL LATA 350ML — batendo Critério 2 [nome
+# declarado igual] com "SKOL BEATS SENSES LT 269ML CX C/8 FRIDGE PACK",
+# 11,1% de similaridade de texto — produto claramente diferente, mesmo
+# código reaproveitado no cadastro). Piso agora é `>=` (não `>`
+# estrito) — pedido explícito do usuário ("tem que ser >=60%. vc
+# considerou a menor").
 LIMIAR_SIMILARIDADE_AUTOMATICA = 60.0
 
 
@@ -7023,13 +7027,17 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict) -> dict:
     embutidas em gerar_estagio_8_saidas()/gerar_estagio_8_estoque(), que
     alimentam essas funções).
 
-    Critério 3 (Entradas/Saídas) é refiltrado aqui por
-    `SIMILARIDADE_DESCRICAO > LIMIAR_SIMILARIDADE_AUTOMATICA` (60%) —
-    estritamente mais restritivo que o piso manual de 20%
-    (LIMIAR_SIMILARIDADE_CRITERIO3), então refiltrar o resultado já
-    filtrado a 20% é equivalente a nunca ter tido o piso de 20% (todo
-    candidato acima de 60% já passava dos 20%); evita duplicar a query
-    inteira só pra trocar o piso.
+    TODOS os critérios (1, 2 e 3, das 3 origens) são refiltrados aqui
+    por `SIMILARIDADE_DESCRICAO >= LIMIAR_SIMILARIDADE_AUTOMATICA`
+    (60%) — mesmo Critério 1/2, cujo filtro "de verdade" é código/nome
+    igual (sem piso nenhum no modo MANUAL): confirmado com dado real
+    que código/nome podem coincidir por reuso de cadastro entre
+    produtos fisicamente diferentes, e sem revisão humana linha a
+    linha (a automação toda existe pra isso), esse piso é a única
+    proteção contra confirmar automaticamente um par claramente
+    errado. Pro Critério 3 (que já vem com piso manual de 20%,
+    LIMIAR_SIMILARIDADE_CRITERIO3), refiltrar a 60% é estritamente
+    mais restritivo — equivalente a nunca ter tido o piso de 20%.
 
     Persistência via `salvar_cruzamento_confirmado()`/`_detalhado()` com
     `universo_chaves=None`/`universo_idunicos=None` — semântica SÓ
@@ -7055,28 +7063,28 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict) -> dict:
 
     plano = [
         ("entradas", CRITERIO_BUSCA1_MESMO_CODIGO,
-         cruzar_produto_escolhido_entradas, cruzar_produto_escolhido_entradas_detalhado, False),
+         cruzar_produto_escolhido_entradas, cruzar_produto_escolhido_entradas_detalhado),
         ("entradas", CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL,
-         cruzar_produto_escolhido_entradas_criterio2, cruzar_produto_escolhido_entradas_criterio2_detalhado, False),
+         cruzar_produto_escolhido_entradas_criterio2, cruzar_produto_escolhido_entradas_criterio2_detalhado),
         ("entradas", CRITERIO_BUSCA3_NOME_XML,
-         cruzar_produto_escolhido_entradas_criterio3, cruzar_produto_escolhido_entradas_criterio3_detalhado, True),
+         cruzar_produto_escolhido_entradas_criterio3, cruzar_produto_escolhido_entradas_criterio3_detalhado),
         ("saidas", CRITERIO_BUSCA1_MESMO_CODIGO,
-         cruzar_produto_escolhido_saidas, cruzar_produto_escolhido_saidas_detalhado, False),
+         cruzar_produto_escolhido_saidas, cruzar_produto_escolhido_saidas_detalhado),
         ("saidas", CRITERIO_BUSCA3_NOME_XML,
-         cruzar_produto_escolhido_saidas_criterio3, cruzar_produto_escolhido_saidas_criterio3_detalhado, True),
+         cruzar_produto_escolhido_saidas_criterio3, cruzar_produto_escolhido_saidas_criterio3_detalhado),
         ("estoque", CRITERIO_BUSCA1_MESMO_CODIGO,
-         cruzar_produto_escolhido_estoque, cruzar_produto_escolhido_estoque_detalhado, False),
+         cruzar_produto_escolhido_estoque, cruzar_produto_escolhido_estoque_detalhado),
         ("estoque", CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL,
-         cruzar_produto_escolhido_estoque_criterio2, cruzar_produto_escolhido_estoque_criterio2_detalhado, False),
+         cruzar_produto_escolhido_estoque_criterio2, cruzar_produto_escolhido_estoque_criterio2_detalhado),
     ]
 
     por_origem: dict = {}
     erros: list = []
-    for origem, criterio, fn_agrupado, fn_detalhado, exige_piso_60 in plano:
+    for origem, criterio, fn_agrupado, fn_detalhado in plano:
         try:
             agrupado, _ = fn_agrupado()
-            if exige_piso_60 and not agrupado.empty:
-                agrupado = agrupado[agrupado["SIMILARIDADE_DESCRICAO"] > LIMIAR_SIMILARIDADE_AUTOMATICA]
+            if not agrupado.empty:
+                agrupado = agrupado[agrupado["SIMILARIDADE_DESCRICAO"] >= LIMIAR_SIMILARIDADE_AUTOMATICA]
             if agrupado.empty:
                 continue
             colunas_disponiveis = [
@@ -7093,8 +7101,8 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict) -> dict:
                 continue
 
             detalhado, _ = fn_detalhado()
-            if exige_piso_60 and not detalhado.empty:
-                detalhado = detalhado[detalhado["SIMILARIDADE_DESCRICAO"] > LIMIAR_SIMILARIDADE_AUTOMATICA]
+            if not detalhado.empty:
+                detalhado = detalhado[detalhado["SIMILARIDADE_DESCRICAO"] >= LIMIAR_SIMILARIDADE_AUTOMATICA]
             chaves_permitidas = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
             mascara = [
                 (c, d) in chaves_permitidas for c, d in zip(detalhado["codproddecl"], detalhado["desc_xml"])
