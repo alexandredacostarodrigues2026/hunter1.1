@@ -6992,6 +6992,141 @@ def consultar_cruzamento_confirmado_detalhado(
         return pd.DataFrame(columns=colunas), 0
 
 
+# ── Execução Automática da Rubrica (Estágio 10.1) ────────────────────────
+# Solicitação Técnica (2026-07-30): "EXECUÇÃO AUTOMÁTICA DA RUBRICA" —
+# motor que aplica sequencialmente os critérios de busca "óbvios" (mesmo
+# código, nome de declaração igual) sem exigir clique manual em cada aba/
+# critério, poupando o auditor de revisar linha a linha em casos de alta
+# confiança. Critério 3 (código DIVERGENTE, único onde SIMILARIDADE_
+# DESCRICAO é a ÚNICA evidência disponível) usa uma TRAVA DE QUALIDADE
+# própria da automação — piso de 60% em vez dos 20% do modo manual — já
+# que aqui NINGUÉM revisa a linha antes de confirmar; Critério 1/2 (código
+# igual / nome declarado igual) não recebem esse piso adicional porque a
+# evidência que already os filtra (código, nome) é mais forte que a
+# similaridade de texto, que ali é só informativa/ordenação — exigir
+# também >60% de overlap de tokens arriscaria descartar matches
+# LEGÍTIMOS de código/nome idênticos com descrição de XML só um pouco
+# diferente (exatamente o caso que o Critério 1 existe pra cobrir).
+LIMIAR_SIMILARIDADE_AUTOMATICA = 60.0
+
+
+def executar_confirmacao_automatica_rubrica(escolhido: dict) -> dict:
+    """Aplica AUTOMATICAMENTE, em sequência, os critérios de busca de
+    Entradas (1, 2, 3), Saídas (1, 3) e Estoque (1, 2) pro produto
+    `escolhido` (mesmo dict de consultar_produto_cruzamento_escolhido())
+    e confirma na Rubrica os resultados — sem intervenção manual linha a
+    linha. Reaproveita as MESMAS funções `cruzar_produto_escolhido_*()`
+    já usadas pelas telas manuais (nenhuma lógica de matching duplicada
+    aqui) — o que garante de graça: exclusão cross-alvo (`_chaves_ja_
+    atribuidas_a_outro_alvo()`, já embutida em cada uma), exclusão de
+    autoemissão em Saídas e de anos ainda não fechados em Estoque (já
+    embutidas em gerar_estagio_8_saidas()/gerar_estagio_8_estoque(), que
+    alimentam essas funções).
+
+    Critério 3 (Entradas/Saídas) é refiltrado aqui por
+    `SIMILARIDADE_DESCRICAO > LIMIAR_SIMILARIDADE_AUTOMATICA` (60%) —
+    estritamente mais restritivo que o piso manual de 20%
+    (LIMIAR_SIMILARIDADE_CRITERIO3), então refiltrar o resultado já
+    filtrado a 20% é equivalente a nunca ter tido o piso de 20% (todo
+    candidato acima de 60% já passava dos 20%); evita duplicar a query
+    inteira só pra trocar o piso.
+
+    Persistência via `salvar_cruzamento_confirmado()`/`_detalhado()` com
+    `universo_chaves=None`/`universo_idunicos=None` — semântica SÓ
+    ADITIVA (nunca remove o que o auditor já confirmou manualmente,
+    mesmo que o item não apareça mais num critério nesta rodada).
+    Deduplicação por idunico e Regra R07 (strings) já garantidas DENTRO
+    de `salvar_cruzamento_confirmado_detalhado()` — nada extra necessário
+    aqui.
+
+    Devolve {'ok': True, 'total_adicionado': int (itens NOVOS na Rubrica
+    detalhada — saldo líquido, não conta reconfirmação de item já
+    existente), 'por_origem': {'entradas': int, 'saidas': int, 'estoque':
+    int}, 'erros': list} — ou {'erro': str} se nenhum produto estiver
+    escolhido. Erros de UM critério (ex.: tabela de origem ainda não
+    gerada) não interrompem os demais — acumulados em 'erros', o motor
+    continua pros critérios seguintes."""
+    if not escolhido:
+        return {"erro": "Nenhum produto escolhido pra cruzamento."}
+
+    descr_alvo = escolhido["DESCR_ALVO"]
+    antes, _ = consultar_cruzamento_confirmado_detalhado(descr_alvo=descr_alvo, limite=None)
+    idunicos_antes = set(antes["idunico"]) if not antes.empty else set()
+
+    plano = [
+        ("entradas", CRITERIO_BUSCA1_MESMO_CODIGO,
+         cruzar_produto_escolhido_entradas, cruzar_produto_escolhido_entradas_detalhado, False),
+        ("entradas", CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL,
+         cruzar_produto_escolhido_entradas_criterio2, cruzar_produto_escolhido_entradas_criterio2_detalhado, False),
+        ("entradas", CRITERIO_BUSCA3_NOME_XML,
+         cruzar_produto_escolhido_entradas_criterio3, cruzar_produto_escolhido_entradas_criterio3_detalhado, True),
+        ("saidas", CRITERIO_BUSCA1_MESMO_CODIGO,
+         cruzar_produto_escolhido_saidas, cruzar_produto_escolhido_saidas_detalhado, False),
+        ("saidas", CRITERIO_BUSCA3_NOME_XML,
+         cruzar_produto_escolhido_saidas_criterio3, cruzar_produto_escolhido_saidas_criterio3_detalhado, True),
+        ("estoque", CRITERIO_BUSCA1_MESMO_CODIGO,
+         cruzar_produto_escolhido_estoque, cruzar_produto_escolhido_estoque_detalhado, False),
+        ("estoque", CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL,
+         cruzar_produto_escolhido_estoque_criterio2, cruzar_produto_escolhido_estoque_criterio2_detalhado, False),
+    ]
+
+    por_origem: dict = {}
+    erros: list = []
+    for origem, criterio, fn_agrupado, fn_detalhado, exige_piso_60 in plano:
+        try:
+            agrupado, _ = fn_agrupado()
+            if exige_piso_60 and not agrupado.empty:
+                agrupado = agrupado[agrupado["SIMILARIDADE_DESCRICAO"] > LIMIAR_SIMILARIDADE_AUTOMATICA]
+            if agrupado.empty:
+                continue
+            colunas_disponiveis = [
+                c for c in ("codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias")
+                if c in agrupado.columns
+            ]
+            selecionadas = agrupado[colunas_disponiveis].copy()
+
+            r_agrupado = salvar_cruzamento_confirmado(
+                escolhido, origem, criterio, selecionadas, universo_chaves=None,
+            )
+            if "erro" in r_agrupado:
+                erros.append(f"{origem} — {criterio}: {r_agrupado['erro']}")
+                continue
+
+            detalhado, _ = fn_detalhado()
+            if exige_piso_60 and not detalhado.empty:
+                detalhado = detalhado[detalhado["SIMILARIDADE_DESCRICAO"] > LIMIAR_SIMILARIDADE_AUTOMATICA]
+            chaves_permitidas = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
+            mascara = [
+                (c, d) in chaves_permitidas for c, d in zip(detalhado["codproddecl"], detalhado["desc_xml"])
+            ]
+            itens = detalhado.loc[mascara, ["codproddecl", "desc_xml", "idunico"]]
+            if itens.empty:
+                continue
+
+            r_detalhado = salvar_cruzamento_confirmado_detalhado(
+                escolhido, origem, criterio, itens, universo_idunicos=None,
+            )
+            if "erro" in r_detalhado:
+                erros.append(f"{origem} — {criterio} (detalhado): {r_detalhado['erro']}")
+                continue
+
+            por_origem[origem] = por_origem.get(origem, 0) + r_detalhado["total_salvo"]
+        except Exception as exc:
+            logger.exception(
+                "Erro na execução automática da Rubrica (%s / %s): %s", origem, criterio, exc,
+            )
+            erros.append(f"{origem} — {criterio}: {exc}")
+
+    depois, _ = consultar_cruzamento_confirmado_detalhado(descr_alvo=descr_alvo, limite=None)
+    idunicos_depois = set(depois["idunico"]) if not depois.empty else set()
+    return {
+        "ok": True,
+        "total_adicionado": len(idunicos_depois - idunicos_antes),
+        "por_origem": por_origem,
+        "erros": erros,
+    }
+
+
 _COLUNAS_ATRIBUTOS_ESTOQUE_POR_IDUNICO = [
     "ID_UNICO", "CHV_NFE", "ANO_ELEITO", "ncm4", "unid_prod", "vl_unit_prod", "qtde_prod", "vl_prod",
     "fm_sugerido",
