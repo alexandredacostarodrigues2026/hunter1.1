@@ -7014,7 +7014,7 @@ def consultar_cruzamento_confirmado_detalhado(
 LIMIAR_SIMILARIDADE_AUTOMATICA = 60.0
 
 
-def executar_confirmacao_automatica_rubrica(escolhido: dict) -> dict:
+def executar_confirmacao_automatica_rubrica(escolhido: dict, callback=None) -> dict:
     """Aplica AUTOMATICAMENTE, em sequência, os critérios de busca de
     Entradas (1, 2, 3), Saídas (1, 3) e Estoque (1, 2) pro produto
     `escolhido` (mesmo dict de consultar_produto_cruzamento_escolhido())
@@ -7047,6 +7047,15 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict) -> dict:
     de `salvar_cruzamento_confirmado_detalhado()` — nada extra necessário
     aqui.
 
+    `callback(origem, criterio, indice, total)` (2026-07-30, pedido do
+    usuário: "criar barra de progresso para acompanhar"), se informado,
+    é chamado ao FINAL de cada um dos critérios do `plano` (indice de 1
+    a `total` — 7 no total: 3 de Entradas + 2 de Saídas + 2 de
+    Estoque), independente de ter encontrado algo ou dado erro — usado
+    pela UI (`interface.py`) pra atualizar uma `st.progress()` em
+    tempo real. `callback=None` (padrão) mantém o comportamento
+    silencioso de antes.
+
     Devolve {'ok': True, 'total_adicionado': int (itens NOVOS na Rubrica
     detalhada — saldo líquido, não conta reconfirmação de item já
     existente), 'por_origem': {'entradas': int, 'saidas': int, 'estoque':
@@ -7078,9 +7087,10 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict) -> dict:
          cruzar_produto_escolhido_estoque_criterio2, cruzar_produto_escolhido_estoque_criterio2_detalhado),
     ]
 
+    total_passos = len(plano)
     por_origem: dict = {}
     erros: list = []
-    for origem, criterio, fn_agrupado, fn_detalhado in plano:
+    for indice, (origem, criterio, fn_agrupado, fn_detalhado) in enumerate(plano, start=1):
         try:
             agrupado, _ = fn_agrupado()
             if not agrupado.empty:
@@ -7124,6 +7134,9 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict) -> dict:
                 "Erro na execução automática da Rubrica (%s / %s): %s", origem, criterio, exc,
             )
             erros.append(f"{origem} — {criterio}: {exc}")
+        finally:
+            if callback:
+                callback(origem, criterio, indice, total_passos)
 
     depois, _ = consultar_cruzamento_confirmado_detalhado(descr_alvo=descr_alvo, limite=None)
     idunicos_depois = set(depois["idunico"]) if not depois.empty else set()
@@ -7135,7 +7148,7 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict) -> dict:
     }
 
 
-def executar_aplicacao_automatica_fm(escolhido: dict) -> dict:
+def executar_aplicacao_automatica_fm(escolhido: dict, callback=None) -> dict:
     """"Próximo passo" da Execução Automática da Rubrica (Estágio 10.1,
     Solicitação Técnica 2026-07-30: "aplique nos mesmos moldes fm caso
     seja > 1") — depois de confirmar as correspondências (`executar_
@@ -7165,6 +7178,11 @@ def executar_aplicacao_automatica_fm(escolhido: dict) -> dict:
     duplicado) — nenhuma lógica de sincronização extra necessária
     aqui.
 
+    `callback(origem, indice, total)` (2026-07-30, pedido do usuário:
+    "criar barra de progresso para acompanhar"), se informado, é
+    chamado ao final de cada origem processada (indice de 1 a 3) —
+    mesmo raciocínio de `executar_confirmacao_automatica_rubrica()`.
+
     Devolve {'ok': True, 'total_aplicado': int (itens com TRATAMENTO
     aplicado ou reaplicado nesta rodada — upsert, não é saldo líquido
     como no motor de confirmação, já que reaplicar o MESMO FM numa UP
@@ -7179,7 +7197,8 @@ def executar_aplicacao_automatica_fm(escolhido: dict) -> dict:
     por_origem: dict = {}
     erros: list = []
 
-    for origem in ("entradas", "saidas", "estoque"):
+    origens = ("entradas", "saidas", "estoque")
+    for indice, origem in enumerate(origens, start=1):
         try:
             detalhado, _ = consultar_cruzamento_confirmado_detalhado(
                 descr_alvo=descr_alvo, origem=origem, limite=None,
@@ -7220,6 +7239,9 @@ def executar_aplicacao_automatica_fm(escolhido: dict) -> dict:
         except Exception as exc:
             logger.exception("Erro na aplicação automática de FM (%s): %s", origem, exc)
             erros.append(f"{origem}: {exc}")
+        finally:
+            if callback:
+                callback(origem, indice, len(origens))
 
     return {
         "ok": True,

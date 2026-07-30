@@ -4870,44 +4870,74 @@ def render_produtos_alvo_salvos() -> None:
                 unsafe_allow_html=True,
             )
             with st.container(key=chave_botao):
-                if st.button(
+                clicou_automatico = st.button(
                     "⚡ Execução Automática (Crit. 1-3 | Confiança > 60% | + FM)",
                     key="btn_execucao_automatica_rubrica",
-                ):
-                    with st.spinner("Aplicando Critérios 1-3 de Entradas/Saídas/Estoque..."):
-                        resultado_auto = loader.executar_confirmacao_automatica_rubrica(escolhido_atual)
-                    if "erro" in resultado_auto:
-                        st.error(f"Erro: {resultado_auto['erro']}")
+                )
+            # Barras de progresso (2026-07-30, pedido do usuário: "ao
+            # pressionar equalização automática, criar barra de progresso
+            # para acompanhar") — renderizadas FORA do container estreito
+            # do botão (que fica flutuando/posicionado em cima das abas,
+            # sem espaço pra uma barra legível), em largura total, logo
+            # abaixo da linha de abas. loader.executar_confirmacao_
+            # automatica_rubrica()/executar_aplicacao_automatica_fm()
+            # chamam `callback(origem, [criterio,] indice, total)` ao
+            # final de cada passo (7 critérios + 3 origens de FM) — usado
+            # aqui pra avançar a barra em tempo real, mesmo padrão de
+            # `_barra_progresso()` já usado na tela de Extração.
+            if clicou_automatico:
+                barra_rubrica = st.progress(0.0, text="Confirmando correspondências...")
+
+                def _cb_rubrica(origem: str, criterio: str, indice: int, total: int) -> None:
+                    rotulo_criterio = criterio.split(":", 1)[0]
+                    barra_rubrica.progress(
+                        indice / total, text=f"{indice}/{total}: {origem} — {rotulo_criterio}",
+                    )
+
+                resultado_auto = loader.executar_confirmacao_automatica_rubrica(
+                    escolhido_atual, callback=_cb_rubrica,
+                )
+                if "erro" in resultado_auto:
+                    barra_rubrica.empty()
+                    st.error(f"Erro: {resultado_auto['erro']}")
+                else:
+                    barra_rubrica.progress(1.0, text="Correspondências confirmadas.")
+                    # "Próximo passo" (2026-07-30, Solicitação Técnica:
+                    # "aplique nos mesmos moldes fm caso seja > 1") —
+                    # depois de confirmar as correspondências, aplica
+                    # automaticamente o FM sugerido em toda UP com "FM
+                    # Sug" > 1, mesmo botão/clique — ver loader.
+                    # executar_aplicacao_automatica_fm().
+                    barra_fm = st.progress(0.0, text="Aplicando FM sugerido...")
+
+                    def _cb_fm(origem: str, indice: int, total: int) -> None:
+                        barra_fm.progress(indice / total, text=f"{indice}/{total}: {origem}")
+
+                    resultado_fm = loader.executar_aplicacao_automatica_fm(
+                        escolhido_atual, callback=_cb_fm,
+                    )
+                    barra_fm.progress(1.0, text="FM aplicado.")
+                    for erro in resultado_auto["erros"]:
+                        st.warning(f"⚠️ Rubrica — {erro}")
+                    if "erro" in resultado_fm:
+                        st.warning(f"⚠️ FM: {resultado_fm['erro']}")
                     else:
-                        # "Próximo passo" (2026-07-30, Solicitação Técnica:
-                        # "aplique nos mesmos moldes fm caso seja > 1") —
-                        # depois de confirmar as correspondências, aplica
-                        # automaticamente o FM sugerido em toda UP com "FM
-                        # Sug" > 1, mesmo botão/clique — ver loader.
-                        # executar_aplicacao_automatica_fm().
-                        with st.spinner("Aplicando FM nas UPs com FM Sugerido > 1..."):
-                            resultado_fm = loader.executar_aplicacao_automatica_fm(escolhido_atual)
-                        for erro in resultado_auto["erros"]:
-                            st.warning(f"⚠️ Rubrica — {erro}")
-                        if "erro" in resultado_fm:
-                            st.warning(f"⚠️ FM: {resultado_fm['erro']}")
-                        else:
-                            for erro in resultado_fm["erros"]:
-                                st.warning(f"⚠️ FM — {erro}")
-                        partes_origem = ", ".join(
-                            f"{n} em {o}" for o, n in resultado_auto["por_origem"].items()
-                        )
-                        detalhe = f" ({partes_origem})" if partes_origem else ""
-                        total_fm = resultado_fm.get("total_aplicado", 0) if "erro" not in resultado_fm else 0
-                        partes_fm = ", ".join(
-                            f"{n} em {o}" for o, n in resultado_fm.get("por_origem", {}).items()
-                        )
-                        detalhe_fm = f" ({partes_fm})" if partes_fm else ""
-                        st.success(
-                            f"✅ +{resultado_auto['total_adicionado']} item(ns) adicionados à Rubrica"
-                            f"{detalhe}; {total_fm} item(ns) com FM aplicado{detalhe_fm}."
-                        )
-                        st.rerun()
+                        for erro in resultado_fm["erros"]:
+                            st.warning(f"⚠️ FM — {erro}")
+                    partes_origem = ", ".join(
+                        f"{n} em {o}" for o, n in resultado_auto["por_origem"].items()
+                    )
+                    detalhe = f" ({partes_origem})" if partes_origem else ""
+                    total_fm = resultado_fm.get("total_aplicado", 0) if "erro" not in resultado_fm else 0
+                    partes_fm = ", ".join(
+                        f"{n} em {o}" for o, n in resultado_fm.get("por_origem", {}).items()
+                    )
+                    detalhe_fm = f" ({partes_fm})" if partes_fm else ""
+                    st.success(
+                        f"✅ +{resultado_auto['total_adicionado']} item(ns) adicionados à Rubrica"
+                        f"{detalhe}; {total_fm} item(ns) com FM aplicado{detalhe_fm}."
+                    )
+                    st.rerun()
             aba_cruzamento_entradas, aba_cruzamento_saidas, aba_cruzamento_estoque = st.tabs(
                 ["📥 Entradas", "📤 Saídas", "📦 Estoque"]
             )
