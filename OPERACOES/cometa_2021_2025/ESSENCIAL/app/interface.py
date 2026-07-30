@@ -4081,7 +4081,6 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     # página) e passou a ler direto o que foi persistido, revisável a
     # qualquer momento independente do Estágio 8 ser regerado depois.
     st.divider()
-    st.markdown("**Itens individuais (com ID Único) — já atribuídos ao alvo**")
     detalhado, total_detalhado = loader.consultar_cruzamento_confirmado_detalhado(
         descr_alvo=escolhido["DESCR_ALVO"], origem="entradas", limite=None,
     )
@@ -4108,6 +4107,18 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     # PRODUTO, não do item), ver _badge_st()/consultar_produto_
     # cruzamento_escolhido().
     detalhado["IS_ST"] = escolhido.get("IS_ST", False)
+
+    # Diagnóstico de Unidades + aplicação de FM/Nova Unidade — ANTES da
+    # tabela de Itens Individuais (2026-07-30, pedido do usuário: "quero
+    # que diagnósticos de unidades venham antes da tabela de id
+    # únicos") — ver _render_sumario_unidades_com_aplicar() (2026-07-25/26).
+    _render_sumario_unidades_com_aplicar(
+        sumario_unidades, idunicos_tratados, escolhido,
+        origem="entradas", sufixo_key="entradas",
+    )
+
+    st.divider()
+    st.markdown("**Itens individuais (com ID Único) — já atribuídos ao alvo**")
     # Formatação BR (milhar '.', decimal ',') pras colunas de valor/quantidade
     # — pedido explícito da Solicitação Técnica ("separadores de milhar e 2
     # casas decimais"), mesmo padrão já usado no painel 7.2. Inclui os
@@ -4119,13 +4130,6 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
     _render_itens_individuais(
         detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO, sufixo_key="entradas",
-    )
-
-    # Diagnóstico de Unidades + aplicação de FM/Nova Unidade — ver
-    # _render_sumario_unidades_com_aplicar() (2026-07-25/26).
-    _render_sumario_unidades_com_aplicar(
-        sumario_unidades, idunicos_tratados, escolhido,
-        origem="entradas", sufixo_key="entradas",
     )
 
 
@@ -4359,7 +4363,6 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
             st.rerun()
 
     st.divider()
-    st.markdown("**Itens individuais (com ID Único) — já atribuídos ao alvo**")
     detalhado, total_detalhado = loader.consultar_cruzamento_confirmado_detalhado(
         descr_alvo=escolhido["DESCR_ALVO"], origem="saidas", limite=None,
     )
@@ -4384,6 +4387,19 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     )
     # IS_ST — ver comentário equivalente em _render_cruzamento_entradas().
     detalhado["IS_ST"] = escolhido.get("IS_ST", False)
+
+    # Diagnóstico de Unidades + aplicação de FM/Nova Unidade — ANTES da
+    # tabela de Itens Individuais (2026-07-30, "quero que diagnósticos
+    # de unidades venham antes da tabela de id únicos"; extensão pra
+    # Saídas em 2026-07-26, "ESTENDA PARA SAIDAS E ESTOQUES") — ver
+    # _render_sumario_unidades_com_aplicar().
+    _render_sumario_unidades_com_aplicar(
+        sumario_unidades, idunicos_tratados, escolhido,
+        origem="saidas", sufixo_key="saidas",
+    )
+
+    st.divider()
+    st.markdown("**Itens individuais (com ID Único) — já atribuídos ao alvo**")
     _render_kpis_itens_individuais(detalhado)
     for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "vu_utilizado", "quant_utiliz", "fm_utilizado"):
         if _col in detalhado.columns:
@@ -4391,14 +4407,6 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
     _render_itens_individuais(
         detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO, sufixo_key="saidas",
-    )
-
-    # Diagnóstico de Unidades + aplicação de FM/Nova Unidade (2026-07-26,
-    # pedido do usuário: "ESTENDA PARA SAIDAS E ESTOQUES") — ver
-    # _render_sumario_unidades_com_aplicar().
-    _render_sumario_unidades_com_aplicar(
-        sumario_unidades, idunicos_tratados, escolhido,
-        origem="saidas", sufixo_key="saidas",
     )
 
 
@@ -4655,7 +4663,6 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
             st.rerun()
 
     st.divider()
-    st.markdown("**Itens individuais (com ID Único) — já atribuídos ao alvo**")
     detalhado, total_detalhado = loader.consultar_cruzamento_confirmado_detalhado(
         descr_alvo=escolhido["DESCR_ALVO"], origem="estoque", limite=None,
     )
@@ -4681,17 +4688,11 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     )
     # IS_ST — ver comentário equivalente em _render_cruzamento_entradas().
     detalhado["IS_ST"] = escolhido.get("IS_ST", False)
-    _render_kpis_itens_individuais(detalhado)
-    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "vu_utilizado", "quant_utiliz", "fm_utilizado"):
-        if _col in detalhado.columns:
-            detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
-    st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
-    _render_itens_individuais(
-        detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE, sufixo_key="estoque",
-    )
 
-    # Diagnóstico de Unidades + aplicação de FM/Nova Unidade (2026-07-26,
-    # pedido do usuário: "ESTENDA PARA SAIDAS E ESTOQUES") — ver
+    # Diagnóstico de Unidades + aplicação de FM/Nova Unidade — ANTES da
+    # tabela de Itens Individuais (2026-07-30, "quero que diagnósticos
+    # de unidades venham antes da tabela de id únicos"; extensão pro
+    # Estoque em 2026-07-26, "ESTENDA PARA SAIDAS E ESTOQUES") — ver
     # _render_sumario_unidades_com_aplicar(). idunico do Estoque é
     # SINTÉTICO (hash), mas a persistência de tratamento não depende de
     # como o idunico foi gerado, só que seja determinístico — funciona
@@ -4699,6 +4700,17 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     _render_sumario_unidades_com_aplicar(
         sumario_unidades, idunicos_tratados, escolhido,
         origem="estoque", sufixo_key="estoque",
+    )
+
+    st.divider()
+    st.markdown("**Itens individuais (com ID Único) — já atribuídos ao alvo**")
+    _render_kpis_itens_individuais(detalhado)
+    for _col in ("vl_unit_prod", "qtde_prod", "vl_prod", "vu_utilizado", "quant_utiliz", "fm_utilizado"):
+        if _col in detalhado.columns:
+            detalhado[_col] = detalhado[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
+    st.markdown(f"**{total_detalhado:,} item(ns)** individuais gravado(s).".replace(",", "."))
+    _render_itens_individuais(
+        detalhado, _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_ESTOQUE, sufixo_key="estoque",
     )
 
 
