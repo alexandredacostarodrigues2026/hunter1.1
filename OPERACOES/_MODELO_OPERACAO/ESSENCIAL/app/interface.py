@@ -1773,7 +1773,7 @@ def render_rn1_simulada_30() -> None:
     st.rerun()
 
 
-_COLUNAS_CONSOLIDADO_733 = ["ANO", "DESCR_PROD", "UNID_PROD", "QTDE", "VALOR_TOTAL", "ORIGEM"]
+_COLUNAS_CONSOLIDADO_733 = ["ANO", "DESCR_PROD", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL", "ORIGEM"]
 _COLUNA_CHECKBOX_CONSOLIDADO_733 = "Selecionar p/ Fiscalização"
 
 
@@ -1795,15 +1795,25 @@ def render_consolidado_origens_733() -> None:
     Alvo" do 7.3.2, que reconcilia a tela inteira (desmarcar cancela).
     Alvo cravado aqui não tem RN1 calculado (DIVERGENCIA/TOTAL_DEBITO/
     TOTAL_CREDITO=0, INFRACAO vazio, OBSERVACAO registra a origem) —
-    também confirmado com o usuário, em vez de calcular RN1 na hora."""
+    também confirmado com o usuário, em vez de calcular RN1 na hora.
+
+    Sem limite de linhas carregadas no editor (2026-08-03, pedido do
+    usuário — "quando ordenar pelo título, não ficar restrito às 200
+    primeiras e sim buscar no todo"): a versão original capava em 200
+    linhas após filtro (mesmo padrão do 7.3.2), o que fazia a ordenação
+    por clique no cabeçalho da coluna (recurso nativo do
+    st.data_editor/glide-data-grid) ordenar só as 200 já carregadas, não
+    o total filtrado. Removido o cap — todo `filtrado` vai pro editor,
+    já que o grid é virtualizado (só renderiza as linhas visíveis)."""
     st.markdown("**🔍 7.3.3: Seleção Consolidada (Estoque/XML)**")
     st.caption(
         "Une Entradas, Saídas (excluindo autoemissão) e Estoque (Bloco H, só anos já fechados) "
         "numa única tabela — Qtde/Valor Total agregados por Ano+Descrição+Unidade+Origem. Ajuda a "
         "encontrar itens com volume físico ou estoque suspeito que não aparecem no 7.2/7.3 por "
         "falta de divergência financeira. Valor Total do Estoque fica em branco — o Bloco H não "
-        "tem valor nessa granularidade (só Entradas/Saídas têm, via XML). Alvo cravado aqui não "
-        "passa pela régua de divergência do 7.2/7.3 (fica marcado na Observação)."
+        "tem valor nessa granularidade (só Entradas/Saídas têm, via XML). Cód. Produto mostra "
+        "'nc' quando nenhuma origem tinha código vinculado. Alvo cravado aqui não passa pela "
+        "régua de divergência do 7.2/7.3 (fica marcado na Observação)."
     )
 
     if "estagio733_gerado" not in st.session_state:
@@ -1856,7 +1866,7 @@ def render_consolidado_origens_733() -> None:
         filtrado = filtrado[filtrado["ORIGEM"] == origem_selecionada]
 
     st.markdown(f"**{len(filtrado):,} linha(s)** após filtro.".replace(",", "."))
-    amostra_raw = filtrado.head(200).copy()
+    amostra_raw = filtrado.copy()
 
     editor_base = amostra_raw[_COLUNAS_CONSOLIDADO_733].copy()
     editor_base.insert(0, _COLUNA_CHECKBOX_CONSOLIDADO_733, False)

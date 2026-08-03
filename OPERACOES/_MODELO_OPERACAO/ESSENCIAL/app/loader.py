@@ -5357,12 +5357,14 @@ def salvar_st_produto_alvo(atualizacoes: pd.DataFrame) -> dict:
 # Saídas) numa única tabela de consulta, pra o auditor "cravar" alvos de
 # fiscalização que não têm divergência financeira aparente no 7.2/7.3, mas
 # têm volume físico (XML) ou estoque estagnado (Bloco H) suspeito.
-_COLUNAS_CONSOLIDADO_733 = ["ANO", "DESCR_PROD", "UNID_PROD", "QTDE", "VALOR_TOTAL", "ORIGEM"]
+_COLUNAS_CONSOLIDADO_733 = ["ANO", "DESCR_PROD", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL", "ORIGEM"]
+_MARCADOR_COD_ITEM_AUSENTE_733 = "nc"
 
 _QUERY_CONSOLIDADO_733_XML = """
 WITH dedup AS (
     SELECT ANO_ELEITO AS ANO,
            fatoitemnfe_infnfe_det_prod_xprod AS DESCR_PROD,
+           NULLIF(TRIM({coluna_cod_item}), '') AS COD_ITEM,
            fatoitemnfe_infnfe_det_prod_ucom AS UNID_PROD,
            TRY_CAST(fatoitemnfe_infnfe_det_prod_qcom AS DOUBLE) AS QTDE,
            TRY_CAST(fatoitemnfe_infnfe_det_prod_vprod AS DOUBLE) AS VALOR_TOTAL,
@@ -5373,14 +5375,20 @@ WITH dedup AS (
     FROM {tabela}
     WHERE 1=1{filtro_autoemissao}
 )
-SELECT ANO, DESCR_PROD, UNID_PROD, SUM(QTDE) AS QTDE, SUM(VALOR_TOTAL) AS VALOR_TOTAL,
+SELECT ANO, DESCR_PROD,
+       COALESCE(STRING_AGG(DISTINCT COD_ITEM, ', '), '{marcador_ausente}') AS COD_ITEM,
+       UNID_PROD, SUM(QTDE) AS QTDE, SUM(VALOR_TOTAL) AS VALOR_TOTAL,
        '{origem}' AS ORIGEM
 FROM dedup WHERE rn = 1
 GROUP BY ANO, DESCR_PROD, UNID_PROD
 """
 
 _QUERY_CONSOLIDADO_733_ESTOQUE = """
-SELECT ANO_REFERENCIA AS ANO, DESCR_ITEM_DECLARACAO AS DESCR_PROD, UNIDADE AS UNID_PROD,
+SELECT ANO_REFERENCIA AS ANO, DESCR_ITEM_DECLARACAO AS DESCR_PROD,
+       COALESCE(
+           STRING_AGG(DISTINCT NULLIF(TRIM(COD_ITEM_DECLARACAO), ''), ', '), '{marcador_ausente}'
+       ) AS COD_ITEM,
+       UNIDADE AS UNID_PROD,
        SUM(TRY_CAST(QUANTIDADE_FINAL AS DOUBLE)) AS QTDE,
        CAST(NULL AS DOUBLE) AS VALOR_TOTAL, 'estoque' AS ORIGEM
 FROM estoque_anual_consolidado
@@ -5410,22 +5418,36 @@ def gerar_consolidado_origens_733() -> dict:
       XML), `_ucom` (unidade), `_qcom` (quantidade), `_vprod` (valor) —
       mesma dedup ET/EP de `_valores_por_ano_item()` (`ROW_NUMBER() OVER
       (PARTITION BY CHV_NFE, NITEM ORDER BY PASTA_ORIGEM)`); autoemissão
-      MANTIDA (mesma decisão de Compras em toda a base).
+      MANTIDA (mesma decisão de Compras em toda a base). `COD_ITEM`
+      (código de produto da declaração, 2026-08-03) vem de `COD_ITEM_
+      DECLARACAO` (enriquecido via Matching/BC3, ~99,9% de cobertura).
     - Saídas: mesmos campos de `estoque_saidas`, EXCLUINDO autoemissão
       (`fatonfe_infnfe_emit_cnpj != fatonfe_infnfe_dest_cnpj`) — mesma
-      regra de Vendas em todo o app; mesma dedup ET/EP.
+      regra de Vendas em todo o app; mesma dedup ET/EP. `COD_ITEM` vem de
+      `fatoitemnfe_infnfe_det_prod_cprod` (não de `COD_ITEM_DECLARACAO`,
+      98,8% nulo em Saídas — mesma decisão/raciocínio de `_valores_por_
+      ano_item()`: quando a auditada é EMITENTE, o próprio código do XML
+      dela já É a declaração, sem precisar de Matching).
     - Estoque: `ANO_REFERENCIA`, `DESCR_ITEM_DECLARACAO`, `UNIDADE`,
-      `QUANTIDADE_FINAL`; `VALOR_TOTAL` sempre NULL — `VL_ITEM` não existe
-      em `estoque_anual_consolidado` (Estágio 5 nunca estendeu o schema
-      pra isso, decisão documentada em `_valores_estoque_hunter()`);
-      confirmado com o usuário (AskUserQuestion, 2026-08-03) deixar em
-      branco em vez de reconciliar com o SPED cru (granularidade não bate
-      1:1 com `QUANTIDADE_FINAL` por linha — aquele é agregado por
-      ANO+COD_ITEM, dividido em VALOR_INICIAL/VALOR_FINAL).
+      `QUANTIDADE_FINAL`, `COD_ITEM_DECLARACAO`; `VALOR_TOTAL` sempre
+      NULL — `VL_ITEM` não existe em `estoque_anual_consolidado`
+      (Estágio 5 nunca estendeu o schema pra isso, decisão documentada em
+      `_valores_estoque_hunter()`); confirmado com o usuário
+      (AskUserQuestion, 2026-08-03) deixar em branco em vez de
+      reconciliar com o SPED cru (granularidade não bate 1:1 com
+      `QUANTIDADE_FINAL` por linha — aquele é agregado por ANO+COD_ITEM,
+      dividido em VALOR_INICIAL/VALOR_FINAL).
 
-    Regra R07: ANO/DESCR_PROD/UNID_PROD/ORIGEM sempre string. Devolve
-    {'consolidado': DataFrame, 'erros': list} — erros acumula tabela por
-    tabela ausente, sem interromper as demais origens."""
+    `COD_ITEM` agregado via `STRING_AGG(DISTINCT ..., ', ')` dentro de
+    cada grupo (ANO, DESCR_PROD, UNID_PROD, ORIGEM) — mesmo raciocínio de
+    `_mapa_cod_item_por_descr_alvo()` (raro mais de um código por
+    descrição, concatena em vez de fragmentar o agrupamento já
+    estabelecido); `'nc'` ("não consta") quando não há nenhum código —
+    pedido explícito do usuário (2026-08-03).
+
+    Regra R07: ANO/DESCR_PROD/COD_ITEM/UNID_PROD/ORIGEM sempre string.
+    Devolve {'consolidado': DataFrame, 'erros': list} — erros acumula
+    tabela por tabela ausente, sem interromper as demais origens."""
     colunas = _COLUNAS_CONSOLIDADO_733
     erros: list = []
     partes = []
@@ -5439,6 +5461,8 @@ def gerar_consolidado_origens_733() -> dict:
                 partes.append(con.execute(
                     _QUERY_CONSOLIDADO_733_XML.format(
                         tabela="estoque_entradas", filtro_autoemissao="", origem="entrada",
+                        coluna_cod_item="COD_ITEM_DECLARACAO",
+                        marcador_ausente=_MARCADOR_COD_ITEM_AUSENTE_733,
                     )
                 ).df())
             else:
@@ -5452,13 +5476,19 @@ def gerar_consolidado_origens_733() -> dict:
                             " AND fatonfe_infnfe_emit_cnpj != fatonfe_infnfe_dest_cnpj"
                         ),
                         origem="saida",
+                        coluna_cod_item="fatoitemnfe_infnfe_det_prod_cprod",
+                        marcador_ausente=_MARCADOR_COD_ITEM_AUSENTE_733,
                     )
                 ).df())
             else:
                 erros.append("Tabela estoque_saidas (Estágio 4) ainda não foi gerada.")
 
             if "estoque_anual_consolidado" in tabelas:
-                partes.append(con.execute(_QUERY_CONSOLIDADO_733_ESTOQUE).df())
+                partes.append(con.execute(
+                    _QUERY_CONSOLIDADO_733_ESTOQUE.format(
+                        marcador_ausente=_MARCADOR_COD_ITEM_AUSENTE_733,
+                    )
+                ).df())
             else:
                 erros.append("Tabela estoque_anual_consolidado (Estágio 5) ainda não foi gerada.")
     except Exception:
@@ -5469,7 +5499,7 @@ def gerar_consolidado_origens_733() -> dict:
         return {"consolidado": pd.DataFrame(columns=colunas), "erros": erros}
 
     consolidado = pd.concat(partes, ignore_index=True)
-    consolidado = _forcar_colunas_string(consolidado, ["ANO", "DESCR_PROD", "UNID_PROD", "ORIGEM"])
+    consolidado = _forcar_colunas_string(consolidado, ["ANO", "DESCR_PROD", "COD_ITEM", "UNID_PROD", "ORIGEM"])
     consolidado = (
         consolidado[colunas]
         .sort_values(["ORIGEM", "ANO", "DESCR_PROD"])
@@ -5558,9 +5588,14 @@ def salvar_alvos_selecionados_733(selecionados: pd.DataFrame) -> dict:
     sempre em `produto_alvo_fiscalizacao` (confirmado com o usuário).
 
     Alvo criado por aqui NÃO tem RN1 calculado — DIVERGENCIA/TOTAL_DEBITO/
-    TOTAL_CREDITO/PCT_DIVERGENCIA=0.0, INFRACAO/COD_ITEM='' — confirmado
-    com o usuário em vez de calcular RN1 na hora (fora do escopo original
-    do pedido); OBSERVACAO registra a origem. Se o produto JÁ EXISTIR (ex.:
+    TOTAL_CREDITO/PCT_DIVERGENCIA=0.0, INFRACAO='' — confirmado com o
+    usuário em vez de calcular RN1 na hora (fora do escopo original do
+    pedido); OBSERVACAO registra a origem. `COD_ITEM` (2026-08-03) vem da
+    coluna homônima do consolidado (`'nc'` quando nenhuma origem tinha
+    código) — mesmo raciocínio de `_mapa_cod_item_por_descr_alvo()`
+    quando a mesma descrição aparece com códigos diferentes em
+    anos/origens distintos, usa o primeiro valor diferente de `'nc'`. Se
+    o produto JÁ EXISTIR (ex.:
     já veio do 7.2 com RN1 de verdade), preserva TODOS os campos já
     calculados — só reativa (STATUS='ativo') e atualiza TS, sem
     sobrescrever DIVERGENCIA/INFRACAO/TOTAL_DEBITO/TOTAL_CREDITO/COD_ITEM/
@@ -5592,9 +5627,22 @@ def salvar_alvos_selecionados_733(selecionados: pd.DataFrame) -> dict:
             ja_existiam = set()
             total_reativado = 0
 
+        cod_item_por_descricao = {}
+        if "COD_ITEM" in selecionados.columns:
+            for _, linha in selecionados.iterrows():
+                descr = str(linha["DESCR_PROD"]).strip()
+                cod = str(linha["COD_ITEM"]).strip() if pd.notna(linha["COD_ITEM"]) else ""
+                atual = cod_item_por_descricao.get(descr, "")
+                if cod and cod != _MARCADOR_COD_ITEM_AUSENTE_733 and (not atual or atual == _MARCADOR_COD_ITEM_AUSENTE_733):
+                    cod_item_por_descricao[descr] = cod
+                elif descr not in cod_item_por_descricao:
+                    cod_item_por_descricao[descr] = cod or _MARCADOR_COD_ITEM_AUSENTE_733
+
         novas_descricoes = [d for d in descricoes if d not in ja_existiam]
         linhas_novas = pd.DataFrame([{
-            "DESCR_ALVO": descr, "COD_ITEM": "", "TS": ts_agora,
+            "DESCR_ALVO": descr,
+            "COD_ITEM": cod_item_por_descricao.get(descr, _MARCADOR_COD_ITEM_AUSENTE_733),
+            "TS": ts_agora,
             "STATUS": STATUS_PRODUTO_ALVO_ATIVO, "DIVERGENCIA": 0.0,
             "INFRACAO": "", "PCT_DIVERGENCIA": 0.0, "TOTAL_DEBITO": 0.0,
             "TOTAL_CREDITO": 0.0,
