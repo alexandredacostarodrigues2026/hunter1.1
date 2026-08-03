@@ -1872,12 +1872,6 @@ def render_consolidado_origens_733() -> None:
     editor_base.insert(0, _COLUNA_CHECKBOX_CONSOLIDADO_733, False)
 
     editor_exibicao = editor_base.copy()
-    editor_exibicao["VALOR_TOTAL"] = editor_exibicao["VALOR_TOTAL"].apply(
-        lambda v: "" if pd.isna(v) else _formatar_moeda_br(v)
-    )
-    editor_exibicao["QTDE"] = editor_exibicao["QTDE"].apply(
-        lambda v: "" if pd.isna(v) else _formatar_moeda_br(v)
-    )
     editor_exibicao = editor_exibicao.rename(columns=loader.carregar_dicionario_campos())
     editor_exibicao = editor_exibicao.rename(columns={"ORIGEM": "Origem"})
 
@@ -1894,6 +1888,19 @@ def render_consolidado_origens_733() -> None:
             hide_index=True,
             disabled=colunas_travadas,
             key="editor_consolidado_733",
+            column_config={
+                # Mantidos NUMÉRICOS de propósito (2026-08-03, achado real:
+                # a versão anterior pré-formatava como texto BR — "3.740,88"
+                # — pra exibição, e a ordenação por clique no cabeçalho do
+                # grid (glide-data-grid) ordenava como STRING, não número:
+                # "999,60" ficava acima de "3.740,88" porque "9" > "3"
+                # lexicograficamente. NumberColumn não tem opção de milhar
+                # "." + decimal "," (mesma limitação já documentada em
+                # _formatar_moeda_br), então perde a formatação BR aqui —
+                # troca aceita pra ordenação numérica funcionar de verdade.
+                "Qtde": st.column_config.NumberColumn(format="%.2f"),
+                "Valor Total": st.column_config.NumberColumn(format="%.2f"),
+            },
         )
 
     if st.button("🎯 Cravar Alvos Selecionados (7.3.3)", key="btn_cravar_alvos_733"):
