@@ -5352,6 +5352,289 @@ def salvar_st_produto_alvo(atualizacoes: pd.DataFrame) -> dict:
     return resultado
 
 
+# ── Estágio 7.3.3 — Seleção Consolidada de Alvos ────────────────────────────
+# Solicitação Técnica (2026-08-03): unificar Bloco H (SPED) e XML (Entradas/
+# Saídas) numa única tabela de consulta, pra o auditor "cravar" alvos de
+# fiscalização que não têm divergência financeira aparente no 7.2/7.3, mas
+# têm volume físico (XML) ou estoque estagnado (Bloco H) suspeito.
+_COLUNAS_CONSOLIDADO_733 = ["ANO", "DESCR_PROD", "UNID_PROD", "QTDE", "VALOR_TOTAL", "ORIGEM"]
+
+_QUERY_CONSOLIDADO_733_XML = """
+WITH dedup AS (
+    SELECT ANO_ELEITO AS ANO,
+           fatoitemnfe_infnfe_det_prod_xprod AS DESCR_PROD,
+           fatoitemnfe_infnfe_det_prod_ucom AS UNID_PROD,
+           TRY_CAST(fatoitemnfe_infnfe_det_prod_qcom AS DOUBLE) AS QTDE,
+           TRY_CAST(fatoitemnfe_infnfe_det_prod_vprod AS DOUBLE) AS VALOR_TOTAL,
+           ROW_NUMBER() OVER (
+               PARTITION BY fatoitemnfe_infprot_chnfe, fatoitemnfe_infnfe_det_nitem
+               ORDER BY PASTA_ORIGEM
+           ) AS rn
+    FROM {tabela}
+    WHERE 1=1{filtro_autoemissao}
+)
+SELECT ANO, DESCR_PROD, UNID_PROD, SUM(QTDE) AS QTDE, SUM(VALOR_TOTAL) AS VALOR_TOTAL,
+       '{origem}' AS ORIGEM
+FROM dedup WHERE rn = 1
+GROUP BY ANO, DESCR_PROD, UNID_PROD
+"""
+
+_QUERY_CONSOLIDADO_733_ESTOQUE = """
+SELECT ANO_REFERENCIA AS ANO, DESCR_ITEM_DECLARACAO AS DESCR_PROD, UNIDADE AS UNID_PROD,
+       SUM(TRY_CAST(QUANTIDADE_FINAL AS DOUBLE)) AS QTDE,
+       CAST(NULL AS DOUBLE) AS VALOR_TOTAL, 'estoque' AS ORIGEM
+FROM estoque_anual_consolidado
+WHERE QUANTIDADE_FINAL IS NOT NULL
+GROUP BY ANO_REFERENCIA, DESCR_ITEM_DECLARACAO, UNIDADE
+"""
+
+
+def gerar_consolidado_origens_733() -> dict:
+    """Estágio 7.3.3 — Seleção Consolidada de Alvos: une (UNION ALL)
+    Entradas (`estoque_entradas`, Estágio 4), Saídas (`estoque_saidas`,
+    Estágio 4, excluindo autoemissão) e Estoque (`estoque_anual_
+    consolidado`, Estágio 5, só `QUANTIDADE_FINAL IS NOT NULL`) numa única
+    tabela de consulta.
+
+    Agregado por (ANO, DESCR_PROD, UNID_PROD, ORIGEM) — SUM de QTDE/
+    VALOR_TOTAL — decisão de engenharia, não pedida explicitamente na
+    Solicitação Técnica: a tabela bruta (uma linha por item físico de XML)
+    teria dezenas/centenas de milhares de linhas nas 3 operações reais,
+    inviável pra um st.data_editor e sem ganho de informação pro auditor
+    (que decide por produto/ano/origem, não por nota individual) — mesmo
+    padrão de agregação usado em todo outro painel de consulta do app
+    (`estagio8_agrupado`, `cruzamento_produto`, etc.).
+
+    Fontes/mapeamento de campo (nomes reais, ver DICIONARIO DE CAMPOS.txt):
+    - Entradas: `ANO_ELEITO`, `fatoitemnfe_infnfe_det_prod_xprod` (descrição
+      XML), `_ucom` (unidade), `_qcom` (quantidade), `_vprod` (valor) —
+      mesma dedup ET/EP de `_valores_por_ano_item()` (`ROW_NUMBER() OVER
+      (PARTITION BY CHV_NFE, NITEM ORDER BY PASTA_ORIGEM)`); autoemissão
+      MANTIDA (mesma decisão de Compras em toda a base).
+    - Saídas: mesmos campos de `estoque_saidas`, EXCLUINDO autoemissão
+      (`fatonfe_infnfe_emit_cnpj != fatonfe_infnfe_dest_cnpj`) — mesma
+      regra de Vendas em todo o app; mesma dedup ET/EP.
+    - Estoque: `ANO_REFERENCIA`, `DESCR_ITEM_DECLARACAO`, `UNIDADE`,
+      `QUANTIDADE_FINAL`; `VALOR_TOTAL` sempre NULL — `VL_ITEM` não existe
+      em `estoque_anual_consolidado` (Estágio 5 nunca estendeu o schema
+      pra isso, decisão documentada em `_valores_estoque_hunter()`);
+      confirmado com o usuário (AskUserQuestion, 2026-08-03) deixar em
+      branco em vez de reconciliar com o SPED cru (granularidade não bate
+      1:1 com `QUANTIDADE_FINAL` por linha — aquele é agregado por
+      ANO+COD_ITEM, dividido em VALOR_INICIAL/VALOR_FINAL).
+
+    Regra R07: ANO/DESCR_PROD/UNID_PROD/ORIGEM sempre string. Devolve
+    {'consolidado': DataFrame, 'erros': list} — erros acumula tabela por
+    tabela ausente, sem interromper as demais origens."""
+    colunas = _COLUNAS_CONSOLIDADO_733
+    erros: list = []
+    partes = []
+    if not _BANCO_PATH.exists():
+        return {"consolidado": pd.DataFrame(columns=colunas), "erros": ["Banco ainda não existe."]}
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+
+            if "estoque_entradas" in tabelas:
+                partes.append(con.execute(
+                    _QUERY_CONSOLIDADO_733_XML.format(
+                        tabela="estoque_entradas", filtro_autoemissao="", origem="entrada",
+                    )
+                ).df())
+            else:
+                erros.append("Tabela estoque_entradas (Estágio 4) ainda não foi gerada.")
+
+            if "estoque_saidas" in tabelas:
+                partes.append(con.execute(
+                    _QUERY_CONSOLIDADO_733_XML.format(
+                        tabela="estoque_saidas",
+                        filtro_autoemissao=(
+                            " AND fatonfe_infnfe_emit_cnpj != fatonfe_infnfe_dest_cnpj"
+                        ),
+                        origem="saida",
+                    )
+                ).df())
+            else:
+                erros.append("Tabela estoque_saidas (Estágio 4) ainda não foi gerada.")
+
+            if "estoque_anual_consolidado" in tabelas:
+                partes.append(con.execute(_QUERY_CONSOLIDADO_733_ESTOQUE).df())
+            else:
+                erros.append("Tabela estoque_anual_consolidado (Estágio 5) ainda não foi gerada.")
+    except Exception:
+        logger.exception("Erro ao gerar consolidado 7.3.3 em %s", _BANCO_PATH)
+        return {"consolidado": pd.DataFrame(columns=colunas), "erros": ["Erro ao processar — ver log."]}
+
+    if not partes:
+        return {"consolidado": pd.DataFrame(columns=colunas), "erros": erros}
+
+    consolidado = pd.concat(partes, ignore_index=True)
+    consolidado = _forcar_colunas_string(consolidado, ["ANO", "DESCR_PROD", "UNID_PROD", "ORIGEM"])
+    consolidado = (
+        consolidado[colunas]
+        .sort_values(["ORIGEM", "ANO", "DESCR_PROD"])
+        .reset_index(drop=True)
+    )
+    return {"consolidado": consolidado, "erros": erros}
+
+
+def persistir_consolidado_origens_733(callback=None) -> dict:
+    """Persiste `estagio733_consolidado` (cache) — mesmo padrão de
+    `persistir_*()` já usado em outros estágios. Sem parâmetros (sempre
+    reprocessa Entradas/Saídas/Estoque inteiros, sem filtro de produto).
+    Devolve {'total': int, 'erros': list} ou {'erro': str} se falhar."""
+    resultado: dict = {}
+    try:
+        dados = gerar_consolidado_origens_733()
+        df = dados["consolidado"]
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            con.register("_df_consolidado_733", df)
+            con.execute(
+                "CREATE OR REPLACE TABLE estagio733_consolidado AS SELECT * FROM _df_consolidado_733"
+            )
+            con.unregister("_df_consolidado_733")
+        resultado["total"] = len(df)
+        resultado["erros"] = dados["erros"]
+        if callback:
+            callback(resultado["total"])
+    except Exception as exc:
+        logger.exception("Erro ao persistir estagio733_consolidado: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def estagio733_consolidado_ja_gerado() -> bool:
+    """True se a tabela estagio733_consolidado (Estágio 7.3.3) já existe
+    no DuckDB da operação atual."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            return "estagio733_consolidado" in tabelas
+    except Exception:
+        logger.exception("Erro ao verificar estagio733_consolidado existente em %s", _BANCO_PATH)
+        return False
+
+
+def consultar_consolidado_origens_733(limite: "int | None" = None) -> "tuple[pd.DataFrame, int]":
+    """Lê estagio733_consolidado já persistida (sem reprocessar)."""
+    colunas = _COLUNAS_CONSOLIDADO_733
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "estagio733_consolidado" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            total = con.execute("SELECT COUNT(*) FROM estagio733_consolidado").fetchone()[0]
+            query = (
+                "SELECT * FROM estagio733_consolidado" if limite is None
+                else f"SELECT * FROM estagio733_consolidado LIMIT {limite}"
+            )
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar estagio733_consolidado em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
+def salvar_alvos_selecionados_733(selecionados: pd.DataFrame) -> dict:
+    """Estágio 7.3.3 — "Cravar Alvos Selecionados": upsert ADITIVO em
+    `produto_alvo_fiscalizacao` a partir de linhas escolhidas no
+    consolidado (Entradas/Saídas/Estoque, sem RN1 calculado). Diferente de
+    `salvar_grupo_produto_alvo_fiscalizacao()` (Estágio 7.3.2, que
+    reconcilia a TELA INTEIRA — desmarcar cancela): aqui só insere/ativa
+    os produtos presentes em `selecionados`, nunca cancela nada que já
+    existia (nem do 7.2, nem de uma rodada anterior do 7.3.3) — decisão
+    confirmada com o usuário (AskUserQuestion, 2026-08-03), já que o 7.3.3
+    normalmente mostra um recorte/filtro do consolidado, não o universo
+    todo.
+
+    `selecionados` — uma linha por (DESCR_PROD, ANO, ORIGEM) marcada;
+    múltiplas linhas com a MESMA descrição (anos/origens diferentes)
+    colapsam num único alvo — upsert por DESCR_ALVO, mesma chave de
+    sempre em `produto_alvo_fiscalizacao` (confirmado com o usuário).
+
+    Alvo criado por aqui NÃO tem RN1 calculado — DIVERGENCIA/TOTAL_DEBITO/
+    TOTAL_CREDITO/PCT_DIVERGENCIA=0.0, INFRACAO/COD_ITEM='' — confirmado
+    com o usuário em vez de calcular RN1 na hora (fora do escopo original
+    do pedido); OBSERVACAO registra a origem. Se o produto JÁ EXISTIR (ex.:
+    já veio do 7.2 com RN1 de verdade), preserva TODOS os campos já
+    calculados — só reativa (STATUS='ativo') e atualiza TS, sem
+    sobrescrever DIVERGENCIA/INFRACAO/TOTAL_DEBITO/TOTAL_CREDITO/COD_ITEM/
+    OBSERVACAO/IS_ST já existentes (evita destruir dado real de RN1 já
+    calculado). Devolve {'total_adicionado': int, 'total_reativado': int}
+    ou {'erro': str} se falhar."""
+    resultado: dict = {}
+    try:
+        descricoes = selecionados["DESCR_PROD"].dropna().astype(str).str.strip()
+        descricoes = descricoes[descricoes != ""].unique().tolist()
+        if not descricoes:
+            resultado["total_adicionado"] = 0
+            resultado["total_reativado"] = 0
+            return resultado
+
+        existente, _ = consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=False)
+        ts_agora = datetime.now().isoformat(timespec="seconds")
+
+        if not existente.empty:
+            ja_existiam = set(existente["DESCR_ALVO"])
+            reativar_mask = (
+                existente["DESCR_ALVO"].isin(descricoes)
+                & (existente["STATUS"] != STATUS_PRODUTO_ALVO_ATIVO)
+            )
+            existente.loc[reativar_mask, "STATUS"] = STATUS_PRODUTO_ALVO_ATIVO
+            existente.loc[reativar_mask, "TS"] = ts_agora
+            total_reativado = int(reativar_mask.sum())
+        else:
+            ja_existiam = set()
+            total_reativado = 0
+
+        novas_descricoes = [d for d in descricoes if d not in ja_existiam]
+        linhas_novas = pd.DataFrame([{
+            "DESCR_ALVO": descr, "COD_ITEM": "", "TS": ts_agora,
+            "STATUS": STATUS_PRODUTO_ALVO_ATIVO, "DIVERGENCIA": 0.0,
+            "INFRACAO": "", "PCT_DIVERGENCIA": 0.0, "TOTAL_DEBITO": 0.0,
+            "TOTAL_CREDITO": 0.0,
+            "OBSERVACAO": "Selecionado via 7.3.3 (sem cálculo RN1).",
+            "IS_ST": False,
+        } for descr in novas_descricoes])
+
+        if not existente.empty and not linhas_novas.empty:
+            combinado = pd.concat([existente, linhas_novas], ignore_index=True)
+        elif not existente.empty:
+            combinado = existente
+        else:
+            combinado = linhas_novas
+
+        combinado = _forcar_colunas_string(
+            combinado, ["DESCR_ALVO", "COD_ITEM", "STATUS", "INFRACAO", "OBSERVACAO"],
+        )
+        combinado = (
+            combinado[_COLUNAS_PRODUTO_ALVO_FISCALIZACAO]
+            .sort_values("DIVERGENCIA", ascending=False)
+            .reset_index(drop=True)
+        )
+
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            con.register("_df_produto_alvo_fiscalizacao", combinado)
+            con.execute(
+                "CREATE OR REPLACE TABLE produto_alvo_fiscalizacao AS "
+                "SELECT * FROM _df_produto_alvo_fiscalizacao"
+            )
+            con.unregister("_df_produto_alvo_fiscalizacao")
+
+        resultado["total_adicionado"] = len(novas_descricoes)
+        resultado["total_reativado"] = total_reativado
+    except Exception as exc:
+        logger.exception("Erro ao cravar alvos selecionados (7.3.3): %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
 # ── Sumário de Unidades para Fator Multiplicador (Estágio 10, Entradas) ─────
 # Solicitação Técnica (2026-07-25): ao analisar um produto alvo, o auditor
 # precisa decidir se as unidades vindas do XML (`ucom`, aqui `unid_prod`)

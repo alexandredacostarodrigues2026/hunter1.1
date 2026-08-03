@@ -181,3 +181,9 @@ valor_destoante;Valor Destoante
 
 # Novos campos - 2026-07-29 (Estagio 10 - Produtos Alvos Salvos, campo ST)
 IS_ST;E ST (Substituicao Tributaria)
+
+# Novos campos - 2026-08-03 (Estagio 7.3.3 - Selecao Consolidada de Alvos)
+DESCR_PROD;Descricao Produto
+UNID_PROD;Unid.
+QTDE;Qtde
+VALOR_TOTAL;Valor Total

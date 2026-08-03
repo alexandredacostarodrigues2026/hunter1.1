@@ -1723,7 +1723,9 @@ def render_rn1_simulada_30() -> None:
         "Vendas como âncora real do XML, sem acréscimo. Total Débito, Total Crédito, Divergência, "
         "Infração e % Diverg recalculados sobre os novos totais — ajuda a identificar se uma margem "
         "de erro de escrituração explicaria as divergências ou se os indícios de omissão são "
-        "estruturais. Ordenado por Divergência decrescente."
+        "estruturais. Ordenado por Divergência decrescente. Compras e Vendas vêm da movimentação "
+        "física do XML (todo o volume do Estágio 4, com ou sem vínculo no Matching/BC3); Estoque "
+        "Inicial e Final vêm da declaração (SPED, Bloco H)."
     )
 
     if "rn1_simulada_30_gerado" not in st.session_state:
@@ -1769,6 +1771,136 @@ def render_rn1_simulada_30() -> None:
 
     st.session_state["rn1_simulada_30_gerado"] = True
     st.rerun()
+
+
+_COLUNAS_CONSOLIDADO_733 = ["ANO", "DESCR_PROD", "UNID_PROD", "QTDE", "VALOR_TOTAL", "ORIGEM"]
+_COLUNA_CHECKBOX_CONSOLIDADO_733 = "Selecionar p/ Fiscalização"
+
+
+def render_consolidado_origens_733() -> None:
+    """Estágio 7.3.3 — Seleção Consolidada de Alvos (2026-08-03,
+    Solicitação Técnica): une Entradas/Saídas/Estoque (Estágio 4/5) numa
+    única tabela de consulta, pro auditor "cravar" alvos que não têm
+    divergência financeira aparente no 7.2/7.3, mas têm volume físico
+    (XML) ou estoque estagnado (Bloco H) suspeito. Ver
+    loader.gerar_consolidado_origens_733() pro raciocínio de agregação/
+    fontes. Renderizada logo abaixo do painel 7.3.2, na mesma página
+    (render_pagina_rn1_simulada_30()) — posicionamento pedido
+    explicitamente na Solicitação Técnica.
+
+    Upsert ADITIVO (loader.salvar_alvos_selecionados_733(), confirmado com
+    o usuário via AskUserQuestion): cravar aqui nunca cancela nada que já
+    estava ativo em produto_alvo_fiscalizacao (nem do 7.2, nem de uma
+    rodada anterior do 7.3.3) — diferente do "💾 Salvar Grupo de Produto
+    Alvo" do 7.3.2, que reconcilia a tela inteira (desmarcar cancela).
+    Alvo cravado aqui não tem RN1 calculado (DIVERGENCIA/TOTAL_DEBITO/
+    TOTAL_CREDITO=0, INFRACAO vazio, OBSERVACAO registra a origem) —
+    também confirmado com o usuário, em vez de calcular RN1 na hora."""
+    st.markdown("**🔍 7.3.3: Seleção Consolidada (Estoque/XML)**")
+    st.caption(
+        "Une Entradas, Saídas (excluindo autoemissão) e Estoque (Bloco H, só anos já fechados) "
+        "numa única tabela — Qtde/Valor Total agregados por Ano+Descrição+Unidade+Origem. Ajuda a "
+        "encontrar itens com volume físico ou estoque suspeito que não aparecem no 7.2/7.3 por "
+        "falta de divergência financeira. Valor Total do Estoque fica em branco — o Bloco H não "
+        "tem valor nessa granularidade (só Entradas/Saídas têm, via XML). Alvo cravado aqui não "
+        "passa pela régua de divergência do 7.2/7.3 (fica marcado na Observação)."
+    )
+
+    if "estagio733_gerado" not in st.session_state:
+        st.session_state["estagio733_gerado"] = loader.estagio733_consolidado_ja_gerado()
+
+    if st.session_state["estagio733_gerado"]:
+        df_preview, total = loader.consultar_consolidado_origens_733(limite=None)
+        st.success(f"✅ {total:,} linha(s) em `estagio733_consolidado`.".replace(",", "."))
+        clicou = st.button(
+            "Regerar Consolidado (7.3.3)", key="btn_regerar_consolidado_733",
+            help="Reprocessa Entradas/Saídas/Estoque do zero.",
+        )
+    else:
+        df_preview = pd.DataFrame(columns=_COLUNAS_CONSOLIDADO_733)
+        clicou = st.button("Gerar Consolidado (7.3.3)", key="btn_gerar_consolidado_733")
+
+    if clicou:
+        with st.spinner("Unindo Entradas/Saídas/Estoque..."):
+            resultado = loader.persistir_consolidado_origens_733()
+        if "erro" in resultado:
+            st.error(f"Erro: {resultado['erro']}")
+            return
+        for erro in resultado.get("erros", []):
+            st.warning(erro)
+        st.session_state["estagio733_gerado"] = True
+        st.rerun()
+
+    if df_preview.empty:
+        if st.session_state["estagio733_gerado"]:
+            st.info("Nenhuma linha encontrada — confira se Entradas/Saídas/Estoque já foram gerados.")
+        return
+
+    col_busca, col_ano, col_origem = st.columns(3)
+    busca_descricao = col_busca.text_input("Buscar por Descrição", key="filtro_descricao_733")
+    anos_disponiveis = sorted(df_preview["ANO"].dropna().unique().tolist())
+    ano_selecionado = col_ano.selectbox("Ano", ["Todos"] + anos_disponiveis, key="filtro_ano_733")
+    origens_disponiveis = sorted(df_preview["ORIGEM"].dropna().unique().tolist())
+    origem_selecionada = col_origem.selectbox(
+        "Origem", ["Todas"] + origens_disponiveis, key="filtro_origem_733",
+    )
+
+    filtrado = df_preview
+    if busca_descricao.strip():
+        filtrado = filtrado[
+            filtrado["DESCR_PROD"].str.contains(busca_descricao.strip(), case=False, na=False)
+        ]
+    if ano_selecionado != "Todos":
+        filtrado = filtrado[filtrado["ANO"] == ano_selecionado]
+    if origem_selecionada != "Todas":
+        filtrado = filtrado[filtrado["ORIGEM"] == origem_selecionada]
+
+    st.markdown(f"**{len(filtrado):,} linha(s)** após filtro.".replace(",", "."))
+    amostra_raw = filtrado.head(200).copy()
+
+    editor_base = amostra_raw[_COLUNAS_CONSOLIDADO_733].copy()
+    editor_base.insert(0, _COLUNA_CHECKBOX_CONSOLIDADO_733, False)
+
+    editor_exibicao = editor_base.copy()
+    editor_exibicao["VALOR_TOTAL"] = editor_exibicao["VALOR_TOTAL"].apply(
+        lambda v: "" if pd.isna(v) else _formatar_moeda_br(v)
+    )
+    editor_exibicao["QTDE"] = editor_exibicao["QTDE"].apply(
+        lambda v: "" if pd.isna(v) else _formatar_moeda_br(v)
+    )
+    editor_exibicao = editor_exibicao.rename(columns=loader.carregar_dicionario_campos())
+    editor_exibicao = editor_exibicao.rename(columns={"ORIGEM": "Origem"})
+
+    colunas_travadas = [c for c in editor_exibicao.columns if c != _COLUNA_CHECKBOX_CONSOLIDADO_733]
+    with st.container(key="estagio733_editor_consolidado"):
+        st.markdown(
+            "<style>.st-key-estagio733_editor_consolidado [data-testid='stDataFrame'] "
+            "* { font-size: 12px; }</style>",
+            unsafe_allow_html=True,
+        )
+        editado = st.data_editor(
+            editor_exibicao,
+            use_container_width=True,
+            hide_index=True,
+            disabled=colunas_travadas,
+            key="editor_consolidado_733",
+        )
+
+    if st.button("🎯 Cravar Alvos Selecionados (7.3.3)", key="btn_cravar_alvos_733"):
+        marcados = editado[_COLUNA_CHECKBOX_CONSOLIDADO_733].reindex(editor_base.index).fillna(False)
+        selecionados = editor_base.loc[marcados.to_numpy()]
+        if selecionados.empty:
+            st.warning("Nenhuma linha marcada.")
+        else:
+            resultado = loader.salvar_alvos_selecionados_733(selecionados)
+            if "erro" in resultado:
+                st.error(f"Erro: {resultado['erro']}")
+            else:
+                st.success(
+                    f"✅ {resultado['total_adicionado']} alvo(s) novo(s) cravado(s), "
+                    f"{resultado['total_reativado']} reativado(s)."
+                )
+                st.rerun()
 
 
 _COLUNAS_PREVIEW_DIVERGENCIA = [
@@ -2537,12 +2669,16 @@ def render_pagina_rn1_simulada_30() -> None:
     loader.gerar_rn1_simulada_30()/render_rn1_simulada_30(). Exige
     dados_carregados (mesmo padrão das outras páginas); depende também de
     rn1_produto (Estágio 7.3.1) já gerada, checado dentro de
-    render_rn1_simulada_30()."""
+    render_rn1_simulada_30(). Também renderiza, logo abaixo, a seção do
+    Estágio 7.3.3 (Seleção Consolidada de Alvos) — posicionamento pedido
+    explicitamente na Solicitação Técnica de 2026-08-03, mesma página."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     render_rn1_simulada_30()
+    st.divider()
+    render_consolidado_origens_733()
 
 
 _COLUNAS_PREVIEW_ESTAGIO8_DETALHADO = ["codproddecl", "desc_xml", "descrição_decl", "idunico"]
