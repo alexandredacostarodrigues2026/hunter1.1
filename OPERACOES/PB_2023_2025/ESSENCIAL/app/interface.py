@@ -1784,9 +1784,11 @@ def render_consolidado_origens_733() -> None:
     divergência financeira aparente no 7.2/7.3, mas têm volume físico
     (XML) ou estoque estagnado (Bloco H) suspeito. Ver
     loader.gerar_consolidado_origens_733() pro raciocínio de agregação/
-    fontes. Renderizada logo abaixo do painel 7.3.2, na mesma página
-    (render_pagina_rn1_simulada_30()) — posicionamento pedido
-    explicitamente na Solicitação Técnica.
+    fontes. Chamada por render_pagina_consolidado_733() — botão PRÓPRIO
+    no Menu Principal desde 2026-08-03 (pedido do usuário: "separe 7.3.3
+    do 7.3.2 criando botão próprio pra ele"); a Solicitação Técnica
+    original pedia essa seção logo abaixo do 7.3.2, na mesma página —
+    revertido nesta sessão.
 
     Upsert ADITIVO (loader.salvar_alvos_selecionados_733(), confirmado com
     o usuário via AskUserQuestion): cravar aqui nunca cancela nada que já
@@ -2408,8 +2410,16 @@ def render_menu_principal() -> None:
     # 2ª linha do menu — começa no Estágio 8 (2026-07-23, pedido do usuário:
     # "inicie com o 8 uma nova linha de botões"). 12 colunas ficavam
     # espremidas numa linha só; a 2ª linha também dá espaço pros próximos
-    # estágios sem precisar espremer mais a 1ª.
-    col_estagio8, col_estagio9, col_produtos_alvo_salvos = st.columns(3)
+    # estágios sem precisar espremer mais a 1ª. "7.3.3: Seleção Consolidada"
+    # entrou aqui em 2026-08-03 (ganhou botão próprio, separado do 7.3.2 —
+    # pedido do usuário) em vez da 1ª linha (já tinha 11 colunas).
+    col_consolidado_733, col_estagio8, col_estagio9, col_produtos_alvo_salvos = st.columns(4)
+    if col_consolidado_733.button(
+        "🔍 7.3.3: SELEÇÃO CONSOLIDADA (ESTOQUE/XML)",
+        key="btn_menu_consolidado_733", use_container_width=True,
+    ):
+        st.session_state["pagina_ativa"] = "consolidado_733"
+        st.rerun()
     if col_estagio8.button(
         "📋 ESTÁGIO 8: RESUMO DE ENTRADAS / SAÍDAS / ESTOQUES",
         key="btn_menu_estagio_8", use_container_width=True,
@@ -2686,15 +2696,30 @@ def render_pagina_rn1_simulada_30() -> None:
     loader.gerar_rn1_simulada_30()/render_rn1_simulada_30(). Exige
     dados_carregados (mesmo padrão das outras páginas); depende também de
     rn1_produto (Estágio 7.3.1) já gerada, checado dentro de
-    render_rn1_simulada_30(). Também renderiza, logo abaixo, a seção do
-    Estágio 7.3.3 (Seleção Consolidada de Alvos) — posicionamento pedido
-    explicitamente na Solicitação Técnica de 2026-08-03, mesma página."""
+    render_rn1_simulada_30(). Estágio 7.3.3 (Seleção Consolidada de
+    Alvos) teve seu próprio botão/página separados em 2026-08-03 (pedido
+    do usuário) — ver render_pagina_consolidado_733()."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     render_rn1_simulada_30()
-    st.divider()
+
+
+def render_pagina_consolidado_733() -> None:
+    """Painel '7.3.3: Seleção Consolidada (Estoque/XML)' (Estágio 7.3.3),
+    botão próprio no Menu Principal desde 2026-08-03 — Solicitação
+    Técnica original (2026-08-03) pedia esta seção logo abaixo do 7.3.2,
+    na mesma página; o usuário pediu depois pra separar em botão próprio
+    ("separe 7.3.3 do 7.3.2 criando botão próprio pra ele"). Ver
+    loader.gerar_consolidado_origens_733()/render_consolidado_origens_733().
+    Exige dados_carregados (mesmo padrão das outras páginas) — mas NÃO
+    depende de nenhum outro estágio 7.x já gerado (lê estoque_entradas/
+    estoque_saidas/estoque_anual_consolidado direto, Estágios 4/5)."""
+    _botao_voltar_menu()
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        return
     render_consolidado_origens_733()
 
 
