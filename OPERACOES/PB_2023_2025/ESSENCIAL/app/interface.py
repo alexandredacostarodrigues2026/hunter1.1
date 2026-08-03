@@ -916,7 +916,7 @@ def render_estoque_anual() -> None:
     st.rerun()
 
 
-_COLUNAS_PREVIEW_PRODUTO_ALVO = ["COD_ITEM", "DESCR_ALVO"]
+_COLUNAS_PREVIEW_PRODUTO_ALVO = ["COD_ITEM", "DESCR_ALVO", "UNID_ALVO"]
 
 
 def render_descricao_relevante() -> None:
@@ -929,14 +929,22 @@ def render_descricao_relevante() -> None:
     frequente (moda) — ver loader.montar_produto_alvo(). Serve de nome
     "oficial" pra padronizar relatórios e apoiar a seleção de produtos
     pra auditoria física. Mesmo padrão de botão "Gerar/Regerar" + prévia
-    de render_estoque_anual()."""
+    de render_estoque_anual().
+
+    Unidade Relevante (`UNID_ALVO`, 2026-08-03, Solicitação Técnica —
+    "Enriquecimento da Identidade do Produto"): moda da unidade de
+    medida, calculada de forma INDEPENDENTE da moda de descrição (mesmo
+    rigor, contagem própria — não altera em nada a DESCR_ALVO já
+    validada). Serve de "unidade de destino" pro Fator Multiplicador
+    (Estágios 9/10) e evita somar quantidades em unidades diferentes
+    sem alerta na RN1."""
     st.subheader("Estágio 7.1 — Fixação da Descrição Relevante")
     st.caption(
-        "Elege, por COD_ITEM, a descrição estatisticamente mais frequente (moda) entre "
-        "entradas, saídas e estoque — um mesmo produto pode aparecer com grafias levemente "
-        "diferentes entre essas 3 fontes. Ignora códigos nulos ou sentinela ('nd'/'nm', gravados "
-        "quando o Matching não achou correspondência); empate na contagem é desempatado em ordem "
-        "alfabética (A-Z)."
+        "Elege, por COD_ITEM, a descrição E a unidade de medida estatisticamente mais frequentes "
+        "(moda, calculadas de forma independente uma da outra) entre entradas, saídas e estoque — "
+        "um mesmo produto pode aparecer com grafias/unidades levemente diferentes entre essas 3 "
+        "fontes. Ignora códigos nulos ou sentinela ('nd'/'nm', gravados quando o Matching não achou "
+        "correspondência); empate na contagem é desempatado em ordem alfabética (A-Z)."
     )
 
     if "produto_alvo_gerado" not in st.session_state:

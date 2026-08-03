@@ -187,3 +187,6 @@ DESCR_PROD;Descricao Produto
 UNID_PROD;Unid.
 QTDE;Qtde
 VALOR_TOTAL;Valor Total
+
+# Novos campos - 2026-08-03 (Estagio 7.1 - Enriquecimento da Identidade do Produto, tabela produto_alvo)
+UNID_ALVO;Unidade Relevante

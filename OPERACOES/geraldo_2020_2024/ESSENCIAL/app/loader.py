@@ -2350,13 +2350,22 @@ def consultar_estoque_anual_consolidado(limite: "int | None" = 200) -> "tuple[pd
 # digitação, abreviação, atualização de cadastro do fornecedor/auditada).
 # Primeiro sub-passo do Estágio 7 (escolha do produto a auditar) — próximos
 # sub-passos (7.2 em diante) ainda não especificados.
-_COLUNAS_PRODUTO_ALVO = ["COD_ITEM", "DESCR_ALVO"]
+_COLUNAS_PRODUTO_ALVO = ["COD_ITEM", "DESCR_ALVO", "UNID_ALVO"]
 
 _TABELAS_PRODUTO_ALVO_FONTE = ("estoque_entradas", "estoque_saidas", "estoque_anual_consolidado")
 # = "entradas, saidas e estoque" na linguagem do usuário — nomes reais das
 # tabelas no DuckDB mantidos como estão (Estágios 4/5 inteiros dependem
 # deles); decisão explícita de não renomear as tabelas em si, só a
 # terminologia usada nos comentários/docstrings deste módulo.
+
+_COLUNA_UNIDADE_POR_TABELA_PRODUTO_ALVO = {
+    "estoque_entradas": "fatoitemnfe_infnfe_det_prod_ucom",
+    "estoque_saidas": "fatoitemnfe_infnfe_det_prod_ucom",
+    "estoque_anual_consolidado": "UNIDADE",
+}
+# Unidade comercial do XML (Entradas/Saídas, Estágio 4) ou declarada no
+# Bloco H (Estoque, Estágio 5) — mesmo mapeamento de campo já usado no
+# consolidado do Estágio 7.3.3 (loader.gerar_consolidado_origens_733()).
 
 _CODIGOS_PLACEHOLDER_PRODUTO_ALVO = {"nd", "nm"}
 # Códigos-sentinela de "não declarado"/"não mapeado" gravados quando o
@@ -2394,10 +2403,23 @@ def montar_produto_alvo() -> pd.DataFrame:
     de novo em `gerar_cruzamento_valor()` (Estágio 7.2) — `produto_alvo`
     já sai com `COD_ITEM` normalizado e único.
 
-    Regra R07: `COD_ITEM` sempre string. Devolve colunas ['COD_ITEM',
-    'DESCR_ALVO']. Vazia se nenhuma das 3 tabelas fonte existir ainda
-    (nenhum erro — pré-requisitos ainda não gerados, ver 'TABELAS
-    ENTRADAS / SAÍDAS / ESTOQUES')."""
+    Unidade Relevante (`UNID_ALVO`, 2026-08-03, Solicitação Técnica —
+    "Enriquecimento da Identidade do Produto"): moda da unidade de
+    medida por COD_ITEM — `fatoitemnfe_infnfe_det_prod_ucom` (unidade
+    comercial do XML) em Entradas/Saídas, `UNIDADE` (Bloco H) em Estoque
+    — ver `_COLUNA_UNIDADE_POR_TABELA_PRODUTO_ALVO`. Calculada de forma
+    INDEPENDENTE da moda de DESCR_ALVO (confirmado com o usuário via
+    AskUserQuestion: mesma lógica/rigor da descrição, mas como
+    contagem PRÓPRIA — não é o par (DESCR, UNIDADE) com maior contagem
+    combinada) — decisão deliberada pra não alterar em nada a eleição de
+    DESCR_ALVO já validada e usada em todo o Estágio 7.2/7.3 (RN1). Linhas
+    com unidade nula/vazia não entram na contagem; produto sem nenhuma
+    unidade válida em nenhuma das 3 fontes fica com `UNID_ALVO=""`.
+
+    Regra R07: `COD_ITEM`/`UNID_ALVO` sempre string. Devolve colunas
+    ['COD_ITEM', 'DESCR_ALVO', 'UNID_ALVO']. Vazia se nenhuma das 3
+    tabelas fonte existir ainda (nenhum erro — pré-requisitos ainda não
+    gerados, ver 'TABELAS ENTRADAS / SAÍDAS / ESTOQUES')."""
     if not _BANCO_PATH.exists():
         return pd.DataFrame(columns=_COLUNAS_PRODUTO_ALVO)
     try:
@@ -2408,13 +2430,18 @@ def montar_produto_alvo() -> pd.DataFrame:
                 return pd.DataFrame(columns=_COLUNAS_PRODUTO_ALVO)
             placeholders = ", ".join(f"'{c}'" for c in _CODIGOS_PLACEHOLDER_PRODUTO_ALVO)
             uniao = " UNION ALL ".join(
-                f"SELECT COD_ITEM_DECLARACAO AS COD_ITEM, TRIM(DESCR_ITEM_DECLARACAO) AS DESCR "
+                f"SELECT COD_ITEM_DECLARACAO AS COD_ITEM, TRIM(DESCR_ITEM_DECLARACAO) AS DESCR, "
+                f"TRIM({_COLUNA_UNIDADE_POR_TABELA_PRODUTO_ALVO[t]}) AS UNID "
                 f"FROM {t} WHERE COD_ITEM_DECLARACAO IS NOT NULL "
                 f"AND LOWER(COD_ITEM_DECLARACAO) NOT IN ({placeholders})"
                 for t in fontes
             )
             contagem = con.execute(
                 f"SELECT COD_ITEM, DESCR, COUNT(*) AS FREQUENCIA FROM ({uniao}) GROUP BY COD_ITEM, DESCR"
+            ).df()
+            contagem_unid = con.execute(
+                f"SELECT COD_ITEM, UNID, COUNT(*) AS FREQUENCIA FROM ({uniao}) "
+                f"WHERE UNID IS NOT NULL AND UNID != '' GROUP BY COD_ITEM, UNID"
             ).df()
     except Exception:
         logger.exception("Erro ao montar produto_alvo em %s", _BANCO_PATH)
@@ -2439,8 +2466,29 @@ def montar_produto_alvo() -> pd.DataFrame:
     eleitos = (
         contagem.groupby("COD_ITEM", as_index=False)
         .first()
-        .rename(columns={"DESCR": "DESCR_ALVO"})[_COLUNAS_PRODUTO_ALVO]
+        .rename(columns={"DESCR": "DESCR_ALVO"})
     )
+
+    # Moda da unidade — mesma técnica (normaliza, reagrupa, ordena,
+    # first()), mas em contagem PRÓPRIA/independente da de DESCR (ver
+    # docstring). merge how="left" preserva todo produto de 'eleitos'
+    # mesmo sem nenhuma unidade válida (UNID_ALVO="" nesse caso).
+    if not contagem_unid.empty:
+        contagem_unid["COD_ITEM"] = _normalizar_cod_item_flexivel(contagem_unid["COD_ITEM"])
+        contagem_unid = contagem_unid.groupby(["COD_ITEM", "UNID"], as_index=False)["FREQUENCIA"].sum()
+        contagem_unid = contagem_unid.sort_values(
+            ["COD_ITEM", "FREQUENCIA", "UNID"], ascending=[True, False, True],
+        )
+        eleitos_unid = (
+            contagem_unid.groupby("COD_ITEM", as_index=False).first()
+            .rename(columns={"UNID": "UNID_ALVO"})[["COD_ITEM", "UNID_ALVO"]]
+        )
+        eleitos = eleitos.merge(eleitos_unid, on="COD_ITEM", how="left")
+    else:
+        eleitos["UNID_ALVO"] = ""
+    eleitos["UNID_ALVO"] = eleitos["UNID_ALVO"].fillna("")
+
+    eleitos = eleitos[_COLUNAS_PRODUTO_ALVO]
     return _forcar_colunas_string(eleitos, _COLUNAS_PRODUTO_ALVO).sort_values("COD_ITEM").reset_index(drop=True)
 
 
