@@ -4935,15 +4935,21 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     )
 
 
-_COLUNAS_PRODUTOS_ALVO_SALVOS = ["DESCR_ALVO", "COD_ITEM", "UNID_ALVO", "DESCR_EDITADA", "IS_ST"]
+_COLUNAS_PRODUTOS_ALVO_SALVOS = [
+    "DESCR_ALVO", "COD_ITEM", "UNID_ALVO", "UNID_EDITADA", "DESCR_EDITADA", "IS_ST",
+]
 _COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS = "🎯 Escolher p/ Cruzamento"
 # Rótulos de exibição (ver DICIONARIO DE CAMPOS.txt) — usados pra achar
 # as colunas DEPOIS do rename via loader.carregar_dicionario_campos().
-# UNID_ALVO/DESCR_EDITADA (2026-08-04): chegaram a ser editáveis no
-# Estágio 7.3.2 (_render_grupo_produto_alvo_fiscalizacao()) — o usuário
-# pediu pra reverter aquilo e mover a edição pra cá, mesmo padrão já
-# usado pro IS_ST (campo informativo, editado só nesta tela).
-_COLUNA_LABEL_UNID_ALVO = "Unidade Relevante"
+# DESCR_EDITADA (2026-08-04): chegou a ser editável no Estágio 7.3.2
+# (_render_grupo_produto_alvo_fiscalizacao()) — o usuário pediu pra
+# reverter aquilo e mover a edição pra cá, mesmo padrão já usado pro
+# IS_ST (campo informativo, editado só nesta tela). UNID_ALVO é SEMPRE
+# só leitura (valor original transportado do Estágio 7.1, nunca
+# editado em lugar nenhum) — `UNID_EDITADA` é o campo editável
+# separado (mesma ideia de DESCR_ALVO/DESCR_EDITADA), pra não perder o
+# valor original quando o auditor corrige a unidade.
+_COLUNA_LABEL_UNID_EDITADA = "Unidade Editada"
 _COLUNA_LABEL_DESCR_EDITADA = "Descricao Editada"
 _COLUNA_IS_ST_PRODUTOS_ALVO_SALVOS = "E ST (Substituicao Tributaria)"
 
@@ -4971,12 +4977,19 @@ def render_produtos_alvo_salvos() -> None:
     escolher_produto_cruzamento(), que só guarda 1 linha) — o botão
     valida isso e avisa se 0 ou mais de 1 estiverem marcados.
 
-    Unidade Relevante/Descrição Editada (2026-08-04): editáveis nesta
+    Descrição Editada/Unidade Editada (2026-08-04): editáveis nesta
     tabela junto com "É ST" — botão "💾 Salvar Edições" salva os 3 campos
     de uma vez (loader.salvar_edicoes_produto_alvo_salvos(), UPDATE
     parcial por chave). Chegaram a ser editáveis no Estágio 7.3.2
     (Solicitação Técnica original), usuário pediu pra reverter aquilo e
-    mover a edição pra cá, mesmo padrão já usado pro IS_ST.
+    mover a edição pra cá, mesmo padrão já usado pro IS_ST. Unidade
+    Editada (`UNID_EDITADA`) é um campo SEPARADO de Unidade Relevante
+    (`UNID_ALVO`, sempre só leitura, valor original transportado do
+    Estágio 7.1) — 1ª tentativa deixava UNID_ALVO editável direto e
+    perdia o original a cada correção de unidade; usuário pediu campo
+    novo, mesmo padrão de Descrição Relevante/Descrição Editada. Valor
+    EFETIVO pra qualquer consumidor futuro (Estágio 15): UNID_EDITADA
+    quando preenchido, senão UNID_ALVO.
 
     Termina com a seção "🔀 Busca de Produtos Correspondentes" (rótulo
     ajustado 2026-07-23, era "Cruzamento") — aba "📥 Entradas" com o
@@ -4987,8 +5000,9 @@ def render_produtos_alvo_salvos() -> None:
     st.subheader("Estágio 10 - Produtos Alvos Salvos")
     st.caption(
         "Produtos já marcados como ativos no Grupo de Produto Alvo (Estágio 7.3.2). Marque "
-        "\"Escolher p/ Cruzamento\" pra um deles e confirme abaixo. Unidade Relevante, Descrição "
-        "Editada e É ST são editáveis — use \"💾 Salvar Edições\" pra gravar."
+        "\"Escolher p/ Cruzamento\" pra um deles e confirme abaixo. Descrição Editada, Unidade "
+        "Editada e É ST são editáveis (Unidade Relevante continua travada — é o valor original) "
+        "— use \"💾 Salvar Edições\" pra gravar."
     )
 
     grupo, total = loader.consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=True)
@@ -5016,7 +5030,7 @@ def render_produtos_alvo_salvos() -> None:
     )
     editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
     colunas_editaveis = (
-        _COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS, _COLUNA_LABEL_UNID_ALVO,
+        _COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS, _COLUNA_LABEL_UNID_EDITADA,
         _COLUNA_LABEL_DESCR_EDITADA, _COLUNA_IS_ST_PRODUTOS_ALVO_SALVOS,
     )
     colunas_travadas = [c for c in editor_exibicao.columns if c not in colunas_editaveis]
@@ -5040,18 +5054,21 @@ def render_produtos_alvo_salvos() -> None:
     # produto por vez): salva o estado de TODOS os produtos exibidos de
     # uma vez, via loader.salvar_edicoes_produto_alvo_salvos() (UPDATE
     # parcial só das colunas editáveis, preserva o resto do grupo
-    # intocado). Unidade Relevante/Descrição Editada (2026-08-04) se
+    # intocado). Descrição Editada/Unidade Editada (2026-08-04) se
     # juntaram ao mesmo botão/UPDATE — chegaram a ser editáveis no
     # Estágio 7.3.2, usuário pediu pra mover pra cá, mesmo padrão de
     # campo puramente informativo (confirmado via AskUserQuestion) que
-    # não influencia nenhum cálculo ainda.
+    # não influencia nenhum cálculo ainda. UNID_ALVO (Unidade Relevante)
+    # NÃO entra em `atualizacoes` — é sempre só leitura, o campo
+    # editável correspondente é UNID_EDITADA (separado, pra não perder
+    # o valor original transportado do Estágio 7.1).
     if st.button("💾 Salvar Edições", key="btn_salvar_st_produtos_alvo"):
         atualizacoes = editor_base[["DESCR_ALVO", "COD_ITEM"]].copy()
         atualizacoes["IS_ST"] = (
             editado[_COLUNA_IS_ST_PRODUTOS_ALVO_SALVOS].reindex(editor_base.index).fillna(False)
         )
-        atualizacoes["UNID_ALVO"] = (
-            editado[_COLUNA_LABEL_UNID_ALVO].reindex(editor_base.index).fillna("")
+        atualizacoes["UNID_EDITADA"] = (
+            editado[_COLUNA_LABEL_UNID_EDITADA].reindex(editor_base.index).fillna("")
         )
         atualizacoes["DESCR_EDITADA"] = (
             editado[_COLUNA_LABEL_DESCR_EDITADA].reindex(editor_base.index).fillna("")

@@ -193,3 +193,6 @@ UNID_ALVO;Unidade Relevante
 
 # Novos campos - 2026-08-04 (Estagio 7.3.2 - Grupo de Produto Alvo, tabela produto_alvo_fiscalizacao)
 DESCR_EDITADA;Descricao Editada
+
+# Novos campos - 2026-08-04 (Estagio 10 - Produtos Alvos Salvos, tabela produto_alvo_fiscalizacao)
+UNID_EDITADA;Unidade Editada
