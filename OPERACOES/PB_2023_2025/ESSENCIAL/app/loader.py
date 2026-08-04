@@ -2367,6 +2367,32 @@ _COLUNA_UNIDADE_POR_TABELA_PRODUTO_ALVO = {
 # Bloco H (Estoque, Estágio 5) — mesmo mapeamento de campo já usado no
 # consolidado do Estágio 7.3.3 (loader.gerar_consolidado_origens_733()).
 
+_COLUNA_COD_ITEM_POR_TABELA_PRODUTO_ALVO = {
+    "estoque_entradas": "COD_ITEM_DECLARACAO",
+    "estoque_saidas": "fatoitemnfe_infnfe_det_prod_cprod",
+    "estoque_anual_consolidado": "COD_ITEM_DECLARACAO",
+}
+_COLUNA_DESCR_POR_TABELA_PRODUTO_ALVO = {
+    "estoque_entradas": "DESCR_ITEM_DECLARACAO",
+    "estoque_saidas": "fatoitemnfe_infnfe_det_prod_xprod",
+    "estoque_anual_consolidado": "DESCR_ITEM_DECLARACAO",
+}
+# 2026-08-04, achado real (usuário, ao investigar por que UNID_ALVO do
+# SKOL elegeu "cx12" em vez de "LAT"): Entradas são emissão de TERCEIRO
+# (fornecedor) — código/descrição do XML são dados dele, não da
+# auditada, por isso dependem do Matching/BC3 (COD_ITEM_DECLARACAO/
+# DESCR_ITEM_DECLARACAO, ~99,9% cobertura). Saídas são emissão PRÓPRIA
+# (a auditada é emitente) — confirmado com o usuário: "toda emissão
+# própria do nosso CNPJ alvo a descrição do produto e o código de
+# produto corresponde à declaração do contribuinte. toda a emissão de
+# terceiro corresponde a dados do fornecedor" — ou seja, o próprio
+# cprod/xprod do XML dela JÁ É a declaração, sem precisar de Matching
+# (COD_ITEM_DECLARACAO fica nulo em ~98,8% das linhas de Saídas,
+# mesmo achado já documentado em 2026-07-18 e corrigido em
+# _valores_por_ano_item()/gerar_cruzamento_valor() — só não tinha sido
+# replicado aqui). Bloco H (Estoque) é SPED nativo (sem XML) — COD_
+# ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO já são a declaração em si.
+
 _CODIGOS_PLACEHOLDER_PRODUTO_ALVO = {"nd", "nm"}
 # Códigos-sentinela de "não declarado"/"não mapeado" gravados quando o
 # Matching (BC3, Estágio 2) não achou correspondência pro item — achado
@@ -2416,6 +2442,21 @@ def montar_produto_alvo() -> pd.DataFrame:
     com unidade nula/vazia não entram na contagem; produto sem nenhuma
     unidade válida em nenhuma das 3 fontes fica com `UNID_ALVO=""`.
 
+    Código/descrição por origem (2026-08-04, achado real corrigido —
+    usuário, investigando por que UNID_ALVO do SKOL elegeu "cx12" em vez
+    de "LAT"): Entradas (emissão de TERCEIRO/fornecedor) usam COD_ITEM_
+    DECLARACAO/DESCR_ITEM_DECLARACAO (saída do Matching/BC3, ~99,9%
+    cobertura); Saídas (emissão PRÓPRIA da auditada) usam `cprod`/`xprod`
+    direto do XML dela — "toda emissão própria... a descrição do produto
+    e o código de produto corresponde à declaração do contribuinte"
+    (confirmado com o usuário) — COD_ITEM_DECLARACAO fica nulo em ~98,8%
+    das linhas de Saídas (BC3 só vincula fornecedor→auditada), então
+    antes desta correção quase toda Saída ficava INVISÍVEL pra eleição
+    de DESCR_ALVO/UNID_ALVO. Ver `_COLUNA_COD_ITEM_POR_TABELA_PRODUTO_
+    ALVO`/`_COLUNA_DESCR_POR_TABELA_PRODUTO_ALVO` — mesma regra já
+    aplicada em `_valores_por_ano_item()`/`gerar_cruzamento_valor()`
+    desde 2026-07-18, só não tinha sido replicada aqui ainda.
+
     Regra R07: `COD_ITEM`/`UNID_ALVO` sempre string. Devolve colunas
     ['COD_ITEM', 'DESCR_ALVO', 'UNID_ALVO']. Vazia se nenhuma das 3
     tabelas fonte existir ainda (nenhum erro — pré-requisitos ainda não
@@ -2430,10 +2471,11 @@ def montar_produto_alvo() -> pd.DataFrame:
                 return pd.DataFrame(columns=_COLUNAS_PRODUTO_ALVO)
             placeholders = ", ".join(f"'{c}'" for c in _CODIGOS_PLACEHOLDER_PRODUTO_ALVO)
             uniao = " UNION ALL ".join(
-                f"SELECT COD_ITEM_DECLARACAO AS COD_ITEM, TRIM(DESCR_ITEM_DECLARACAO) AS DESCR, "
+                f"SELECT {_COLUNA_COD_ITEM_POR_TABELA_PRODUTO_ALVO[t]} AS COD_ITEM, "
+                f"TRIM({_COLUNA_DESCR_POR_TABELA_PRODUTO_ALVO[t]}) AS DESCR, "
                 f"TRIM({_COLUNA_UNIDADE_POR_TABELA_PRODUTO_ALVO[t]}) AS UNID "
-                f"FROM {t} WHERE COD_ITEM_DECLARACAO IS NOT NULL "
-                f"AND LOWER(COD_ITEM_DECLARACAO) NOT IN ({placeholders})"
+                f"FROM {t} WHERE {_COLUNA_COD_ITEM_POR_TABELA_PRODUTO_ALVO[t]} IS NOT NULL "
+                f"AND LOWER({_COLUNA_COD_ITEM_POR_TABELA_PRODUTO_ALVO[t]}) NOT IN ({placeholders})"
                 for t in fontes
             )
             contagem = con.execute(
