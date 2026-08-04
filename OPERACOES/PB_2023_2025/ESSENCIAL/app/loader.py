@@ -5345,7 +5345,7 @@ def salvar_grupo_produto_alvo_fiscalizacao(selecoes: pd.DataFrame) -> dict:
     `selecoes` é um DataFrame com uma linha por produto EXIBIDO na tela no
     momento do clique em "Salvar" — colunas DESCR_ALVO, COD_ITEM, UNID_ALVO,
     SELECIONADO (bool), DIVERGENCIA, INFRACAO, PCT_DIVERGENCIA,
-    TOTAL_DEBITO, TOTAL_CREDITO, OBSERVACAO, DESCR_EDITADA.
+    TOTAL_DEBITO, TOTAL_CREDITO, OBSERVACAO.
 
     Chave de upsert: COD_ITEM, não DESCR_ALVO (2026-08-04, Solicitação
     Técnica — "antes de salvar o produto alvo, os campos descrição e
@@ -5354,12 +5354,13 @@ def salvar_grupo_produto_alvo_fiscalizacao(selecoes: pd.DataFrame) -> dict:
     NUNCA editado aqui — porque é a chave de busca usada em todo o
     Estágio 10 (Rubrica/Cruzamento: `cruzar_produto_escolhido_*()`,
     `_chaves_ja_atribuidas_a_outro_alvo()`) e, no futuro, Estágio 15;
-    editar DESCR_ALVO in-loco quebraria essas buscas. UNID_ALVO
-    (Unidade Relevante) é editável direto — não é chave de nada, puramente
-    informativa. `DESCR_EDITADA` é um campo NOVO, opcional, só pra
-    correção de EXIBIÇÃO nesta tabela/tela — não afeta produto_alvo nem
-    nenhuma busca do Estágio 10 (confirmado com o usuário via
-    AskUserQuestion — opção "campo extra", não sobrescrever DESCR_ALVO).
+    editar DESCR_ALVO in-loco quebraria essas buscas. `UNID_ALVO`
+    (Unidade Relevante) é só leitura NESTA tela — puramente informativa,
+    transportada do Estágio 7.1 (2026-08-04: chegou a ficar editável
+    aqui por uma rodada, mas o usuário pediu pra voltar — a edição de
+    UNID_ALVO/DESCR_EDITADA mudou pro Estágio 10, ver `salvar_edicoes_
+    produto_alvo_salvos()`, mesmo raciocínio de IS_ST). `DESCR_EDITADA`
+    nem aparece nesta tela — só existe no Estágio 10.
 
     Upsert por COD_ITEM, com fallback pra DESCR_ALVO só quando COD_ITEM
     vem vazio (`_chave_produto_alvo_fiscalizacao()` — evita colidir dois
@@ -5385,15 +5386,31 @@ def salvar_grupo_produto_alvo_fiscalizacao(selecoes: pd.DataFrame) -> dict:
         novo["TS"] = datetime.now().isoformat(timespec="seconds")
         novo = novo.drop(columns=["SELECIONADO"])
         chave_novo = _chave_produto_alvo_fiscalizacao(novo)
-        # IS_ST não é editável nesta tela (7.3.2) — preserva o valor já
-        # salvo pra cada produto (Estágio 10 tem tela própria,
-        # salvar_st_produto_alvo()); produto novo (nunca salvo antes)
-        # começa False.
+        # IS_ST/DESCR_EDITADA não são editáveis nesta tela (7.3.2) —
+        # preserva o valor já salvo pra cada produto (Estágio 10 tem
+        # tela própria, salvar_edicoes_produto_alvo_salvos()); produto
+        # novo (nunca salvo antes) começa com o default (False/"").
+        # UNID_ALVO segue a mesma lógica de preservação, mas com
+        # fallback pro valor TRANSPORTADO (já em `novo`, vindo de
+        # `selecoes`) em vez de um default fixo — um produto nunca
+        # editado no Estágio 10 deve continuar refletindo o valor
+        # elegido no Estágio 7.1; um produto JÁ editado lá não pode ser
+        # sobrescrito por um novo "Salvar" feito aqui no 7.3.2.
         if not existente.empty and "IS_ST" in existente.columns:
             is_st_existente = _mapa_por_chave_produto_alvo_fiscalizacao(existente, "IS_ST")
             novo["IS_ST"] = chave_novo.map(is_st_existente).fillna(False)
         else:
             novo["IS_ST"] = False
+
+        if not existente.empty and "DESCR_EDITADA" in existente.columns:
+            descr_editada_existente = _mapa_por_chave_produto_alvo_fiscalizacao(existente, "DESCR_EDITADA")
+            novo["DESCR_EDITADA"] = chave_novo.map(descr_editada_existente).fillna("")
+        else:
+            novo["DESCR_EDITADA"] = ""
+
+        if not existente.empty and "UNID_ALVO" in existente.columns:
+            unid_existente = _mapa_por_chave_produto_alvo_fiscalizacao(existente, "UNID_ALVO")
+            novo["UNID_ALVO"] = chave_novo.map(unid_existente).combine_first(novo["UNID_ALVO"])
 
         if not existente.empty:
             chave_existente = _chave_produto_alvo_fiscalizacao(existente)
@@ -5465,26 +5482,32 @@ def consultar_grupo_produto_alvo_fiscalizacao(
         return pd.DataFrame(columns=colunas), 0
 
 
-def salvar_st_produto_alvo(atualizacoes: pd.DataFrame) -> dict:
-    """Persiste o campo IS_ST (Substituição Tributária, Estágio 10 —
-    "PRODUTOS ALVOS SALVOS") pra um ou mais produtos do grupo já salvo
-    em produto_alvo_fiscalizacao. Solicitação Técnica (2026-07-29):
-    "crie uma campo para selecionar e o produto é ST" — campo puramente
-    INFORMATIVO por enquanto (confirmado com o usuário via
-    AskUserQuestion: não influencia nenhum cálculo ainda), com tela e
-    botão "Salvar" PRÓPRIOS, independentes do "Confirmar produto pra
-    cruzamento" (que só afeta 1 produto por vez) — aqui o auditor marca
-    quantos produtos quiser de uma vez, mesmo padrão de UPDATE parcial
-    por chave já usado noutras telas.
+def salvar_edicoes_produto_alvo_salvos(atualizacoes: pd.DataFrame) -> dict:
+    """Persiste os campos editáveis do Estágio 10 — "PRODUTOS ALVOS
+    SALVOS" — pra um ou mais produtos do grupo já salvo em
+    produto_alvo_fiscalizacao: IS_ST (Substituição Tributária,
+    Solicitação Técnica 2026-07-29: "crie uma campo para selecionar e o
+    produto é ST") e, desde 2026-08-04, UNID_ALVO (Unidade Relevante) e
+    DESCR_EDITADA (Descrição Editada) — Solicitação Técnica original
+    tinha colocado essas 2 edição no Estágio 7.3.2, mas o usuário pediu
+    pra mover pra cá (mesmo padrão de edição pontual/informativa que já
+    existia pro IS_ST, sem afetar `produto_alvo` nem nenhuma busca por
+    `DESCR_ALVO` do Estágio 10/15). Os 3 campos são puramente
+    INFORMATIVOS (confirmado com o usuário via AskUserQuestion: não
+    influenciam nenhum cálculo), salvos juntos num único botão/UPDATE,
+    independente do "Confirmar produto pra cruzamento" (que só afeta 1
+    produto por vez) — aqui o auditor edita quantos produtos quiser de
+    uma vez.
 
     `atualizacoes` tem uma linha por produto EXIBIDO na tela (todos os
     ativos do grupo, marcados ou não) com colunas DESCR_ALVO/COD_ITEM/
-    IS_ST — faz UPDATE só da coluna IS_ST pela chave de `_chave_produto_
-    alvo_fiscalizacao()` (2026-08-04, trocado de DESCR_ALVO — mesma
-    chave usada agora em salvar_grupo_produto_alvo_fiscalizacao(), ver
-    docstring lá pro raciocínio completo), preservando todas as outras
-    colunas (DIVERGENCIA/STATUS/OBSERVACAO/etc.) intocadas; produtos
-    fora da tela (ex. já cancelados) ficam como estavam. Devolve
+    IS_ST/UNID_ALVO/DESCR_EDITADA — faz UPDATE só dessas 3 últimas
+    colunas pela chave de `_chave_produto_alvo_fiscalizacao()`
+    (2026-08-04, trocado de DESCR_ALVO — mesma chave usada agora em
+    salvar_grupo_produto_alvo_fiscalizacao(), ver docstring lá pro
+    raciocínio completo), preservando todas as outras colunas
+    (DIVERGENCIA/STATUS/OBSERVACAO/etc.) intocadas; produtos fora da
+    tela (ex. já cancelados) ficam como estavam. Devolve
     {'total_atualizado': int} ou {'erro': str} se produto_alvo_
     fiscalizacao ainda não existir ou falhar."""
     resultado = {}
@@ -5493,12 +5516,14 @@ def salvar_st_produto_alvo(atualizacoes: pd.DataFrame) -> dict:
         if existente.empty:
             resultado["erro"] = "Nenhum Grupo de Produto Alvo salvo ainda (Estágio 7.3.2)."
             return resultado
-        novo_is_st = _mapa_por_chave_produto_alvo_fiscalizacao(atualizacoes, "IS_ST")
         chave_existente = _chave_produto_alvo_fiscalizacao(existente)
-        mascara_atualizada = chave_existente.isin(novo_is_st.index)
-        existente.loc[mascara_atualizada, "IS_ST"] = (
-            chave_existente[mascara_atualizada].map(novo_is_st)
-        )
+        chave_atualizacoes = _chave_produto_alvo_fiscalizacao(atualizacoes)
+        mascara_atualizada = chave_existente.isin(chave_atualizacoes)
+        for coluna in ("IS_ST", "UNID_ALVO", "DESCR_EDITADA"):
+            mapa_coluna = _mapa_por_chave_produto_alvo_fiscalizacao(atualizacoes, coluna)
+            existente.loc[mascara_atualizada, coluna] = (
+                chave_existente[mascara_atualizada].map(mapa_coluna)
+            )
         combinado = existente[_COLUNAS_PRODUTO_ALVO_FISCALIZACAO].reset_index(drop=True)
 
         _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -5512,7 +5537,7 @@ def salvar_st_produto_alvo(atualizacoes: pd.DataFrame) -> dict:
 
         resultado["total_atualizado"] = int(mascara_atualizada.sum())
     except Exception as exc:
-        logger.exception("Erro ao salvar IS_ST em produto_alvo_fiscalizacao: %s", exc)
+        logger.exception("Erro ao salvar edições em produto_alvo_fiscalizacao: %s", exc)
         resultado["erro"] = str(exc)
     return resultado
 
