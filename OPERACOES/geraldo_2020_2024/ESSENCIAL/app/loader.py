@@ -5059,30 +5059,35 @@ def consultar_rn1_produto(limite: "int | None" = 200) -> "tuple[pd.DataFrame, in
 # "Entradas sem NF", senão "Saídas sem NF".
 _FATOR_SIMULACAO_30 = 1.30
 _COLUNAS_RN1_SIMULADA_30 = [
-    "DESCR_ALVO", "COD_ITEM", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
+    "DESCR_ALVO", "UNID_ALVO", "COD_ITEM", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
     "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
 _COLUNAS_RN1_FISICA_SIMULADA_30 = [
-    "ANO", "DESCR_ALVO", "COD_ITEM", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
+    "ANO", "DESCR_ALVO", "UNID_ALVO", "COD_ITEM", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
     "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
 
 
 def _mapa_cod_item_por_descr_alvo() -> pd.DataFrame:
-    """Devolve DESCR_ALVO -> COD_ITEM (1 linha por DESCR_ALVO), a partir de
-    produto_alvo (Estágio 7.1) — Solicitação Técnica 2026-07-22: "no 7.3.2
-    preciso enxergar o cod do produto da declaração". Na prática é quase
-    sempre 1:1 (confirmado na geraldo: só 1 de 6.137 Descrições Relevantes
-    tem mais de um COD_ITEM associado), mas concatena com ", " no raro
-    caso de mais de um código, pra nunca duplicar linha ao mesclar em
-    rn1_simulada_30/rn1_fisica (agrupados por DESCR_ALVO, não por
-    código)."""
+    """Devolve DESCR_ALVO -> COD_ITEM/UNID_ALVO (1 linha por DESCR_ALVO), a
+    partir de produto_alvo (Estágio 7.1) — Solicitação Técnica 2026-07-22:
+    "no 7.3.2 preciso enxergar o cod do produto da declaração". Na prática
+    é quase sempre 1:1 (confirmado na geraldo: só 1 de 6.137 Descrições
+    Relevantes tem mais de um COD_ITEM associado), mas concatena com ", "
+    no raro caso de mais de um código/unidade, pra nunca duplicar linha ao
+    mesclar em rn1_simulada_30/rn1_fisica (agrupados por DESCR_ALVO, não
+    por código).
+
+    UNID_ALVO (2026-08-04, Solicitação Técnica — "Integração da Unidade
+    Relevante no Estágio 7.3.2"): mesmo transporte por join de DESCR_ALVO,
+    trazendo a Unidade Relevante eleita no Estágio 7.1 (produto_alvo.
+    montar_produto_alvo()) pra acompanhar o produto na simulação RN1."""
     produto_alvo, _ = consultar_produto_alvo(limite=None)
     if produto_alvo.empty:
-        return pd.DataFrame(columns=["DESCR_ALVO", "COD_ITEM"])
-    return (
-        produto_alvo.groupby("DESCR_ALVO", as_index=False)["COD_ITEM"]
-        .agg(lambda s: ", ".join(sorted(set(s))))
+        return pd.DataFrame(columns=["DESCR_ALVO", "COD_ITEM", "UNID_ALVO"])
+    return produto_alvo.groupby("DESCR_ALVO", as_index=False).agg(
+        COD_ITEM=("COD_ITEM", lambda s: ", ".join(sorted(set(s)))),
+        UNID_ALVO=("UNID_ALVO", lambda s: ", ".join(sorted(set(s)))),
     )
 
 
@@ -5119,7 +5124,13 @@ def gerar_rn1_simulada_30() -> dict:
     7.3.1) e aplica _aplicar_simulacao_30() sobre os totais já acumulados
     por produto (todos os anos somados). Não reprocessa entradas/saídas
     do zero — exige rn1_produto já persistida. Ordenação: por DIVERGENCIA
-    decrescente. Regra R07: DESCR_ALVO sempre string.
+    decrescente. Regra R07: DESCR_ALVO/UNID_ALVO sempre string.
+
+    UNID_ALVO (2026-08-04, Solicitação Técnica — "Integração da Unidade
+    Relevante no Estágio 7.3.2"): trazida via LEFT JOIN por DESCR_ALVO
+    contra produto_alvo (Estágio 7.1, _mapa_cod_item_por_descr_alvo()) —
+    acompanha o produto na simulação sem influenciar nenhum cálculo de
+    RN1, só identificação.
 
     Devolve {'resumo': dict, 'cruzamento': DataFrame, 'erros': list} —
     erros não-vazio quando rn1_produto (Estágio 7.3.1) ainda não foi
@@ -5134,9 +5145,10 @@ def gerar_rn1_simulada_30() -> dict:
     simulado = _aplicar_simulacao_30(base[["DESCR_ALVO", "EI", "COMPRAS", "EF", "VENDAS"]])
     simulado = simulado.merge(_mapa_cod_item_por_descr_alvo(), on="DESCR_ALVO", how="left")
     simulado["COD_ITEM"] = simulado["COD_ITEM"].fillna("")
+    simulado["UNID_ALVO"] = simulado["UNID_ALVO"].fillna("")
 
     cruzamento = (
-        _forcar_colunas_string(simulado, ["DESCR_ALVO", "COD_ITEM"])[_COLUNAS_RN1_SIMULADA_30]
+        _forcar_colunas_string(simulado, ["DESCR_ALVO", "COD_ITEM", "UNID_ALVO"])[_COLUNAS_RN1_SIMULADA_30]
         .sort_values("DIVERGENCIA", ascending=False)
         .reset_index(drop=True)
     )
@@ -5168,8 +5180,11 @@ def simular_rn1_fisica_30(descr_alvo: str) -> pd.DataFrame:
     simulado = _aplicar_simulacao_30(detalhe)
     simulado = simulado.merge(_mapa_cod_item_por_descr_alvo(), on="DESCR_ALVO", how="left")
     simulado["COD_ITEM"] = simulado["COD_ITEM"].fillna("")
+    simulado["UNID_ALVO"] = simulado["UNID_ALVO"].fillna("")
     return (
-        _forcar_colunas_string(simulado, ["ANO", "DESCR_ALVO", "COD_ITEM"])[_COLUNAS_RN1_FISICA_SIMULADA_30]
+        _forcar_colunas_string(
+            simulado, ["ANO", "DESCR_ALVO", "COD_ITEM", "UNID_ALVO"],
+        )[_COLUNAS_RN1_FISICA_SIMULADA_30]
         .sort_values("ANO")
         .reset_index(drop=True)
     )
@@ -5249,7 +5264,7 @@ def consultar_rn1_simulada_30(limite: "int | None" = 200) -> "tuple[pd.DataFrame
 # própria — não confundir com `produto_alvo` (Estágio 7.1: equalização de
 # nomenclatura por Descrição Relevante, propósito e schema diferentes).
 _COLUNAS_PRODUTO_ALVO_FISCALIZACAO = [
-    "DESCR_ALVO", "COD_ITEM", "TS", "STATUS", "DIVERGENCIA", "INFRACAO",
+    "DESCR_ALVO", "COD_ITEM", "UNID_ALVO", "TS", "STATUS", "DIVERGENCIA", "INFRACAO",
     "PCT_DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO", "OBSERVACAO", "IS_ST",
 ]
 STATUS_PRODUTO_ALVO_ATIVO = "ativo"
@@ -5259,7 +5274,9 @@ STATUS_PRODUTO_ALVO_CANCELADO = "cancelado"
 def salvar_grupo_produto_alvo_fiscalizacao(selecoes: pd.DataFrame) -> dict:
     """Persiste o grupo de Produto Alvo pra fiscalização (painel 7.3.2).
     `selecoes` é um DataFrame com uma linha por produto EXIBIDO na tela no
-    momento do clique em "Salvar" — colunas DESCR_ALVO, COD_ITEM,
+    momento do clique em "Salvar" — colunas DESCR_ALVO, COD_ITEM, UNID_ALVO
+    (Unidade Relevante, 2026-08-04, transportada de rn1_simulada_30/
+    produto_alvo — puramente informativa, não editável nesta tela),
     SELECIONADO (bool), DIVERGENCIA, INFRACAO, PCT_DIVERGENCIA,
     TOTAL_DEBITO, TOTAL_CREDITO, OBSERVACAO. Upsert por DESCR_ALVO (um produto só existe uma vez na
     tabela): produtos com SELECIONADO=True viram/permanecem STATUS=
@@ -5296,7 +5313,7 @@ def salvar_grupo_produto_alvo_fiscalizacao(selecoes: pd.DataFrame) -> dict:
             combinado = novo
 
         combinado = _forcar_colunas_string(
-            combinado, ["DESCR_ALVO", "COD_ITEM", "STATUS", "INFRACAO", "OBSERVACAO"],
+            combinado, ["DESCR_ALVO", "COD_ITEM", "UNID_ALVO", "STATUS", "INFRACAO", "OBSERVACAO"],
         )
         combinado = (
             combinado[_COLUNAS_PRODUTO_ALVO_FISCALIZACAO]
@@ -5326,10 +5343,11 @@ def consultar_grupo_produto_alvo_fiscalizacao(
     """Lê produto_alvo_fiscalizacao já persistida (sem reprocessar).
     apenas_ativos=True (padrão) só devolve STATUS='ativo' — histórico de
     cancelados fica de fora da leitura normal, mas continua na tabela.
-    limite=None devolve tudo. IS_ST (2026-07-29) pode estar ausente em
-    tabelas persistidas ANTES desse campo existir — completada aqui com
-    False (migração de schema em leitura, sem precisar reprocessar o
-    banco; a próxima gravação, de qualquer tela, já persiste a coluna)."""
+    limite=None devolve tudo. IS_ST (2026-07-29) e UNID_ALVO (2026-08-04)
+    podem estar ausentes em tabelas persistidas ANTES desses campos
+    existirem — completados aqui com False/"" (migração de schema em
+    leitura, sem precisar reprocessar o banco; a próxima gravação, de
+    qualquer tela, já persiste a coluna)."""
     colunas = _COLUNAS_PRODUTO_ALVO_FISCALIZACAO
     if not _BANCO_PATH.exists():
         return pd.DataFrame(columns=colunas), 0
@@ -5346,6 +5364,8 @@ def consultar_grupo_produto_alvo_fiscalizacao(
             df = con.execute(query).df()
         if "IS_ST" not in df.columns:
             df["IS_ST"] = False
+        if "UNID_ALVO" not in df.columns:
+            df["UNID_ALVO"] = ""
         return df, total
     except Exception:
         logger.exception("Erro ao consultar produto_alvo_fiscalizacao em %s", _BANCO_PATH)
@@ -5690,6 +5710,7 @@ def salvar_alvos_selecionados_733(selecionados: pd.DataFrame) -> dict:
         linhas_novas = pd.DataFrame([{
             "DESCR_ALVO": descr,
             "COD_ITEM": cod_item_por_descricao.get(descr, _MARCADOR_COD_ITEM_AUSENTE_733),
+            "UNID_ALVO": "",
             "TS": ts_agora,
             "STATUS": STATUS_PRODUTO_ALVO_ATIVO, "DIVERGENCIA": 0.0,
             "INFRACAO": "", "PCT_DIVERGENCIA": 0.0, "TOTAL_DEBITO": 0.0,
@@ -5706,7 +5727,7 @@ def salvar_alvos_selecionados_733(selecionados: pd.DataFrame) -> dict:
             combinado = linhas_novas
 
         combinado = _forcar_colunas_string(
-            combinado, ["DESCR_ALVO", "COD_ITEM", "STATUS", "INFRACAO", "OBSERVACAO"],
+            combinado, ["DESCR_ALVO", "COD_ITEM", "UNID_ALVO", "STATUS", "INFRACAO", "OBSERVACAO"],
         )
         combinado = (
             combinado[_COLUNAS_PRODUTO_ALVO_FISCALIZACAO]

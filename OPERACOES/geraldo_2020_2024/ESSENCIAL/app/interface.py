@@ -1509,7 +1509,7 @@ def render_rn1_produto() -> None:
 
 
 _COLUNAS_PREVIEW_RN1_FISICA_SIMULADA_30 = [
-    "ANO", "COD_ITEM", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
+    "ANO", "COD_ITEM", "UNID_ALVO", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF", "TOTAL_CREDITO",
     "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
 
@@ -1533,7 +1533,8 @@ def _preparar_preview_rn1_fisica_simulada_30(df: pd.DataFrame) -> pd.DataFrame:
 
 
 _COLUNAS_BASE_GRUPO_PRODUTO_ALVO = [
-    "DESCR_ALVO", "COD_ITEM", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO",
+    "DESCR_ALVO", "UNID_ALVO", "COD_ITEM", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
+    "TOTAL_DEBITO", "TOTAL_CREDITO",
 ]
 _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO = "Selecionar p/ Fiscalização"
 _COLUNA_CHECKBOX_VER_ANOS = "📅 Ver Anos"
@@ -1590,6 +1591,13 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
     de busca não apaga seleções feitas sob outro filtro (merge por
     DESCR_ALVO em loader.py).
 
+    Unidade Relevante (`UNID_ALVO`, 2026-08-04, Solicitação Técnica —
+    "Integração da Unidade Relevante no Estágio 7.3.2"): transportada do
+    Estágio 7.1 (produto_alvo) via loader._mapa_cod_item_por_descr_alvo(),
+    posicionada logo após Descrição Relevante e mantida travada (só
+    leitura, junto com as demais colunas de dados) — mesmo padrão de
+    IS_ST/COD_ITEM, puramente informativa nesta tela.
+
     Segunda coluna de checkbox, "📅 Ver Anos" (2026-07-22, mesma sessão —
     usuário pediu pra esta tabela virar também a base do drill-down por
     ano, "ignorando" a antiga tabela read-only com clique-de-linha):
@@ -1613,9 +1621,9 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
 
     editor_base = amostra_raw[_COLUNAS_BASE_GRUPO_PRODUTO_ALVO].copy()
     editor_base.insert(
-        2, _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, editor_base["DESCR_ALVO"].isin(descricoes_ja_selecionadas),
+        3, _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, editor_base["DESCR_ALVO"].isin(descricoes_ja_selecionadas),
     )
-    editor_base.insert(3, _COLUNA_CHECKBOX_VER_ANOS, False)
+    editor_base.insert(4, _COLUNA_CHECKBOX_VER_ANOS, False)
     if not ja_selecionados.empty:
         obs_por_produto = ja_selecionados.set_index("DESCR_ALVO")["OBSERVACAO"]
         editor_base["OBSERVACAO"] = editor_base["DESCR_ALVO"].map(obs_por_produto).fillna("")
