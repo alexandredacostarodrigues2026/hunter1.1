@@ -1543,6 +1543,12 @@ _COLUNAS_DESTAQUE_VERMELHO_GRUPO_ALVO_LABEL = (
     "Total Debito (R$)", "Total Credito (R$)", "Divergencia (R$)", "% Diverg",
 )
 _COLUNAS_OCULTAS_EDITOR_GRUPO_ALVO = ("Total Debito (R$)", "Total Credito (R$)", "Observacao")
+# Rótulos de exibição de UNID_ALVO/DESCR_EDITADA (ver DICIONARIO DE
+# CAMPOS.txt) — usados pra achar as colunas DEPOIS do rename via
+# loader.carregar_dicionario_campos(), tanto pra liberar edição
+# (colunas_travadas) quanto pra extrair o valor editado no salvamento.
+_COLUNA_LABEL_UNID_ALVO = "Unidade Relevante"
+_COLUNA_LABEL_DESCR_EDITADA = "Descricao Editada"
 _MARCADOR_CABECALHO_VERMELHO_EDITOR_GRUPO_ALVO = {
     "Divergencia (R$)": "🔴 Divergencia (R$)",
     "% Diverg": "🔴 % Diverg",
@@ -1594,9 +1600,24 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
     Unidade Relevante (`UNID_ALVO`, 2026-08-04, Solicitação Técnica —
     "Integração da Unidade Relevante no Estágio 7.3.2"): transportada do
     Estágio 7.1 (produto_alvo) via loader._mapa_cod_item_por_descr_alvo(),
-    posicionada logo após Descrição Relevante e mantida travada (só
-    leitura, junto com as demais colunas de dados) — mesmo padrão de
-    IS_ST/COD_ITEM, puramente informativa nesta tela.
+    posicionada logo após Descrição Relevante.
+
+    Descrição/Unidade EDITÁVEIS (2026-08-04, Solicitação Técnica —
+    "antes de salvar o produto alvo, os campos descrição e unidade de
+    produto possam ser editados"): `UNID_ALVO` (Unidade Relevante) virou
+    editável direto — não é chave de nada, puramente informativa.
+    `DESCR_ALVO` (Descrição Relevante) permanece SEMPRE travada (só
+    leitura) — é a chave de busca usada em todo o Estágio 10 (Rubrica/
+    Cruzamento) e, no futuro, Estágio 15; editar in-loco quebraria essas
+    buscas (confirmado com o usuário via AskUserQuestion). No lugar,
+    ganhou uma coluna NOVA e editável, "Descrição Editada"
+    (`DESCR_EDITADA`) — correção de EXIBIÇÃO opcional, só pra esta
+    tabela/tela, sem afetar `produto_alvo` nem nenhuma busca do Estágio
+    10. Chave de identidade da tabela `produto_alvo_fiscalizacao`
+    também trocou de `DESCR_ALVO` pra `COD_ITEM` (com fallback pra
+    DESCR_ALVO só quando COD_ITEM vem vazio) — ver `loader._chave_
+    produto_alvo_fiscalizacao()`/`salvar_grupo_produto_alvo_
+    fiscalizacao()` pro raciocínio completo.
 
     Segunda coluna de checkbox, "📅 Ver Anos" (2026-07-22, mesma sessão —
     usuário pediu pra esta tabela virar também a base do drill-down por
@@ -1612,23 +1633,44 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
     st.caption(
         "Marque \"Selecionar p/ Fiscalização\" pros produtos que entram no grupo efetivamente "
         "fiscalizado (fica salvo mesmo trocando o filtro de busca depois), e \"Ver Anos\" pra "
-        "abrir o detalhamento anual (simulação +30%) do produto logo abaixo da tabela. Total "
-        "Débito, Total Crédito e Observação ficam só nas tabelas de leitura abaixo."
+        "abrir o detalhamento anual (simulação +30%) do produto logo abaixo da tabela. Unidade "
+        "Relevante e Descrição Editada são editáveis (Descrição Relevante em si continua travada "
+        "— é a chave usada no cruzamento do Estágio 10). Total Débito, Total Crédito e Observação "
+        "ficam só nas tabelas de leitura abaixo."
     )
 
     ja_selecionados, _ = loader.consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=True)
-    descricoes_ja_selecionadas = set(ja_selecionados["DESCR_ALVO"]) if not ja_selecionados.empty else set()
+    # Chave de identidade: COD_ITEM quando preenchido, senão DESCR_ALVO
+    # (mesmo raciocínio de loader._chave_produto_alvo_fiscalizacao() —
+    # DESCR_ALVO pode mudar numa regeração futura de produto_alvo, ver
+    # memoria/2026-08-04.md, "BUG REAL corrigido").
+    if not ja_selecionados.empty:
+        chave_salva = ja_selecionados["COD_ITEM"].where(
+            ja_selecionados["COD_ITEM"] != "", ja_selecionados["DESCR_ALVO"],
+        )
+        chaves_ja_selecionadas = set(chave_salva)
+        # pd.Series(dados, index=chave) em vez de .set_index(lista) -- uma
+        # lista Python comum (ou .values/ArrowStringArray, vindo de
+        # duckdb.df()) é ambígua pro pandas (tenta interpretar cada
+        # elemento como NOME DE COLUNA — achado real, 2026-08-04, ver
+        # loader.salvar_grupo_produto_alvo_fiscalizacao()).
+        obs_por_produto = pd.Series(ja_selecionados["OBSERVACAO"].to_numpy(), index=chave_salva.tolist())
+        descr_editada_por_produto = pd.Series(
+            ja_selecionados["DESCR_EDITADA"].to_numpy(), index=chave_salva.tolist(),
+        )
+    else:
+        chaves_ja_selecionadas = set()
+        obs_por_produto = pd.Series(dtype=str)
+        descr_editada_por_produto = pd.Series(dtype=str)
 
     editor_base = amostra_raw[_COLUNAS_BASE_GRUPO_PRODUTO_ALVO].copy()
+    chave_tela = editor_base["COD_ITEM"].where(editor_base["COD_ITEM"] != "", editor_base["DESCR_ALVO"])
+    editor_base.insert(1, "DESCR_EDITADA", chave_tela.map(descr_editada_por_produto).fillna(""))
     editor_base.insert(
-        3, _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, editor_base["DESCR_ALVO"].isin(descricoes_ja_selecionadas),
+        4, _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, chave_tela.isin(chaves_ja_selecionadas),
     )
-    editor_base.insert(4, _COLUNA_CHECKBOX_VER_ANOS, False)
-    if not ja_selecionados.empty:
-        obs_por_produto = ja_selecionados.set_index("DESCR_ALVO")["OBSERVACAO"]
-        editor_base["OBSERVACAO"] = editor_base["DESCR_ALVO"].map(obs_por_produto).fillna("")
-    else:
-        editor_base["OBSERVACAO"] = ""
+    editor_base.insert(5, _COLUNA_CHECKBOX_VER_ANOS, False)
+    editor_base["OBSERVACAO"] = chave_tela.map(obs_por_produto).fillna("")
 
     editor_exibicao = editor_base.copy()
     editor_exibicao["PCT_DIVERGENCIA"] = editor_exibicao["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
@@ -1647,7 +1689,10 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
 
     colunas_travadas = [
         c for c in editor_exibicao.columns
-        if c not in (_COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, _COLUNA_CHECKBOX_VER_ANOS)
+        if c not in (
+            _COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, _COLUNA_CHECKBOX_VER_ANOS,
+            _COLUNA_LABEL_UNID_ALVO, _COLUNA_LABEL_DESCR_EDITADA,
+        )
     ]
     with st.container(key="rn1_simulada_30_editor_grupo_alvo"):
         st.markdown(
@@ -1664,7 +1709,17 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
         )
 
     if st.button("💾 Salvar Grupo de Produto Alvo", key="btn_salvar_grupo_produto_alvo"):
-        selecoes = editor_base[_COLUNAS_BASE_GRUPO_PRODUTO_ALVO].copy()
+        selecoes = editor_base[_COLUNAS_BASE_GRUPO_PRODUTO_ALVO + ["DESCR_EDITADA"]].copy()
+        # Unidade Relevante e Descrição Editada são editáveis nesta tela
+        # (2026-08-04) — usa o valor PÓS-EDIÇÃO do usuário (`editado`),
+        # não o original de `editor_base`. DESCR_ALVO nunca é editada
+        # (fica travada em editor_base, ver docstring da função).
+        selecoes["UNID_ALVO"] = (
+            editado[_COLUNA_LABEL_UNID_ALVO].reindex(editor_base.index).fillna("").to_numpy()
+        )
+        selecoes["DESCR_EDITADA"] = (
+            editado[_COLUNA_LABEL_DESCR_EDITADA].reindex(editor_base.index).fillna("").to_numpy()
+        )
         selecoes["SELECIONADO"] = (
             editado[_COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO].reindex(editor_base.index).to_numpy()
         )
@@ -1708,7 +1763,7 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
             st.dataframe(
                 _destacar_vermelho_grupo_alvo(_preparar_preview(
                     grupo_preview,
-                    _COLUNAS_BASE_GRUPO_PRODUTO_ALVO + ["TS", "OBSERVACAO"],
+                    _COLUNAS_BASE_GRUPO_PRODUTO_ALVO + ["DESCR_EDITADA", "TS", "OBSERVACAO"],
                 ), acima_30),
                 use_container_width=True,
                 hide_index=True,

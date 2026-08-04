@@ -5306,28 +5306,74 @@ def consultar_rn1_simulada_30(limite: "int | None" = 200) -> "tuple[pd.DataFrame
 # própria — não confundir com `produto_alvo` (Estágio 7.1: equalização de
 # nomenclatura por Descrição Relevante, propósito e schema diferentes).
 _COLUNAS_PRODUTO_ALVO_FISCALIZACAO = [
-    "DESCR_ALVO", "COD_ITEM", "UNID_ALVO", "TS", "STATUS", "DIVERGENCIA", "INFRACAO",
+    "DESCR_ALVO", "DESCR_EDITADA", "COD_ITEM", "UNID_ALVO", "TS", "STATUS", "DIVERGENCIA", "INFRACAO",
     "PCT_DIVERGENCIA", "TOTAL_DEBITO", "TOTAL_CREDITO", "OBSERVACAO", "IS_ST",
 ]
 STATUS_PRODUTO_ALVO_ATIVO = "ativo"
 STATUS_PRODUTO_ALVO_CANCELADO = "cancelado"
 
 
+def _chave_produto_alvo_fiscalizacao(df: pd.DataFrame) -> pd.Series:
+    """Chave de identidade de um produto em produto_alvo_fiscalizacao:
+    COD_ITEM quando preenchido (2026-08-04 — estável entre regerações de
+    produto_alvo, diferente de DESCR_ALVO, que pode mudar de eleição
+    numa regeração futura, ver `memoria/2026-08-04.md`, "BUG REAL
+    corrigido"); cai pra DESCR_ALVO só no raro caso de COD_ITEM vazio
+    (produto sem nenhuma origem com código válido) — pra não colidir
+    dois produtos SEM código diferentes sob a mesma chave `''`. Usada
+    por `salvar_grupo_produto_alvo_fiscalizacao()`/`salvar_st_produto_
+    alvo()` (upsert/UPDATE) e por `interface._render_grupo_produto_
+    alvo_fiscalizacao()` (checkbox "já selecionado")."""
+    cod = df["COD_ITEM"].astype(str)
+    return cod.where(cod != "", df["DESCR_ALVO"].astype(str))
+
+
+def _mapa_por_chave_produto_alvo_fiscalizacao(df: pd.DataFrame, coluna: str) -> pd.Series:
+    """Devolve `df[coluna]` indexada por `_chave_produto_alvo_fiscalizacao(df)`
+    — pra usar com `.map()`. NÃO usa `df.set_index(lista)`: uma lista
+    Python comum (ou `.values`/`ArrowStringArray`, vindo de `duckdb.
+    df()`) é ambígua pro pandas — `set_index()` tenta interpretar cada
+    elemento da lista como um NOME DE COLUNA (achado real, 2026-08-04:
+    `KeyError: "None of [...] are in the columns"`), não como um array
+    posicional de índice. Construir a Series diretamente
+    (`pd.Series(dados, index=chave)`) não tem essa ambiguidade."""
+    return pd.Series(df[coluna].to_numpy(), index=_chave_produto_alvo_fiscalizacao(df).tolist())
+
+
 def salvar_grupo_produto_alvo_fiscalizacao(selecoes: pd.DataFrame) -> dict:
     """Persiste o grupo de Produto Alvo pra fiscalização (painel 7.3.2).
     `selecoes` é um DataFrame com uma linha por produto EXIBIDO na tela no
-    momento do clique em "Salvar" — colunas DESCR_ALVO, COD_ITEM, UNID_ALVO
-    (Unidade Relevante, 2026-08-04, transportada de rn1_simulada_30/
-    produto_alvo — puramente informativa, não editável nesta tela),
+    momento do clique em "Salvar" — colunas DESCR_ALVO, COD_ITEM, UNID_ALVO,
     SELECIONADO (bool), DIVERGENCIA, INFRACAO, PCT_DIVERGENCIA,
-    TOTAL_DEBITO, TOTAL_CREDITO, OBSERVACAO. Upsert por DESCR_ALVO (um produto só existe uma vez na
-    tabela): produtos com SELECIONADO=True viram/permanecem STATUS=
-    'ativo' (valores atualizados nesta rodada); produtos que estavam
-    'ativo' e vieram desmarcados nesta tela viram STATUS='cancelado'
-    (histórico preservado — não é deletado); produtos que nunca apareceram
-    nesta tela (fora do filtro/página atual) ficam como já estavam —
-    salvar um filtro não apaga a seleção feita sob outro filtro. Devolve
-    {'total_ativos': int} ou {'erro': str} se falhar."""
+    TOTAL_DEBITO, TOTAL_CREDITO, OBSERVACAO, DESCR_EDITADA.
+
+    Chave de upsert: COD_ITEM, não DESCR_ALVO (2026-08-04, Solicitação
+    Técnica — "antes de salvar o produto alvo, os campos descrição e
+    unidade de produto possam ser editados"). DESCR_ALVO permanece
+    SEMPRE o valor elegido por moda em produto_alvo (Estágio 7.1) —
+    NUNCA editado aqui — porque é a chave de busca usada em todo o
+    Estágio 10 (Rubrica/Cruzamento: `cruzar_produto_escolhido_*()`,
+    `_chaves_ja_atribuidas_a_outro_alvo()`) e, no futuro, Estágio 15;
+    editar DESCR_ALVO in-loco quebraria essas buscas. UNID_ALVO
+    (Unidade Relevante) é editável direto — não é chave de nada, puramente
+    informativa. `DESCR_EDITADA` é um campo NOVO, opcional, só pra
+    correção de EXIBIÇÃO nesta tabela/tela — não afeta produto_alvo nem
+    nenhuma busca do Estágio 10 (confirmado com o usuário via
+    AskUserQuestion — opção "campo extra", não sobrescrever DESCR_ALVO).
+
+    Upsert por COD_ITEM, com fallback pra DESCR_ALVO só quando COD_ITEM
+    vem vazio (`_chave_produto_alvo_fiscalizacao()` — evita colidir dois
+    produtos SEM código diferentes sob a mesma chave `''`). Antes era só
+    por DESCR_ALVO — trocado porque DESCR_ALVO pode variar entre
+    regerações de produto_alvo, ver `memoria/2026-08-04.md`, "BUG REAL
+    corrigido" — COD_ITEM é mais estável. Produtos com SELECIONADO=True
+    viram/permanecem STATUS='ativo' (valores atualizados nesta rodada);
+    produtos que estavam 'ativo' e vieram desmarcados nesta tela viram
+    STATUS='cancelado' (histórico preservado — não é deletado); produtos
+    que nunca apareceram nesta tela (fora do filtro/página atual) ficam
+    como já estavam — salvar um filtro não apaga a seleção feita sob
+    outro filtro. Devolve {'total_ativos': int} ou {'erro': str} se
+    falhar."""
     resultado = {}
     try:
         existente, _ = consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=False)
@@ -5338,24 +5384,27 @@ def salvar_grupo_produto_alvo_fiscalizacao(selecoes: pd.DataFrame) -> dict:
         )
         novo["TS"] = datetime.now().isoformat(timespec="seconds")
         novo = novo.drop(columns=["SELECIONADO"])
+        chave_novo = _chave_produto_alvo_fiscalizacao(novo)
         # IS_ST não é editável nesta tela (7.3.2) — preserva o valor já
         # salvo pra cada produto (Estágio 10 tem tela própria,
         # salvar_st_produto_alvo()); produto novo (nunca salvo antes)
         # começa False.
         if not existente.empty and "IS_ST" in existente.columns:
-            is_st_existente = existente.set_index("DESCR_ALVO")["IS_ST"]
-            novo["IS_ST"] = novo["DESCR_ALVO"].map(is_st_existente).fillna(False)
+            is_st_existente = _mapa_por_chave_produto_alvo_fiscalizacao(existente, "IS_ST")
+            novo["IS_ST"] = chave_novo.map(is_st_existente).fillna(False)
         else:
             novo["IS_ST"] = False
 
         if not existente.empty:
-            preservar = existente[~existente["DESCR_ALVO"].isin(novo["DESCR_ALVO"])]
+            chave_existente = _chave_produto_alvo_fiscalizacao(existente)
+            preservar = existente[~chave_existente.isin(chave_novo)]
             combinado = pd.concat([preservar, novo], ignore_index=True)
         else:
             combinado = novo
 
         combinado = _forcar_colunas_string(
-            combinado, ["DESCR_ALVO", "COD_ITEM", "UNID_ALVO", "STATUS", "INFRACAO", "OBSERVACAO"],
+            combinado,
+            ["DESCR_ALVO", "DESCR_EDITADA", "COD_ITEM", "UNID_ALVO", "STATUS", "INFRACAO", "OBSERVACAO"],
         )
         combinado = (
             combinado[_COLUNAS_PRODUTO_ALVO_FISCALIZACAO]
@@ -5385,11 +5434,11 @@ def consultar_grupo_produto_alvo_fiscalizacao(
     """Lê produto_alvo_fiscalizacao já persistida (sem reprocessar).
     apenas_ativos=True (padrão) só devolve STATUS='ativo' — histórico de
     cancelados fica de fora da leitura normal, mas continua na tabela.
-    limite=None devolve tudo. IS_ST (2026-07-29) e UNID_ALVO (2026-08-04)
-    podem estar ausentes em tabelas persistidas ANTES desses campos
-    existirem — completados aqui com False/"" (migração de schema em
-    leitura, sem precisar reprocessar o banco; a próxima gravação, de
-    qualquer tela, já persiste a coluna)."""
+    limite=None devolve tudo. IS_ST (2026-07-29), UNID_ALVO e
+    DESCR_EDITADA (2026-08-04) podem estar ausentes em tabelas
+    persistidas ANTES desses campos existirem — completados aqui com
+    False/"" (migração de schema em leitura, sem precisar reprocessar o
+    banco; a próxima gravação, de qualquer tela, já persiste a coluna)."""
     colunas = _COLUNAS_PRODUTO_ALVO_FISCALIZACAO
     if not _BANCO_PATH.exists():
         return pd.DataFrame(columns=colunas), 0
@@ -5408,6 +5457,8 @@ def consultar_grupo_produto_alvo_fiscalizacao(
             df["IS_ST"] = False
         if "UNID_ALVO" not in df.columns:
             df["UNID_ALVO"] = ""
+        if "DESCR_EDITADA" not in df.columns:
+            df["DESCR_EDITADA"] = ""
         return df, total
     except Exception:
         logger.exception("Erro ao consultar produto_alvo_fiscalizacao em %s", _BANCO_PATH)
@@ -5427,22 +5478,26 @@ def salvar_st_produto_alvo(atualizacoes: pd.DataFrame) -> dict:
     por chave já usado noutras telas.
 
     `atualizacoes` tem uma linha por produto EXIBIDO na tela (todos os
-    ativos do grupo, marcados ou não) com colunas DESCR_ALVO/IS_ST —
-    faz UPDATE só da coluna IS_ST por DESCR_ALVO, preservando todas as
-    outras colunas (DIVERGENCIA/STATUS/OBSERVACAO/etc.) intocadas;
-    produtos fora da tela (ex. já cancelados) ficam como estavam.
-    Devolve {'total_atualizado': int} ou {'erro': str} se
-    produto_alvo_fiscalizacao ainda não existir ou falhar."""
+    ativos do grupo, marcados ou não) com colunas DESCR_ALVO/COD_ITEM/
+    IS_ST — faz UPDATE só da coluna IS_ST pela chave de `_chave_produto_
+    alvo_fiscalizacao()` (2026-08-04, trocado de DESCR_ALVO — mesma
+    chave usada agora em salvar_grupo_produto_alvo_fiscalizacao(), ver
+    docstring lá pro raciocínio completo), preservando todas as outras
+    colunas (DIVERGENCIA/STATUS/OBSERVACAO/etc.) intocadas; produtos
+    fora da tela (ex. já cancelados) ficam como estavam. Devolve
+    {'total_atualizado': int} ou {'erro': str} se produto_alvo_
+    fiscalizacao ainda não existir ou falhar."""
     resultado = {}
     try:
         existente, _ = consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=False)
         if existente.empty:
             resultado["erro"] = "Nenhum Grupo de Produto Alvo salvo ainda (Estágio 7.3.2)."
             return resultado
-        novo_is_st = atualizacoes.set_index("DESCR_ALVO")["IS_ST"]
-        mascara_atualizada = existente["DESCR_ALVO"].isin(novo_is_st.index)
+        novo_is_st = _mapa_por_chave_produto_alvo_fiscalizacao(atualizacoes, "IS_ST")
+        chave_existente = _chave_produto_alvo_fiscalizacao(existente)
+        mascara_atualizada = chave_existente.isin(novo_is_st.index)
         existente.loc[mascara_atualizada, "IS_ST"] = (
-            existente.loc[mascara_atualizada, "DESCR_ALVO"].map(novo_is_st)
+            chave_existente[mascara_atualizada].map(novo_is_st)
         )
         combinado = existente[_COLUNAS_PRODUTO_ALVO_FISCALIZACAO].reset_index(drop=True)
 
@@ -5751,6 +5806,7 @@ def salvar_alvos_selecionados_733(selecionados: pd.DataFrame) -> dict:
         novas_descricoes = [d for d in descricoes if d not in ja_existiam]
         linhas_novas = pd.DataFrame([{
             "DESCR_ALVO": descr,
+            "DESCR_EDITADA": "",
             "COD_ITEM": cod_item_por_descricao.get(descr, _MARCADOR_COD_ITEM_AUSENTE_733),
             "UNID_ALVO": "",
             "TS": ts_agora,
@@ -5769,7 +5825,8 @@ def salvar_alvos_selecionados_733(selecionados: pd.DataFrame) -> dict:
             combinado = linhas_novas
 
         combinado = _forcar_colunas_string(
-            combinado, ["DESCR_ALVO", "COD_ITEM", "UNID_ALVO", "STATUS", "INFRACAO", "OBSERVACAO"],
+            combinado,
+            ["DESCR_ALVO", "DESCR_EDITADA", "COD_ITEM", "UNID_ALVO", "STATUS", "INFRACAO", "OBSERVACAO"],
         )
         combinado = (
             combinado[_COLUNAS_PRODUTO_ALVO_FISCALIZACAO]
