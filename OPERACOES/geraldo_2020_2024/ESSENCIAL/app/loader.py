@@ -6319,23 +6319,33 @@ def escolher_produto_cruzamento(descr_alvo: str, cod_item: str) -> dict:
 def consultar_produto_cruzamento_escolhido() -> "dict | None":
     """Lê o produto atualmente escolhido pra cruzamento (Estágio 10), se
     houver. Devolve {'DESCR_ALVO': str, 'COD_ITEM': str, 'TS': str,
-    'IS_ST': bool} ou None se nenhum produto foi escolhido ainda ou a
+    'IS_ST': bool, 'DESCR_EDITADA': str, 'UNID_ALVO': str, 'UNID_
+    EDITADA': str} ou None se nenhum produto foi escolhido ainda ou a
     tabela não existir.
 
     IS_ST (2026-07-29, Solicitação Técnica: "ESSA INFORMAÇÃO 'ST'
     DEVERÁ ACOMPANHAR O PRODUTO ALVO NO DECORRER DE TODOS OS
-    PROCEDIMENTOS DA APLICAÇÃO. SEMPRE QUE REQUISITADO") — anexado AQUI
+    PROCEDIMENTOS DA APLICAÇÃO. SEMPRE QUE REQUISITADO") e, desde
+    2026-08-04, DESCR_EDITADA/UNID_ALVO/UNID_EDITADA (mesmo raciocínio:
+    "ACOMPANHAR o produto alvo" nos procedimentos de cruzamento —
+    usados por `descricao_efetiva_escolhido()` pra Critérios 1-4 de
+    Entradas/Saídas/Estoque usarem a descrição CORRIGIDA pelo auditor
+    no Estágio 10, não a original, quando ela existir) — anexados AQUI
     (não só na tabela de origem, produto_alvo_fiscalizacao) porque
     `escolhido` é o dict que atravessa TODOS os procedimentos do
     cruzamento (Entradas/Saídas/Estoque, Rubrica, Sumário de Unidades,
     Itens Individuais) — enriquecer nesta única função central propaga
-    o campo pra tudo que já recebe `escolhido` como parâmetro, sem
+    os campos pra tudo que já recebe `escolhido` como parâmetro, sem
     precisar de lookup redundante em cada tela. Lookup AO VIVO (não
     congelado no momento da escolha) — reflete a decisão mais recente
-    do Estágio 10 (botão "Salvar ST"), mesmo que tenha mudado DEPOIS do
-    produto ter sido escolhido pra cruzamento. `False` se o produto não
-    for encontrado em produto_alvo_fiscalizacao (não deveria acontecer
-    em uso normal, mas evita erro)."""
+    do Estágio 10 (botão "Salvar Edições"), mesmo que tenha mudado
+    DEPOIS do produto ter sido escolhido pra cruzamento. Lookup por
+    `_chave_produto_alvo_fiscalizacao()` (COD_ITEM, fallback DESCR_ALVO
+    — mesma chave de identidade usada em toda `produto_alvo_
+    fiscalizacao` desde a correção de 2026-08-04, ver `memoria/
+    2026-08-04.md`), não DESCR_ALVO puro — produto não encontrado
+    (não deveria acontecer em uso normal, mas evita erro) devolve os
+    defaults (False/"")."""
     if not _BANCO_PATH.exists():
         return None
     try:
@@ -6349,18 +6359,54 @@ def consultar_produto_cruzamento_escolhido() -> "dict | None":
             escolhido = df.iloc[0].to_dict()
         # Lookup via consultar_grupo_produto_alvo_fiscalizacao() (não SQL
         # direto) — reaproveita a migração de schema já tratada lá
-        # (tabelas persistidas ANTES de IS_ST existir não têm a coluna
-        # de verdade; SQL direto quebraria com "coluna não encontrada").
+        # (tabelas persistidas ANTES desses campos existirem não têm a
+        # coluna de verdade; SQL direto quebraria com "coluna não
+        # encontrada").
         grupo, _ = consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=False)
         escolhido["IS_ST"] = False
+        escolhido["DESCR_EDITADA"] = ""
+        escolhido["UNID_ALVO"] = ""
+        escolhido["UNID_EDITADA"] = ""
         if not grupo.empty:
-            linha = grupo[grupo["DESCR_ALVO"] == escolhido["DESCR_ALVO"]]
-            if not linha.empty and pd.notna(linha.iloc[0]["IS_ST"]):
-                escolhido["IS_ST"] = bool(linha.iloc[0]["IS_ST"])
+            chave_escolhido = _chave_produto_alvo_fiscalizacao(
+                pd.DataFrame([{"COD_ITEM": escolhido.get("COD_ITEM", ""), "DESCR_ALVO": escolhido["DESCR_ALVO"]}]),
+            ).iloc[0]
+            linha = grupo[_chave_produto_alvo_fiscalizacao(grupo) == chave_escolhido]
+            if not linha.empty:
+                for campo in ("IS_ST", "DESCR_EDITADA", "UNID_ALVO", "UNID_EDITADA"):
+                    valor = linha.iloc[0].get(campo)
+                    if pd.notna(valor):
+                        escolhido[campo] = bool(valor) if campo == "IS_ST" else str(valor)
         return escolhido
     except Exception:
         logger.exception("Erro ao consultar produto_cruzamento_escolhido em %s", _BANCO_PATH)
         return None
+
+
+def descricao_efetiva_escolhido(escolhido: dict) -> str:
+    """Descrição usada pra COMPARAÇÃO/ORDENAÇÃO de similaridade nos
+    Critérios 1-4 de Entradas/Saídas/Estoque (Estágio 10):
+    `DESCR_EDITADA` quando preenchida, senão `DESCR_ALVO` (fallback pro
+    original) — 2026-08-04, pedido do usuário depois de editar a
+    descrição (Estágio 10) e ver que a busca/ordenação ainda usava o
+    valor original ("mas o produto alvo ainda é o descrição origina").
+    NÃO usar pra identidade/chave — isso continua SEMPRE `DESCR_ALVO`
+    puro (`_chaves_ja_atribuidas_a_outro_alvo()`, gravação em
+    `cruzamento_confirmado`, `consultar_cruzamento_confirmado_
+    detalhado(descr_alvo=...)`) — só a comparação textual usa a versão
+    corrigida."""
+    editada = str(escolhido.get("DESCR_EDITADA") or "").strip()
+    return editada if editada else escolhido["DESCR_ALVO"]
+
+
+def unidade_efetiva_escolhido(escolhido: dict) -> str:
+    """Unidade EFETIVA do produto escolhido (Estágio 10): `UNID_EDITADA`
+    quando preenchida, senão `UNID_ALVO` (fallback pro original
+    transportado do Estágio 7.1) — 2026-08-04, mesmo contrato de
+    `descricao_efetiva_escolhido()`, usado só nos textos informativos
+    do cruzamento (não afeta nenhum cálculo/filtro ainda)."""
+    editada = str(escolhido.get("UNID_EDITADA") or "").strip()
+    return editada if editada else str(escolhido.get("UNID_ALVO") or "")
 
 
 # ── Cruzamento do Produto Escolhido — Critério 1 (Entradas) ──────────────
@@ -6450,7 +6496,7 @@ def cruzar_produto_escolhido_entradas() -> "tuple[pd.DataFrame, dict | None]":
         ]
     if correspondentes.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -6489,7 +6535,7 @@ def cruzar_produto_escolhido_entradas_detalhado() -> "tuple[pd.DataFrame, dict |
         ]
     if correspondentes.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -6552,7 +6598,7 @@ def cruzar_produto_escolhido_entradas_criterio2() -> "tuple[pd.DataFrame, dict |
     agrupado, _ = consultar_estagio8_agrupado(limite=None)
     if agrupado.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
-    nome_alvo_normalizado = _normalizar_nome_para_igualdade(escolhido["DESCR_ALVO"])
+    nome_alvo_normalizado = _normalizar_nome_para_igualdade(descricao_efetiva_escolhido(escolhido))
     nomes_decl_normalizados = agrupado["descrição_decl"].apply(_normalizar_nome_para_igualdade)
     candidatos = agrupado[nomes_decl_normalizados == nome_alvo_normalizado].copy()
     if candidatos.empty:
@@ -6564,7 +6610,7 @@ def cruzar_produto_escolhido_entradas_criterio2() -> "tuple[pd.DataFrame, dict |
         ]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -6586,7 +6632,7 @@ def cruzar_produto_escolhido_entradas_criterio2_detalhado() -> "tuple[pd.DataFra
     detalhado, _ = consultar_estagio8_detalhado(limite=None)
     if detalhado.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
-    nome_alvo_normalizado = _normalizar_nome_para_igualdade(escolhido["DESCR_ALVO"])
+    nome_alvo_normalizado = _normalizar_nome_para_igualdade(descricao_efetiva_escolhido(escolhido))
     nomes_decl_normalizados = detalhado["descrição_decl"].apply(_normalizar_nome_para_igualdade)
     candidatos = detalhado[nomes_decl_normalizados == nome_alvo_normalizado].copy()
     if candidatos.empty:
@@ -6598,7 +6644,7 @@ def cruzar_produto_escolhido_entradas_criterio2_detalhado() -> "tuple[pd.DataFra
         ]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -6686,7 +6732,7 @@ def cruzar_produto_escolhido_entradas_criterio3() -> "tuple[pd.DataFrame, dict |
         ]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -6723,7 +6769,7 @@ def cruzar_produto_escolhido_entradas_criterio3_detalhado() -> "tuple[pd.DataFra
         ]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -6764,7 +6810,7 @@ def cruzar_produto_escolhido_entradas_criterio4() -> "tuple[pd.DataFrame, dict |
         ]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -6793,7 +6839,7 @@ def cruzar_produto_escolhido_entradas_criterio4_detalhado() -> "tuple[pd.DataFra
         ]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -6847,7 +6893,7 @@ def cruzar_produto_escolhido_saidas() -> "tuple[pd.DataFrame, dict | None]":
         ]
     if correspondentes.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -6880,7 +6926,7 @@ def cruzar_produto_escolhido_saidas_detalhado() -> "tuple[pd.DataFrame, dict | N
         ]
     if correspondentes.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -6916,7 +6962,7 @@ def cruzar_produto_escolhido_saidas_criterio3() -> "tuple[pd.DataFrame, dict | N
         ]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -6952,7 +6998,7 @@ def cruzar_produto_escolhido_saidas_criterio3_detalhado() -> "tuple[pd.DataFrame
         ]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -6987,7 +7033,7 @@ def cruzar_produto_escolhido_saidas_criterio4() -> "tuple[pd.DataFrame, dict | N
         ]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -7015,7 +7061,7 @@ def cruzar_produto_escolhido_saidas_criterio4_detalhado() -> "tuple[pd.DataFrame
         ]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["desc_xml"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -7076,7 +7122,7 @@ def cruzar_produto_escolhido_estoque() -> "tuple[pd.DataFrame, dict | None]":
         ]
     if correspondentes.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["descrição_decl"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -7113,7 +7159,7 @@ def cruzar_produto_escolhido_estoque_detalhado() -> "tuple[pd.DataFrame, dict | 
         ]
     if correspondentes.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["descrição_decl"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -7141,7 +7187,7 @@ def cruzar_produto_escolhido_estoque_criterio2() -> "tuple[pd.DataFrame, dict | 
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
     agrupado = agrupado.copy()
     agrupado["desc_xml"] = agrupado["descrição_decl"]
-    nome_alvo_normalizado = _normalizar_nome_para_igualdade(escolhido["DESCR_ALVO"])
+    nome_alvo_normalizado = _normalizar_nome_para_igualdade(descricao_efetiva_escolhido(escolhido))
     nomes_decl_normalizados = agrupado["descrição_decl"].apply(_normalizar_nome_para_igualdade)
     candidatos = agrupado[nomes_decl_normalizados == nome_alvo_normalizado].copy()
     if candidatos.empty:
@@ -7153,7 +7199,7 @@ def cruzar_produto_escolhido_estoque_criterio2() -> "tuple[pd.DataFrame, dict | 
         ]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["descrição_decl"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -7176,7 +7222,7 @@ def cruzar_produto_escolhido_estoque_criterio2_detalhado() -> "tuple[pd.DataFram
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
     detalhado = detalhado.copy()
     detalhado["desc_xml"] = detalhado["descrição_decl"]
-    nome_alvo_normalizado = _normalizar_nome_para_igualdade(escolhido["DESCR_ALVO"])
+    nome_alvo_normalizado = _normalizar_nome_para_igualdade(descricao_efetiva_escolhido(escolhido))
     nomes_decl_normalizados = detalhado["descrição_decl"].apply(_normalizar_nome_para_igualdade)
     candidatos = detalhado[nomes_decl_normalizados == nome_alvo_normalizado].copy()
     if candidatos.empty:
@@ -7188,7 +7234,7 @@ def cruzar_produto_escolhido_estoque_criterio2_detalhado() -> "tuple[pd.DataFram
         ]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["descrição_decl"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -7224,7 +7270,7 @@ def cruzar_produto_escolhido_estoque_criterio4() -> "tuple[pd.DataFrame, dict | 
         ]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["descrição_decl"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )
@@ -7254,7 +7300,7 @@ def cruzar_produto_escolhido_estoque_criterio4_detalhado() -> "tuple[pd.DataFram
         ]
     if candidatos.empty:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
-    descr_alvo = escolhido["DESCR_ALVO"]
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
     candidatos["SIMILARIDADE_DESCRICAO"] = candidatos["descrição_decl"].apply(
         lambda desc: _score_similaridade_descricao(desc, descr_alvo)
     )

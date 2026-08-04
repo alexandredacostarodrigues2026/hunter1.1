@@ -4034,7 +4034,21 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     Selectbox "Critério de busca" (2026-07-23: "escolha do critério
     dever ser antes do cruzamento") vem ANTES de rodar a comparação, já
     que a escolha do critério é o que DEFINE qual comparação roda — ver
-    _obter_criterios_cruzamento_entradas() pro despacho."""
+    _obter_criterios_cruzamento_entradas() pro despacho.
+
+    Descrição/Unidade EFETIVAS (2026-08-04): todos os textos desta tela
+    (captions/avisos) usam `descr_efetiva`/`unid_efetiva` —
+    loader.descricao_efetiva_escolhido()/unidade_efetiva_escolhido() —
+    em vez de `escolhido['DESCR_ALVO']`/`escolhido['UNID_ALVO']` puros:
+    usam DESCR_EDITADA/UNID_EDITADA (Estágio 10) quando preenchidos,
+    senão caem pro original. Achado real do usuário: editou a descrição
+    no Estágio 10 e viu que o texto/comparação daqui continuava usando
+    a original ("mas o produto alvo ainda é o descrição origina").
+    Identidade/chave (loader.cruzar_produto_escolhido_*(),
+    consultar_cruzamento_confirmado(), salvar_cruzamento_confirmado())
+    continua SEMPRE por `escolhido['DESCR_ALVO']` puro — só o TEXTO/
+    COMPARAÇÃO DE SIMILARIDADE usa a versão efetiva (ver
+    loader.descricao_efetiva_escolhido() pro raciocínio completo)."""
     criterios = _obter_criterios_cruzamento_entradas()
     criterio_busca = st.selectbox(
         "Critério de busca",
@@ -4043,28 +4057,31 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     )
     fn_agrupado, fn_detalhado = criterios[criterio_busca]
     sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
+    descr_efetiva = loader.descricao_efetiva_escolhido(escolhido)
+    unid_efetiva = loader.unidade_efetiva_escolhido(escolhido)
     if escolhido.get("IS_ST"):
-        st.caption(f"🏷️ **{escolhido['DESCR_ALVO']}** é **ST** (Substituição Tributária).")
+        st.caption(f"🏷️ **{descr_efetiva}** é **ST** (Substituição Tributária).")
 
     if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
         st.caption(
             f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com o MESMO código de produto "
-            f"de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — comparação normalizada "
-            "(zero à esquerda em código numérico não conta como diferença) — ordenadas por "
-            "similaridade de descrição (overlap de tokens) entre o produto do XML e a descrição do alvo."
+            f"de **{descr_efetiva}** ({escolhido['COD_ITEM']}) — Unidade: **{unid_efetiva or '—'}** — "
+            "comparação normalizada (zero à esquerda em código numérico não conta como diferença) — "
+            "ordenadas por similaridade de descrição (overlap de tokens) entre o produto do XML e a "
+            "descrição do alvo."
         )
     elif criterio_busca == loader.CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL:
         st.caption(
             f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) cujo nome de declaração "
             f"(`descrição_decl` — como a própria auditada chama o item) é IGUAL (normalizado — "
-            f"maiúsculas/espaços) ao de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}), "
+            f"maiúsculas/espaços) ao de **{descr_efetiva}** ({escolhido['COD_ITEM']}), "
             "sem exigir nenhuma relação de código. Ordenadas por similaridade de descrição (overlap "
             "de tokens) entre o produto do XML e a descrição do alvo — aqui informativa, não filtra."
         )
     elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
         st.caption(
             f"Pesquisa livre em `estagio8_agrupado` (Entradas, Estágio 8) pra comparar com "
-            f"**{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — SEM filtro de código "
+            f"**{descr_efetiva}** ({escolhido['COD_ITEM']}) — SEM filtro de código "
             "(nem igual, nem divergente) e SEM piso de similaridade. Útil quando o candidato certo "
             "tem pouca ou nenhuma semelhança de texto com o alvo (nomenclatura muito diferente), "
             "caso em que o Critério 3 nunca o encontraria. Digite um termo na busca abaixo (ex.: "
@@ -4075,7 +4092,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     else:
         st.caption(
             f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com código DIVERGENTE (diferente) "
-            f"do de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — cobre o caso em que o "
+            f"do de **{descr_efetiva}** ({escolhido['COD_ITEM']}) — cobre o caso em que o "
             "produto é o mesmo fisicamente, mas o código na declaração/XML diverge do código oficial do "
             f"alvo. Só entram candidatos com similaridade de descrição ≥ "
             f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% (aqui a similaridade FILTRA, não é só ordenação, "
@@ -4092,7 +4109,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
             )
         elif criterio_busca == loader.CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL:
             st.warning(
-                f"⚠️ Nenhum item declarado com o mesmo nome de **{escolhido['DESCR_ALVO']}** encontrado "
+                f"⚠️ Nenhum item declarado com o mesmo nome de **{descr_efetiva}** encontrado "
                 "em `estagio8_agrupado`."
             )
         elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
@@ -4103,7 +4120,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         else:
             st.warning(
                 f"⚠️ Nenhum candidato de código divergente com similaridade ≥ "
-                f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% encontrado pra **{escolhido['DESCR_ALVO']}** "
+                f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% encontrado pra **{descr_efetiva}** "
                 "em `estagio8_agrupado`."
             )
         return
@@ -4408,7 +4425,11 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     confirmado()/salvar_cruzamento_confirmado_detalhado()) e tabela
     "Itens individuais" ao final. Todas as keys de widget/container
     levam sufixo "_saidas" pra não colidir com a aba de Entradas — as
-    duas abas de st.tabs() rodam no MESMO script run do Streamlit."""
+    duas abas de st.tabs() rodam no MESMO script run do Streamlit.
+
+    Descrição/Unidade EFETIVAS (2026-08-04): ver docstring de
+    _render_cruzamento_entradas() pro raciocínio completo — mesmo
+    `descr_efetiva`/`unid_efetiva` usados nos textos aqui."""
     criterios = _obter_criterios_cruzamento_saidas()
     criterio_busca = st.selectbox(
         "Critério de busca",
@@ -4417,20 +4438,23 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     )
     fn_agrupado, fn_detalhado = criterios[criterio_busca]
     sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
+    descr_efetiva = loader.descricao_efetiva_escolhido(escolhido)
+    unid_efetiva = loader.unidade_efetiva_escolhido(escolhido)
     if escolhido.get("IS_ST"):
-        st.caption(f"🏷️ **{escolhido['DESCR_ALVO']}** é **ST** (Substituição Tributária).")
+        st.caption(f"🏷️ **{descr_efetiva}** é **ST** (Substituição Tributária).")
 
     if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
         st.caption(
             f"Combinações em `estagio8_saidas_agrupado` (Saídas, Estágio 8) com o MESMO código de produto "
-            f"de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — comparação normalizada "
-            "(zero à esquerda em código numérico não conta como diferença) — ordenadas por "
+            f"de **{descr_efetiva}** ({escolhido['COD_ITEM']}) — Unidade: **{unid_efetiva or '—'}** — "
+            "comparação normalizada (zero à esquerda em código numérico não conta como diferença) — "
+            "ordenadas por "
             "similaridade de descrição (overlap de tokens) entre o produto vendido e a descrição do alvo."
         )
     elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
         st.caption(
             f"Pesquisa livre em `estagio8_saidas_agrupado` (Saídas, Estágio 8) pra comparar com "
-            f"**{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — SEM filtro de código e SEM "
+            f"**{descr_efetiva}** ({escolhido['COD_ITEM']}) — SEM filtro de código e SEM "
             "piso de similaridade. Útil quando o candidato certo tem pouca ou nenhuma semelhança "
             "de texto com o alvo, caso em que o Critério 3 nunca o encontraria. Digite um termo na "
             "busca abaixo (ex.: parte do nome do alvo) pra ver candidatos, incluindo o próprio "
@@ -4440,7 +4464,7 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     else:
         st.caption(
             f"Combinações em `estagio8_saidas_agrupado` (Saídas, Estágio 8) com código DIVERGENTE (diferente) "
-            f"do de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — cobre o caso em que o "
+            f"do de **{descr_efetiva}** ({escolhido['COD_ITEM']}) — cobre o caso em que o "
             "produto é o mesmo fisicamente, mas o código na saída diverge do código oficial do "
             f"alvo. Só entram candidatos com similaridade de descrição ≥ "
             f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% (aqui a similaridade FILTRA, não é só ordenação, "
@@ -4463,7 +4487,7 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
         else:
             st.warning(
                 f"⚠️ Nenhum candidato de código divergente com similaridade ≥ "
-                f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% encontrado pra **{escolhido['DESCR_ALVO']}** "
+                f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% encontrado pra **{descr_efetiva}** "
                 "em `estagio8_saidas_agrupado`."
             )
         return
@@ -4706,7 +4730,11 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     sintético, ver _COLUNAS_PREVIEW_CRUZAMENTO_CONFIRMADO_DETALHADO_
     ESTOQUE). Todas as keys de widget/container levam sufixo "_estoque"
     pra não colidir com as abas de Entradas/Saídas — as três abas de
-    st.tabs() rodam no MESMO script run do Streamlit."""
+    st.tabs() rodam no MESMO script run do Streamlit.
+
+    Descrição/Unidade EFETIVAS (2026-08-04): ver docstring de
+    _render_cruzamento_entradas() pro raciocínio completo — mesmo
+    `descr_efetiva`/`unid_efetiva` usados nos textos aqui."""
     criterios = _obter_criterios_cruzamento_estoque()
     criterio_busca = st.selectbox(
         "Critério de busca",
@@ -4715,20 +4743,23 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     )
     fn_agrupado, fn_detalhado = criterios[criterio_busca]
     sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
+    descr_efetiva = loader.descricao_efetiva_escolhido(escolhido)
+    unid_efetiva = loader.unidade_efetiva_escolhido(escolhido)
     if escolhido.get("IS_ST"):
-        st.caption(f"🏷️ **{escolhido['DESCR_ALVO']}** é **ST** (Substituição Tributária).")
+        st.caption(f"🏷️ **{descr_efetiva}** é **ST** (Substituição Tributária).")
 
     if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
         st.caption(
             f"Combinações em `estagio8_estoque_agrupado` (Estoque, Estágio 8.2) com o MESMO código de produto "
-            f"de **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — comparação normalizada "
-            "(zero à esquerda em código numérico não conta como diferença) — ordenadas por "
-            "similaridade de descrição (overlap de tokens) entre a descrição declarada e a do alvo."
+            f"de **{descr_efetiva}** ({escolhido['COD_ITEM']}) — Unidade: **{unid_efetiva or '—'}** — "
+            "comparação normalizada (zero à esquerda em código numérico não conta como diferença) — "
+            "ordenadas por similaridade de descrição (overlap de tokens) entre a descrição declarada e "
+            "a do alvo."
         )
     elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
         st.caption(
             f"Pesquisa livre em `estagio8_estoque_agrupado` (Estoque, Estágio 8.2) pra comparar "
-            f"com **{escolhido['DESCR_ALVO']}** ({escolhido['COD_ITEM']}) — SEM filtro de código e "
+            f"com **{descr_efetiva}** ({escolhido['COD_ITEM']}) — SEM filtro de código e "
             "SEM piso de similaridade. Útil quando o candidato certo tem pouca ou nenhuma "
             "semelhança de texto com o alvo. Digite um termo na busca abaixo (ex.: parte do nome "
             "do alvo) pra ver candidatos, incluindo o próprio produto alvo se ele aparecer em "
@@ -4738,7 +4769,7 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     else:
         st.caption(
             f"Combinações em `estagio8_estoque_agrupado` (Estoque, Estágio 8.2) cujo nome de declaração "
-            f"(`descrição_decl`) é IGUAL (normalizado — maiúsculas/espaços) ao de **{escolhido['DESCR_ALVO']}** "
+            f"(`descrição_decl`) é IGUAL (normalizado — maiúsculas/espaços) ao de **{descr_efetiva}** "
             f"({escolhido['COD_ITEM']}), sem exigir nenhuma relação de código — captura itens com nome "
             "correto mas código interno divergente (comum em cadastros legados)."
         )
@@ -4757,7 +4788,7 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
             )
         else:
             st.warning(
-                f"⚠️ Nenhum item declarado com o mesmo nome de **{escolhido['DESCR_ALVO']}** encontrado "
+                f"⚠️ Nenhum item declarado com o mesmo nome de **{descr_efetiva}** encontrado "
                 "em `estagio8_estoque_agrupado`."
             )
         return
@@ -5016,7 +5047,8 @@ def render_produtos_alvo_salvos() -> None:
     escolhido_atual = loader.consultar_produto_cruzamento_escolhido()
     if escolhido_atual:
         st.success(
-            f"🎯 Produto atualmente escolhido pra cruzamento: **{escolhido_atual['DESCR_ALVO']}** "
+            f"🎯 Produto atualmente escolhido pra cruzamento: "
+            f"**{loader.descricao_efetiva_escolhido(escolhido_atual)}** "
             f"(Cód. {escolhido_atual['COD_ITEM']}) — escolhido em {escolhido_atual['TS']}."
             + _badge_st(escolhido_atual)
         )
