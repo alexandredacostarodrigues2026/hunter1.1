@@ -8274,12 +8274,14 @@ def aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tup
 # (Fator Multiplicador/omissão, ainda não implementado): resolve a
 # divergência de embalagem ANTES do cálculo de imposto.
 _COLUNAS_CRUZAMENTO_FINAL_PRODUTO = [
-    "DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "ALIQ", "ST",
+    "DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ALIQ", "ST",
     "QTDE_EI", "QTDE_C", "QTDE_V", "QTDE_EF", "MEDIA_PU_C", "MEDIA_PU_V", "MEDIA_PU_E", "TS",
 ]
-# Regra de alíquota (pedido explícito do usuário, sem ambiguidade — não
-# depende de CFOP/tabela externa): > 2023 usa 18%, senão (<=2023) usa 20%.
-_ANO_CORTE_ALIQUOTA_18 = 2023
+# Regra de alíquota (pedido explícito do usuário — redefinida em
+# 2026-08-05, invertendo a versão original da Solicitação Técnica: > 2023
+# usa 20%, senão (<=2023) usa 18%). Sem ambiguidade, não depende de CFOP/
+# tabela externa.
+_ANO_CORTE_ALIQUOTA = 2023
 
 
 def _consolidar_detalhado_por_origem(escolhido: dict, origem: str) -> pd.DataFrame:
@@ -8333,20 +8335,44 @@ def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
       anterior NESTA MESMA grade (não o QUANTIDADE_INICIAL bruto do
       Estágio 5) — o Estoque Final aqui é o já tratado/confirmado pela
       Rubrica, precisa encadear com ele mesmo, não com o valor bruto do
-      SPED. Primeiro ano da série (sem ano anterior na grade) fica 0.0.
-    - ALIQ: 18.0 se ANO > 2023, senão 20.0 (_ANO_CORTE_ALIQUOTA_18).
+      SPED. Calculada ANTES do filtro de Período de Auditoria (abaixo),
+      sobre o universo de anos COMPLETO — o ano inicial do período
+      configurado ainda recebe a continuidade real do ano anterior
+      (mesmo que esse ano anterior não apareça na grade final). Primeiro
+      ano da série (sem ano anterior com dado algum) fica 0.0.
+    - ALIQ: 20.0 se ANO > 2023, senão 18.0 (_ANO_CORTE_ALIQUOTA) —
+      2026-08-05: regra REDEFINIDA pelo usuário, invertida em relação à
+      Solicitação Técnica original (que pedia 18%/>2023, 20%/senão).
     - ST: "S" se escolhido['IS_ST'], senão "N".
     - DESCR_PROD: descricao_efetiva_escolhido(escolhido) (DESCR_EDITADA
       quando preenchida, senão DESCR_ALVO) — mesma constante em toda
       linha (propriedade do PRODUTO, não do ano).
+    - UP (2026-08-05, Solicitação Técnica: "faltou o campo 'UP'
+      [unidade de produto]"): unidade_efetiva_escolhido(escolhido)
+      (UNID_EDITADA quando preenchida, senão UNID_ALVO) — mesmo
+      raciocínio de DESCR_PROD, mesma constante em toda linha. Campo
+      NOVO (`UP`), não reaproveita `UNID_PROD` (Estágio 7.3.3) — semântica
+      diferente: `UNID_PROD` ali é o valor BRUTO por linha/origem antes
+      de qualquer tratamento; `UP` aqui é a unidade EFETIVA já
+      normalizada do produto (mesmo conceito de "UP XML" do Estágio 9).
 
     Universo de ANOs = união dos anos com pelo menos 1 item confirmado
     em QUALQUER das 3 origens (outer join) — um produto com Estoque
     confirmado mas ainda sem Entradas/Saídas nesse ano aparece do mesmo
     jeito, com QTDE_C/QTDE_V=0.0. Devolve DataFrame vazio (colunas de
     _COLUNAS_CRUZAMENTO_FINAL_PRODUTO) se não houver NENHUM item
-    confirmado em nenhuma origem ainda — cálculo em memória, NÃO
-    persiste nada (ver salvar_cruzamento_final_produto())."""
+    confirmado em nenhuma origem ainda, OU se o Período de Auditoria
+    (Estágio 1/EXTRAÇÃO, ver obter_periodo_auditoria()) filtrar todos os
+    anos calculados — cálculo em memória, NÃO persiste nada (ver
+    salvar_cruzamento_final_produto()).
+
+    Período de Auditoria (2026-08-05, Solicitação Técnica: "observe o
+    período a ser fiscalizado definido em EXTRAÇÃO"): quando configurado
+    (Estágio 1), a grade final só mostra ANO dentro de [ano_inicial,
+    ano_final] — mesmo critério já usado por outras telas de resumo
+    fiscal deste projeto (ex.: gerar_rn1_produto()/auditar_divergencia_
+    estoque()). Sem período configurado, devolve TODOS os anos
+    calculados (comportamento de antes)."""
     entradas = _consolidar_detalhado_por_origem(escolhido, "entradas")
     saidas = _consolidar_detalhado_por_origem(escolhido, "saidas")
     estoque = _consolidar_detalhado_por_origem(escolhido, "estoque")
@@ -8377,14 +8403,26 @@ def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
     ano_num = resultado["ANO"].astype(int)
     mapa_ef_por_ano = pd.Series(resultado["QTDE_EF"].to_numpy(), index=ano_num.to_numpy())
     resultado["QTDE_EI"] = (ano_num - 1).map(mapa_ef_por_ano).fillna(0.0)
-    resultado["ALIQ"] = np.where(ano_num > _ANO_CORTE_ALIQUOTA_18, 18.0, 20.0)
+    resultado["ALIQ"] = np.where(ano_num > _ANO_CORTE_ALIQUOTA, 20.0, 18.0)
     resultado["ST"] = "S" if escolhido.get("IS_ST") else "N"
     resultado["DESCR_PROD"] = descricao_efetiva_escolhido(escolhido)
+    resultado["UP"] = unidade_efetiva_escolhido(escolhido)
     resultado["DESCR_ALVO"] = escolhido["DESCR_ALVO"]
     resultado["COD_ITEM"] = escolhido.get("COD_ITEM", "")
     resultado["TS"] = datetime.now().isoformat(timespec="seconds")
 
-    resultado = _forcar_colunas_string(resultado, ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "ST"])
+    # Período de Auditoria (Estágio 1/EXTRAÇÃO) — aplicado DEPOIS de
+    # QTDE_EI já calculada sobre o universo completo de anos (ver
+    # docstring), pra não perder a continuidade real do ano inicial do
+    # período. Sem período configurado, `periodo` é None — nenhum filtro.
+    periodo = obter_periodo_auditoria()
+    if periodo:
+        ano_ini_periodo, ano_fim_periodo = int(periodo["ano_inicial"]), int(periodo["ano_final"])
+        resultado = resultado[ano_num.between(ano_ini_periodo, ano_fim_periodo)]
+        if resultado.empty:
+            return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_FINAL_PRODUTO)
+
+    resultado = _forcar_colunas_string(resultado, ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ST"])
     return resultado[_COLUNAS_CRUZAMENTO_FINAL_PRODUTO].reset_index(drop=True)
 
 
@@ -8401,10 +8439,10 @@ def salvar_cruzamento_final_produto(escolhido: dict, editado: pd.DataFrame) -> d
     mesma chave usada em toda produto_alvo_fiscalizacao desde
     2026-08-04).
 
-    `editado` precisa das colunas de exibição (ANO/DESCR_PROD/ALIQ/ST/
+    `editado` precisa das colunas de exibição (ANO/DESCR_PROD/UP/ALIQ/ST/
     QTDE_EI/QTDE_C/QTDE_V/QTDE_EF/MEDIA_PU_C/MEDIA_PU_V/MEDIA_PU_E) —
     DESCR_ALVO/COD_ITEM/TS são recriados aqui a partir de `escolhido`
-    (Regra R07: string em ANO/DESCR_PROD/ST/DESCR_ALVO/COD_ITEM).
+    (Regra R07: string em ANO/DESCR_PROD/UP/ST/DESCR_ALVO/COD_ITEM).
     Devolve {'total_anos': int} ou {'erro': str} se falhar."""
     resultado = {}
     try:
@@ -8412,7 +8450,7 @@ def salvar_cruzamento_final_produto(escolhido: dict, editado: pd.DataFrame) -> d
         novo["DESCR_ALVO"] = escolhido["DESCR_ALVO"]
         novo["COD_ITEM"] = escolhido.get("COD_ITEM", "")
         novo["TS"] = datetime.now().isoformat(timespec="seconds")
-        novo = _forcar_colunas_string(novo, ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "ST"])
+        novo = _forcar_colunas_string(novo, ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ST"])
         novo = novo[_COLUNAS_CRUZAMENTO_FINAL_PRODUTO]
 
         existente, _ = consultar_cruzamento_final_produto(limite=None)

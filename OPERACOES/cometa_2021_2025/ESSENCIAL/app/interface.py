@@ -4886,13 +4886,15 @@ _COLUNA_LABEL_DESCR_EDITADA = "Descricao Editada"
 _COLUNA_IS_ST_PRODUTOS_ALVO_SALVOS = "E ST (Substituicao Tributaria)"
 
 # Cruzamento Final do Produto (Estágio 10.2, 2026-08-05) — colunas de
-# exibição da grade (mesma ordem pedida na Solicitação Técnica: "Ano |
+# exibição da grade (ordem da Solicitação Técnica original: "Ano |
 # DescrProd | Aliq | ST | QtdeEI | QtdeC | QtdeV | QtdeEF | MediaPuC |
-# MediaPuV | MediaPuE"). DESCR_ALVO/COD_ITEM/TS (identidade/upsert) não
-# aparecem na grade — recompostos a partir de `escolhido_atual` na hora
-# de salvar (ver loader.salvar_cruzamento_final_produto()).
+# MediaPuV | MediaPuE", com "UP" [Unidade de Produto] inserida logo após
+# DescrProd — ajuste pedido pelo usuário no mesmo dia: "faltou o campo
+# 'UP'"). DESCR_ALVO/COD_ITEM/TS (identidade/upsert) não aparecem na
+# grade — recompostos a partir de `escolhido_atual` na hora de salvar
+# (ver loader.salvar_cruzamento_final_produto()).
 _COLUNAS_EXIBICAO_CRUZAMENTO_FINAL_PRODUTO = [
-    "ANO", "DESCR_PROD", "ALIQ", "ST", "QTDE_EI", "QTDE_C", "QTDE_V", "QTDE_EF",
+    "ANO", "DESCR_PROD", "UP", "ALIQ", "ST", "QTDE_EI", "QTDE_C", "QTDE_V", "QTDE_EF",
     "MEDIA_PU_C", "MEDIA_PU_V", "MEDIA_PU_E",
 ]
 
@@ -5178,6 +5180,10 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
       guarda em st.session_state (chave por produto — trocar de produto
       escolhido não mistura a grade de um com o de outro). Recalcular
       DESCARTA edições não salvas ainda (avisado no botão de salvar).
+      Respeita o Período de Auditoria configurado no Estágio 1/EXTRAÇÃO
+      (loader.gerar_cruzamento_final_produto() já filtra por ele) —
+      2026-08-05, pedido do usuário: "observe o período a ser
+      fiscalizado definido em EXTRAÇÃO".
     - "💾 Salvar Cruzamento Final do Produto": grava o estado ATUAL da
       grade (já com os ajustes finos do auditor — Alíquota/ST/
       quantidades/preços médios) em cruzamento_final_produto, upsert por
@@ -5185,8 +5191,9 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
     st.markdown("### ⚖️ Cruzamento Final do Produto")
     st.caption(
         "Consolida os itens confirmados na Rubrica (Entradas/Saídas/Estoque) — já com o "
-        "tratamento de Fator Multiplicador aplicado — num resumo por ano. Ajuste o que precisar "
-        "na grade antes de \"💾 Salvar Cruzamento Final do Produto\"."
+        "tratamento de Fator Multiplicador aplicado — num resumo por ano, restrito ao Período de "
+        "Auditoria configurado em \"📥 EXTRAÇÃO\". Ajuste o que precisar na grade antes de "
+        "\"💾 Salvar Cruzamento Final do Produto\"."
     )
     # Chave de cache por PRODUTO (COD_ITEM, fallback DESCR_ALVO — mesmo
     # raciocínio de loader._chave_produto_alvo_fiscalizacao(), sem
@@ -5201,7 +5208,8 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
             st.session_state.pop(chave_grade, None)
             st.warning(
                 "Nenhum item confirmado na Rubrica (Entradas/Saídas/Estoque) pra este produto "
-                "ainda — confirme correspondências nas abas acima primeiro."
+                "dentro do Período de Auditoria configurado — confirme correspondências nas abas "
+                "acima ou revise o período em \"📥 EXTRAÇÃO\"."
             )
         else:
             st.session_state[chave_grade] = grade

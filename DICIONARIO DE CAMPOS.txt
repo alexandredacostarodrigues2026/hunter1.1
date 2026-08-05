@@ -198,6 +198,7 @@ DESCR_EDITADA;Descricao Editada
 UNID_EDITADA;Unidade Editada
 
 # Novos campos - 2026-08-05 (Estagio 10.2 - Cruzamento Final do Produto, tabela cruzamento_final_produto)
+UP;UP (Unidade de Produto)
 ALIQ;Aliquota (%)
 ST;ST
 QTDE_EI;Qtde. Estoque Inicial
