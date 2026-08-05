@@ -3634,105 +3634,6 @@ def _obter_criterios_cruzamento_entradas() -> dict:
     }
 
 
-def _aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tuple:
-    """Sumário de Unidades + aplicação de FM/Nova Unidade (Estágio 10) —
-    mirror entre Entradas/Saídas/Estoque, extraído em 2026-07-26 (pedido
-    do usuário: "ESTENDA PARA SAIDAS E ESTOQUES") pra não triplicar a
-    mesma lógica nas 3 abas de `_render_cruzamento_*()`.
-
-    Recebe `detalhado` já enriquecido com unid_prod/vl_unit_prod/
-    qtde_prod/fm_sugerido (por `consultar_atributos_estoque_por_idunico()`
-    ou `consultar_atributos_estoque_estoque_por_idunico()`, conforme a
-    aba) e devolve (detalhado_ajustado, sumario_unidades,
-    idunicos_tratados):
-    - sumario_unidades: calculado ANTES do tratamento abaixo, sempre
-      reflete a unidade/preço BRUTOS do XML (independente de
-      tratamentos já aplicados) — via loader.gerar_sumario_unidades_alvo_
-      com_destaque() (2026-07-26, "SEPARE AS LINHAS DO SUMÁRIO, DENTRO
-      DA MESMA UNID", depois "ESTENDA PARA ENTRADAS E SAÍDAS") — separa
-      em linha própria os itens com valor destoante dentro da mesma
-      UNID; quando nenhum item é destoante, o resultado é idêntico ao
-      de gerar_sumario_unidades_alvo(). Carrega a coluna interna
-      `_idunicos` por linha (ver loader.gerar_sumario_unidades_alvo()) —
-      2026-07-26, achado real: "MARQUE SOMENTE O 17,67 E A APLICAÇÃO
-      CONSIDEROU TUDO ERRONEAMENTE" — antes, _render_sumario_unidades_
-      com_aplicar() localizava os idunicos de uma linha marcada
-      comparando o TEXTO de `unid_prod`; depois da separação por
-      destaque, 2 linhas podem ter o MESMO texto (ex.: "LA" normal e
-      "LA" destoante), então marcar só a linha do "LA" destoante
-      aplicava o tratamento em TODOS os itens "LA" (normal + os 2
-      destoantes) — a correspondência por texto não distinguia mais
-      qual linha era. `_idunicos` resolve isso: cada linha do Sumário
-      carrega o conjunto EXATO de idunico que ela representa.
-    - idunicos_tratados: conjunto de idunico com TRATAMENTO='T' — usado
-      pra coluna "Observação" (2026-07-26, "CRIE UMA OBSERVAÇÃO COMO NA
-      FIG"), testando interseção com `_idunicos` de cada linha do
-      Sumário (não mais comparação de texto, mesmo motivo acima).
-    - detalhado_ajustado: busca o tratamento já persistido (por
-      idunico, ver loader.aplicar_tratamento_fm()) e calcula os campos
-      "utilizados" — NÃO SOBRESCREVE MAIS os originais (2026-07-26,
-      pedido do usuário: "CRIAR ... OS CAMPOS quant_utiliz|vu_utilizado|
-      unid_prod_utiliz A FIM DE PRESERVAR OS ORIGINAIS CASO HAJA
-      APLICAÇÃO DE FM"). `unid_prod`/`vl_unit_prod`/`qtde_prod`/
-      `vl_prod` ficam SEMPRE com o valor bruto do XML, tratado ou não.
-      4 colunas novas guardam o valor EFETIVO:
-      - unid_prod_utiliz: NOVA_UNIDADE_APLICADA se tratado, senão igual
-        a `unid_prod` (original).
-      - vu_utilizado: sem `VALOR_UNITARIO_APLICADO`, vl_unit_prod÷FM
-        (item a item); com `VALOR_UNITARIO_APLICADO` (auditor corrigiu
-        o preço-base no Sumário), VALOR_UNITARIO_APLICADO÷FM (mesmo
-        valor pro grupo inteiro — corrige a variação interna de preço
-        entre notas, achado real de "cx12" variando de R$24,90 a
-        R$38,76); se não tratado, igual a `vl_unit_prod` (original).
-      - quant_utiliz: qtde_prod×FM se tratado, senão igual a `qtde_prod`
-        (original).
-      - fm_utilizado: FM_APLICADO se tratado, senão 1,0 (fator neutro —
-        2026-07-26, "TROCAR FM SUGERIDO POR FM UTILIZADO (1 CASO NÃO
-        SEJA UTILIZADO E NÃO EDITÁVEL)").
-      TRATAMENTO vira coluna nova, "" (nunca "None", Regra R07) pra
-      itens não tratados."""
-    sumario_unidades = loader.gerar_sumario_unidades_alvo_com_destaque(detalhado)
-    tratamento_por_idunico = loader.consultar_tratamento_fm_por_idunico(set(detalhado["idunico"]), origem=origem)
-    detalhado = detalhado.merge(tratamento_por_idunico, on="idunico", how="left")
-    # FM_APLICADO/VALOR_UNITARIO_APLICADO precisam ser float mesmo quando
-    # NENHUM item foi tratado ainda — quando tratamento_por_idunico vem
-    # vazio (tabela ainda não criada), o merge traz a coluna como dtype
-    # "object" (peculiaridade de DataFrame vazio), e a divisão abaixo
-    # quebra ("Invalid value '[]' for dtype 'float64'") mesmo com a
-    # máscara selecionando 0 linhas — achado real via AppTest antes de
-    # propagar (Entradas, 2026-07-26).
-    detalhado["FM_APLICADO"] = pd.to_numeric(detalhado["FM_APLICADO"], errors="coerce")
-    detalhado["VALOR_UNITARIO_APLICADO"] = pd.to_numeric(detalhado["VALOR_UNITARIO_APLICADO"], errors="coerce")
-    mascara_tratado = detalhado["TRATAMENTO"] == "T"
-    idunicos_tratados = set(detalhado.loc[mascara_tratado, "idunico"])
-    mascara_com_override = mascara_tratado & detalhado["VALOR_UNITARIO_APLICADO"].notna()
-    mascara_sem_override = mascara_tratado & ~mascara_com_override
-
-    # Campos "utilizados" — começam iguais aos originais (item não
-    # tratado); só os itens tratados recebem o valor efetivo abaixo.
-    detalhado["unid_prod_utiliz"] = detalhado["unid_prod"]
-    detalhado["vu_utilizado"] = detalhado["vl_unit_prod"]
-    detalhado["quant_utiliz"] = detalhado["qtde_prod"]
-    detalhado["fm_utilizado"] = 1.0
-
-    detalhado.loc[mascara_com_override, "vu_utilizado"] = (
-        detalhado.loc[mascara_com_override, "VALOR_UNITARIO_APLICADO"]
-        / detalhado.loc[mascara_com_override, "FM_APLICADO"]
-    )
-    detalhado.loc[mascara_sem_override, "vu_utilizado"] = (
-        detalhado.loc[mascara_sem_override, "vl_unit_prod"] / detalhado.loc[mascara_sem_override, "FM_APLICADO"]
-    )
-    detalhado.loc[mascara_tratado, "quant_utiliz"] = (
-        detalhado.loc[mascara_tratado, "qtde_prod"] * detalhado.loc[mascara_tratado, "FM_APLICADO"]
-    )
-    detalhado.loc[mascara_tratado, "unid_prod_utiliz"] = detalhado.loc[mascara_tratado, "NOVA_UNIDADE_APLICADA"]
-    detalhado.loc[mascara_tratado, "fm_utilizado"] = detalhado.loc[mascara_tratado, "FM_APLICADO"]
-
-    detalhado["TRATAMENTO"] = detalhado["TRATAMENTO"].fillna("")
-    detalhado = detalhado.drop(columns=["FM_APLICADO", "NOVA_UNIDADE_APLICADA", "VALOR_UNITARIO_APLICADO"], errors="ignore")
-    return detalhado, sumario_unidades, idunicos_tratados
-
-
 def _obter_valor_unitario_editado(
     valor_min_editado, valor_max_editado, valor_min_original, valor_max_original,
 ) -> "float | None":
@@ -4337,7 +4238,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     # determinístico e não muda.
     atributos_por_idunico = loader.consultar_atributos_estoque_por_idunico(set(detalhado["idunico"]), origem="entradas")
     detalhado = detalhado.merge(atributos_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
-    detalhado, sumario_unidades, idunicos_tratados = _aplicar_tratamento_fm_detalhado(
+    detalhado, sumario_unidades, idunicos_tratados = loader.aplicar_tratamento_fm_detalhado(
         detalhado, origem="entradas",
     )
     # IS_ST (2026-07-29) acompanha o produto alvo até a tabela de Itens
@@ -4627,7 +4528,7 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     # de CERV SKOL LATA 350ML em Saídas), o merge veio 100% preenchido.
     atributos_por_idunico = loader.consultar_atributos_estoque_por_idunico(set(detalhado["idunico"]), origem="saidas")
     detalhado = detalhado.merge(atributos_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
-    detalhado, sumario_unidades, idunicos_tratados = _aplicar_tratamento_fm_detalhado(
+    detalhado, sumario_unidades, idunicos_tratados = loader.aplicar_tratamento_fm_detalhado(
         detalhado, origem="saidas",
     )
     # IS_ST — ver comentário equivalente em _render_cruzamento_entradas().
@@ -4935,7 +4836,7 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     # não um campo bruto do SPED).
     atributos_por_idunico = loader.consultar_atributos_estoque_estoque_por_idunico(set(detalhado["idunico"]))
     detalhado = detalhado.merge(atributos_por_idunico, left_on="idunico", right_on="ID_UNICO", how="left")
-    detalhado, sumario_unidades, idunicos_tratados = _aplicar_tratamento_fm_detalhado(
+    detalhado, sumario_unidades, idunicos_tratados = loader.aplicar_tratamento_fm_detalhado(
         detalhado, origem="estoque",
     )
     # IS_ST — ver comentário equivalente em _render_cruzamento_entradas().
@@ -4984,6 +4885,17 @@ _COLUNA_LABEL_UNID_EDITADA = "Unidade Editada"
 _COLUNA_LABEL_DESCR_EDITADA = "Descricao Editada"
 _COLUNA_IS_ST_PRODUTOS_ALVO_SALVOS = "E ST (Substituicao Tributaria)"
 
+# Cruzamento Final do Produto (Estágio 10.2, 2026-08-05) — colunas de
+# exibição da grade (mesma ordem pedida na Solicitação Técnica: "Ano |
+# DescrProd | Aliq | ST | QtdeEI | QtdeC | QtdeV | QtdeEF | MediaPuC |
+# MediaPuV | MediaPuE"). DESCR_ALVO/COD_ITEM/TS (identidade/upsert) não
+# aparecem na grade — recompostos a partir de `escolhido_atual` na hora
+# de salvar (ver loader.salvar_cruzamento_final_produto()).
+_COLUNAS_EXIBICAO_CRUZAMENTO_FINAL_PRODUTO = [
+    "ANO", "DESCR_PROD", "ALIQ", "ST", "QTDE_EI", "QTDE_C", "QTDE_V", "QTDE_EF",
+    "MEDIA_PU_C", "MEDIA_PU_V", "MEDIA_PU_E",
+]
+
 
 def render_produtos_alvo_salvos() -> None:
     """Painel 'PRODUTOS ALVOS SALVOS' (2026-07-23, Solicitação Técnica:
@@ -5027,7 +4939,10 @@ def render_produtos_alvo_salvos() -> None:
     Critério 1 (mesmo código de produto + similaridade de descrição
     contra estagio8_agrupado, ver _render_cruzamento_entradas_
     criterio1()/loader.cruzar_produto_escolhido_entradas()); mais
-    critérios/abas (Saídas, Estoques) ficam pra próximas rodadas."""
+    critérios/abas (Saídas, Estoques) ficam pra próximas rodadas.
+
+    Depois das 3 abas, "⚖️ Cruzamento Final do Produto" (Estágio 10.2,
+    2026-08-05) — ver _render_cruzamento_final_produto()."""
     st.subheader("Estágio 10 - Produtos Alvos Salvos")
     st.caption(
         "Produtos já marcados como ativos no Grupo de Produto Alvo (Estágio 7.3.2). Marque "
@@ -5243,6 +5158,91 @@ def render_produtos_alvo_salvos() -> None:
             _render_cruzamento_estoque(escolhido_atual)
         with aba_cruzamento_saidas:
             _render_cruzamento_saidas(escolhido_atual)
+
+        st.divider()
+        _render_cruzamento_final_produto(escolhido_atual)
+
+
+def _render_cruzamento_final_produto(escolhido: dict) -> None:
+    """Estágio 10.2 — "⚖️ Cruzamento Final do Produto" (Solicitação
+    Técnica 2026-08-05): posicionado no final da página do Estágio 10,
+    depois das 3 abas de busca/Rubrica. Consolida os itens já
+    confirmados na Rubrica (Entradas/Saídas/Estoque) do produto
+    `escolhido`, com o tratamento de Fator Multiplicador já aplicado
+    (loader.gerar_cruzamento_final_produto()), num resumo editável por
+    ano — preparação pro Estágio 15 (ainda não implementado).
+
+    2 botões, mesmo padrão de "editar depois salvar" já usado no Sumário
+    de Unidades/Produtos Alvos Salvos (Estágio 10):
+    - "⚖️ Efetuar Cruzamento do Produto": (re)calcula a grade do zero e
+      guarda em st.session_state (chave por produto — trocar de produto
+      escolhido não mistura a grade de um com o de outro). Recalcular
+      DESCARTA edições não salvas ainda (avisado no botão de salvar).
+    - "💾 Salvar Cruzamento Final do Produto": grava o estado ATUAL da
+      grade (já com os ajustes finos do auditor — Alíquota/ST/
+      quantidades/preços médios) em cruzamento_final_produto, upsert por
+      produto (loader.salvar_cruzamento_final_produto())."""
+    st.markdown("### ⚖️ Cruzamento Final do Produto")
+    st.caption(
+        "Consolida os itens confirmados na Rubrica (Entradas/Saídas/Estoque) — já com o "
+        "tratamento de Fator Multiplicador aplicado — num resumo por ano. Ajuste o que precisar "
+        "na grade antes de \"💾 Salvar Cruzamento Final do Produto\"."
+    )
+    # Chave de cache por PRODUTO (COD_ITEM, fallback DESCR_ALVO — mesmo
+    # raciocínio de loader._chave_produto_alvo_fiscalizacao(), sem
+    # chamar a função privada daqui: interface.py só chama funções
+    # públicas do loader) — trocar de produto escolhido não mistura a
+    # grade de um com o de outro.
+    chave_grade = f"cruzamento_final_produto_grade_{escolhido.get('COD_ITEM') or escolhido['DESCR_ALVO']}"
+
+    if st.button("⚖️ Efetuar Cruzamento do Produto", key="btn_efetuar_cruzamento_final_produto"):
+        grade = loader.gerar_cruzamento_final_produto(escolhido)
+        if grade.empty:
+            st.session_state.pop(chave_grade, None)
+            st.warning(
+                "Nenhum item confirmado na Rubrica (Entradas/Saídas/Estoque) pra este produto "
+                "ainda — confirme correspondências nas abas acima primeiro."
+            )
+        else:
+            st.session_state[chave_grade] = grade
+
+    grade_atual = st.session_state.get(chave_grade)
+    if grade_atual is None:
+        return
+
+    rotulos = {c: loader.carregar_dicionario_campos().get(c, c) for c in _COLUNAS_EXIBICAO_CRUZAMENTO_FINAL_PRODUTO}
+    grade_exibicao = grade_atual[_COLUNAS_EXIBICAO_CRUZAMENTO_FINAL_PRODUTO].rename(columns=rotulos)
+    with st.container(key="cruzamento_final_produto_tabela"):
+        st.markdown(
+            "<style>.st-key-cruzamento_final_produto_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 10px; }</style>",
+            unsafe_allow_html=True,
+        )
+        grade_editada = st.data_editor(
+            grade_exibicao,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                rotulos["ALIQ"]: st.column_config.NumberColumn(format="%.0f"),
+                rotulos["QTDE_EI"]: st.column_config.NumberColumn(format="%,.2f"),
+                rotulos["QTDE_C"]: st.column_config.NumberColumn(format="%,.2f"),
+                rotulos["QTDE_V"]: st.column_config.NumberColumn(format="%,.2f"),
+                rotulos["QTDE_EF"]: st.column_config.NumberColumn(format="%,.2f"),
+                rotulos["MEDIA_PU_C"]: st.column_config.NumberColumn(format="%,.2f"),
+                rotulos["MEDIA_PU_V"]: st.column_config.NumberColumn(format="%,.2f"),
+                rotulos["MEDIA_PU_E"]: st.column_config.NumberColumn(format="%,.2f"),
+            },
+            key="editor_cruzamento_final_produto",
+        )
+
+    if st.button("💾 Salvar Cruzamento Final do Produto", key="btn_salvar_cruzamento_final_produto"):
+        gravar = grade_editada.rename(columns={v: k for k, v in rotulos.items()})
+        resultado_final = loader.salvar_cruzamento_final_produto(escolhido, gravar)
+        if "erro" in resultado_final:
+            st.error(f"Erro: {resultado_final['erro']}")
+        else:
+            st.session_state[chave_grade] = gravar[_COLUNAS_EXIBICAO_CRUZAMENTO_FINAL_PRODUTO]
+            st.success(f"✅ {resultado_final['total_anos']} ano(s) gravado(s) no Cruzamento Final do Produto.")
 
 
 def render_pagina_produtos_alvo_salvos() -> None:

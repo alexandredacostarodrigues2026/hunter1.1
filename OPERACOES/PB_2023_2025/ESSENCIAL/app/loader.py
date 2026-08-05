@@ -5945,8 +5945,8 @@ def salvar_alvos_selecionados_733(selecionados: pd.DataFrame) -> dict:
 # "SEPARE EM DIAS COLUNAS MIN E MAX", pedido logo após tornar o campo
 # combinado editável) — mais simples de editar que um texto único tipo
 # "24,90 - 38,76" (não precisa digitar hífen nem lidar com parsing de
-# faixa). Override de preço-base (ver _aplicar_tratamento_fm_detalhado(),
-# interface.py) passa a valer quando `vl_min == vl_max` (um valor único,
+# faixa). Override de preço-base (ver aplicar_tratamento_fm_detalhado(),
+# abaixo) passa a valer quando `vl_min == vl_max` (um valor único,
 # não mais uma faixa de verdade) — mesmo raciocínio de antes, só que sem
 # precisar de parser de texto.
 _COLUNAS_SUMARIO_UNIDADES_ALVO = [
@@ -6042,7 +6042,7 @@ def gerar_sumario_unidades_alvo_com_destaque(df_detalhado: pd.DataFrame) -> pd.D
 
     Estendida pras 3 origens (2026-07-26, mesmo dia: "ESTENDA PARA
     ENTRADAS E SAÍDAS") — usada uniformemente por
-    _aplicar_tratamento_fm_detalhado() (interface.py), sem branch por
+    aplicar_tratamento_fm_detalhado() (abaixo), sem branch por
     origem: testado com dado real de Entradas/Saídas (CERV SKOL LATA
     350ML) e confirmado que, quando nenhum item é destoante, o
     resultado é IDÊNTICO ao de gerar_sumario_unidades_alvo() — a
@@ -6202,7 +6202,7 @@ def aplicar_tratamento_fm(
     (opcional, 2026-07-26, "TRANSFORME O VALOR UNIT MIN-MAX EM
     EDITÁVEL") — quando informado, vira o valor unitário BASE usado no
     ÷FM no lugar do vl_unit_prod bruto de cada item (ver
-    _aplicar_tratamento_fm_detalhado(), interface.py); `None` preserva o
+    aplicar_tratamento_fm_detalhado(), abaixo); `None` preserva o
     comportamento original (÷FM sobre o valor bruto de cada item, total
     invariante). Upsert por `idunico`: item já tratado antes tem seu
     registro SUBSTITUÍDO (não duplicado) se aplicado de novo. Regra R07:
@@ -8157,6 +8157,316 @@ def sinalizar_valor_destoante(df_detalhado: pd.DataFrame, limiar: float = LIMIAR
         else:
             resultado.append("")
     return pd.Series(resultado, index=df_detalhado.index, dtype="object")
+
+
+def aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tuple:
+    """Sumário de Unidades + aplicação de FM/Nova Unidade (Estágio 10) —
+    mirror entre Entradas/Saídas/Estoque, extraído em 2026-07-26 (pedido
+    do usuário: "ESTENDA PARA SAIDAS E ESTOQUES") pra não triplicar a
+    mesma lógica nas 3 abas de `interface._render_cruzamento_*()`.
+    Movida de `interface.py` pra `loader.py` em 2026-08-05 (Estágio
+    10.2, Solicitação Técnica "CRUZAMENTO FINAL DO PRODUTO") — é lógica
+    pura de dados (sem nenhuma chamada `st.*`), e `gerar_cruzamento_
+    final_produto()` (abaixo) precisa reaproveitá-la; `interface.py` só
+    chama funções PÚBLICAS do loader (convenção do projeto), por isso o
+    underscore inicial caiu no rename.
+
+    Recebe `detalhado` já enriquecido com unid_prod/vl_unit_prod/
+    qtde_prod/fm_sugerido (por `consultar_atributos_estoque_por_idunico()`
+    ou `consultar_atributos_estoque_estoque_por_idunico()`, conforme a
+    origem) e devolve (detalhado_ajustado, sumario_unidades,
+    idunicos_tratados):
+    - sumario_unidades: calculado ANTES do tratamento abaixo, sempre
+      reflete a unidade/preço BRUTOS do XML (independente de
+      tratamentos já aplicados) — via gerar_sumario_unidades_alvo_
+      com_destaque() (2026-07-26, "SEPARE AS LINHAS DO SUMÁRIO, DENTRO
+      DA MESMA UNID", depois "ESTENDA PARA ENTRADAS E SAÍDAS") — separa
+      em linha própria os itens com valor destoante dentro da mesma
+      UNID; quando nenhum item é destoante, o resultado é idêntico ao
+      de gerar_sumario_unidades_alvo(). Carrega a coluna interna
+      `_idunicos` por linha (ver gerar_sumario_unidades_alvo()) —
+      2026-07-26, achado real: "MARQUE SOMENTE O 17,67 E A APLICAÇÃO
+      CONSIDEROU TUDO ERRONEAMENTE" — antes, _render_sumario_unidades_
+      com_aplicar() (interface.py) localizava os idunicos de uma linha
+      marcada comparando o TEXTO de `unid_prod`; depois da separação
+      por destaque, 2 linhas podem ter o MESMO texto (ex.: "LA" normal
+      e "LA" destoante), então marcar só a linha do "LA" destoante
+      aplicava o tratamento em TODOS os itens "LA" (normal + os 2
+      destoantes) — a correspondência por texto não distinguia mais
+      qual linha era. `_idunicos` resolve isso: cada linha do Sumário
+      carrega o conjunto EXATO de idunico que ela representa.
+    - idunicos_tratados: conjunto de idunico com TRATAMENTO='T' — usado
+      pra coluna "Observação" (2026-07-26, "CRIE UMA OBSERVAÇÃO COMO NA
+      FIG"), testando interseção com `_idunicos` de cada linha do
+      Sumário (não mais comparação de texto, mesmo motivo acima).
+    - detalhado_ajustado: busca o tratamento já persistido (por
+      idunico, ver aplicar_tratamento_fm()) e calcula os campos
+      "utilizados" — NÃO SOBRESCREVE MAIS os originais (2026-07-26,
+      pedido do usuário: "CRIAR ... OS CAMPOS quant_utiliz|vu_utilizado|
+      unid_prod_utiliz A FIM DE PRESERVAR OS ORIGINAIS CASO HAJA
+      APLICAÇÃO DE FM"). `unid_prod`/`vl_unit_prod`/`qtde_prod`/
+      `vl_prod` ficam SEMPRE com o valor bruto do XML, tratado ou não.
+      4 colunas novas guardam o valor EFETIVO:
+      - unid_prod_utiliz: NOVA_UNIDADE_APLICADA se tratado, senão igual
+        a `unid_prod` (original).
+      - vu_utilizado: sem `VALOR_UNITARIO_APLICADO`, vl_unit_prod÷FM
+        (item a item); com `VALOR_UNITARIO_APLICADO` (auditor corrigiu
+        o preço-base no Sumário), VALOR_UNITARIO_APLICADO÷FM (mesmo
+        valor pro grupo inteiro — corrige a variação interna de preço
+        entre notas, achado real de "cx12" variando de R$24,90 a
+        R$38,76); se não tratado, igual a `vl_unit_prod` (original).
+      - quant_utiliz: qtde_prod×FM se tratado, senão igual a `qtde_prod`
+        (original).
+      - fm_utilizado: FM_APLICADO se tratado, senão 1,0 (fator neutro —
+        2026-07-26, "TROCAR FM SUGERIDO POR FM UTILIZADO (1 CASO NÃO
+        SEJA UTILIZADO E NÃO EDITÁVEL)").
+      TRATAMENTO vira coluna nova, "" (nunca "None", Regra R07) pra
+      itens não tratados."""
+    sumario_unidades = gerar_sumario_unidades_alvo_com_destaque(detalhado)
+    tratamento_por_idunico = consultar_tratamento_fm_por_idunico(set(detalhado["idunico"]), origem=origem)
+    detalhado = detalhado.merge(tratamento_por_idunico, on="idunico", how="left")
+    # FM_APLICADO/VALOR_UNITARIO_APLICADO precisam ser float mesmo quando
+    # NENHUM item foi tratado ainda — quando tratamento_por_idunico vem
+    # vazio (tabela ainda não criada), o merge traz a coluna como dtype
+    # "object" (peculiaridade de DataFrame vazio), e a divisão abaixo
+    # quebra ("Invalid value '[]' for dtype 'float64'") mesmo com a
+    # máscara selecionando 0 linhas — achado real via AppTest antes de
+    # propagar (Entradas, 2026-07-26).
+    detalhado["FM_APLICADO"] = pd.to_numeric(detalhado["FM_APLICADO"], errors="coerce")
+    detalhado["VALOR_UNITARIO_APLICADO"] = pd.to_numeric(detalhado["VALOR_UNITARIO_APLICADO"], errors="coerce")
+    mascara_tratado = detalhado["TRATAMENTO"] == "T"
+    idunicos_tratados = set(detalhado.loc[mascara_tratado, "idunico"])
+    mascara_com_override = mascara_tratado & detalhado["VALOR_UNITARIO_APLICADO"].notna()
+    mascara_sem_override = mascara_tratado & ~mascara_com_override
+
+    # Campos "utilizados" — começam iguais aos originais (item não
+    # tratado); só os itens tratados recebem o valor efetivo abaixo.
+    detalhado["unid_prod_utiliz"] = detalhado["unid_prod"]
+    detalhado["vu_utilizado"] = detalhado["vl_unit_prod"]
+    detalhado["quant_utiliz"] = detalhado["qtde_prod"]
+    detalhado["fm_utilizado"] = 1.0
+
+    detalhado.loc[mascara_com_override, "vu_utilizado"] = (
+        detalhado.loc[mascara_com_override, "VALOR_UNITARIO_APLICADO"]
+        / detalhado.loc[mascara_com_override, "FM_APLICADO"]
+    )
+    detalhado.loc[mascara_sem_override, "vu_utilizado"] = (
+        detalhado.loc[mascara_sem_override, "vl_unit_prod"] / detalhado.loc[mascara_sem_override, "FM_APLICADO"]
+    )
+    detalhado.loc[mascara_tratado, "quant_utiliz"] = (
+        detalhado.loc[mascara_tratado, "qtde_prod"] * detalhado.loc[mascara_tratado, "FM_APLICADO"]
+    )
+    detalhado.loc[mascara_tratado, "unid_prod_utiliz"] = detalhado.loc[mascara_tratado, "NOVA_UNIDADE_APLICADA"]
+    detalhado.loc[mascara_tratado, "fm_utilizado"] = detalhado.loc[mascara_tratado, "FM_APLICADO"]
+
+    detalhado["TRATAMENTO"] = detalhado["TRATAMENTO"].fillna("")
+    detalhado = detalhado.drop(columns=["FM_APLICADO", "NOVA_UNIDADE_APLICADA", "VALOR_UNITARIO_APLICADO"], errors="ignore")
+    return detalhado, sumario_unidades, idunicos_tratados
+
+
+# ── Cruzamento Final do Produto (Estágio 10.2) ────────────────────────────
+# Solicitação Técnica (2026-08-05): "CRUZAMENTO FINAL DO PRODUTO" — depois
+# da curadoria da Rubrica (Estágio 10, itens confirmados por ID Único em
+# cruzamento_confirmado_detalhado), consolida FISICAMENTE o produto:
+# quantidade e preço unitário médio por ano, já com o tratamento de Fator
+# Multiplicador aplicado (mesmo `quant_utiliz`/`vu_utilizado` de
+# aplicar_tratamento_fm_detalhado(), acima) — preparação pro Estágio 15
+# (Fator Multiplicador/omissão, ainda não implementado): resolve a
+# divergência de embalagem ANTES do cálculo de imposto.
+_COLUNAS_CRUZAMENTO_FINAL_PRODUTO = [
+    "DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "ALIQ", "ST",
+    "QTDE_EI", "QTDE_C", "QTDE_V", "QTDE_EF", "MEDIA_PU_C", "MEDIA_PU_V", "MEDIA_PU_E", "TS",
+]
+# Regra de alíquota (pedido explícito do usuário, sem ambiguidade — não
+# depende de CFOP/tabela externa): > 2023 usa 18%, senão (<=2023) usa 20%.
+_ANO_CORTE_ALIQUOTA_18 = 2023
+
+
+def _consolidar_detalhado_por_origem(escolhido: dict, origem: str) -> pd.DataFrame:
+    """Reaproveita o MESMO pipeline das telas de "Itens individuais"
+    (Estágio 10): lê cruzamento_confirmado_detalhado do produto pra
+    `origem` ('entradas'/'saidas'/'estoque'), enriquece com os atributos
+    físicos/fiscais por idunico (consultar_atributos_estoque_por_idunico()
+    pra entradas/saidas, consultar_atributos_estoque_estoque_por_idunico()
+    pra estoque) e aplica aplicar_tratamento_fm_detalhado() — devolve só
+    as 3 colunas que gerar_cruzamento_final_produto() precisa: ANO
+    (string — ANO_ELEITO em entradas/saidas, ano_ef/ANO_REFERENCIA em
+    estoque), quant_utiliz, vu_utilizado (já com FM aplicado quando
+    tratado, iguais ao original quando não). Saídas já vêm SEM
+    autoemissão — exclusão embutida em gerar_estagio_8_saidas(), que
+    alimenta cruzar_produto_escolhido_saidas() e portanto a Rubrica
+    (mesmo raciocínio documentado em executar_confirmacao_automatica_
+    rubrica()) — nenhum filtro extra necessário aqui. Devolve DataFrame
+    vazio (mesmas 3 colunas) se o produto não tiver nenhum item
+    confirmado nessa origem ainda."""
+    colunas_vazias = ["ANO", "quant_utiliz", "vu_utilizado"]
+    detalhado, _ = consultar_cruzamento_confirmado_detalhado(
+        descr_alvo=escolhido["DESCR_ALVO"], origem=origem, limite=None,
+    )
+    if detalhado.empty:
+        return pd.DataFrame(columns=colunas_vazias)
+    if origem == "estoque":
+        atributos = consultar_atributos_estoque_estoque_por_idunico(set(detalhado["idunico"]))
+        coluna_ano = "ano_ef"
+    else:
+        atributos = consultar_atributos_estoque_por_idunico(set(detalhado["idunico"]), origem=origem)
+        coluna_ano = "ANO_ELEITO"
+    if atributos.empty:
+        return pd.DataFrame(columns=colunas_vazias)
+    detalhado = detalhado.merge(atributos, left_on="idunico", right_on="ID_UNICO", how="left")
+    detalhado, _, _ = aplicar_tratamento_fm_detalhado(detalhado, origem=origem)
+    detalhado["ANO"] = detalhado[coluna_ano].astype(str)
+    return detalhado[colunas_vazias]
+
+
+def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
+    """Estágio 10.2 — consolida os itens confirmados na Rubrica
+    (Entradas/Saídas/Estoque) do produto `escolhido` num resumo POR ANO,
+    já com o tratamento de FM aplicado (quant_utiliz/vu_utilizado, ver
+    aplicar_tratamento_fm_detalhado()):
+    - QTDE_C/MEDIA_PU_C: soma de quant_utiliz / média de vu_utilizado,
+      itens ORIGEM='entradas' (Compras).
+    - QTDE_V/MEDIA_PU_V: idem, ORIGEM='saidas' (Vendas — já exclui
+      autoemissão, ver _consolidar_detalhado_por_origem()).
+    - QTDE_EF/MEDIA_PU_E: idem, ORIGEM='estoque' (Estoque Final/H010).
+    - QTDE_EI (Regra de Continuidade): QTDE_EF do ANO imediatamente
+      anterior NESTA MESMA grade (não o QUANTIDADE_INICIAL bruto do
+      Estágio 5) — o Estoque Final aqui é o já tratado/confirmado pela
+      Rubrica, precisa encadear com ele mesmo, não com o valor bruto do
+      SPED. Primeiro ano da série (sem ano anterior na grade) fica 0.0.
+    - ALIQ: 18.0 se ANO > 2023, senão 20.0 (_ANO_CORTE_ALIQUOTA_18).
+    - ST: "S" se escolhido['IS_ST'], senão "N".
+    - DESCR_PROD: descricao_efetiva_escolhido(escolhido) (DESCR_EDITADA
+      quando preenchida, senão DESCR_ALVO) — mesma constante em toda
+      linha (propriedade do PRODUTO, não do ano).
+
+    Universo de ANOs = união dos anos com pelo menos 1 item confirmado
+    em QUALQUER das 3 origens (outer join) — um produto com Estoque
+    confirmado mas ainda sem Entradas/Saídas nesse ano aparece do mesmo
+    jeito, com QTDE_C/QTDE_V=0.0. Devolve DataFrame vazio (colunas de
+    _COLUNAS_CRUZAMENTO_FINAL_PRODUTO) se não houver NENHUM item
+    confirmado em nenhuma origem ainda — cálculo em memória, NÃO
+    persiste nada (ver salvar_cruzamento_final_produto())."""
+    entradas = _consolidar_detalhado_por_origem(escolhido, "entradas")
+    saidas = _consolidar_detalhado_por_origem(escolhido, "saidas")
+    estoque = _consolidar_detalhado_por_origem(escolhido, "estoque")
+
+    def _agregar(detalhado: pd.DataFrame, coluna_qtde: str, coluna_media: str) -> pd.DataFrame:
+        if detalhado.empty:
+            return pd.DataFrame(columns=["ANO", coluna_qtde, coluna_media])
+        return detalhado.groupby("ANO", as_index=False).agg(**{
+            coluna_qtde: ("quant_utiliz", "sum"),
+            coluna_media: ("vu_utilizado", "mean"),
+        })
+
+    agr_c = _agregar(entradas, "QTDE_C", "MEDIA_PU_C")
+    agr_v = _agregar(saidas, "QTDE_V", "MEDIA_PU_V")
+    agr_e = _agregar(estoque, "QTDE_EF", "MEDIA_PU_E")
+
+    anos = sorted(set(agr_c["ANO"]) | set(agr_v["ANO"]) | set(agr_e["ANO"]), key=int)
+    if not anos:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_FINAL_PRODUTO)
+
+    resultado = pd.DataFrame({"ANO": anos})
+    resultado = resultado.merge(agr_c, on="ANO", how="left")
+    resultado = resultado.merge(agr_v, on="ANO", how="left")
+    resultado = resultado.merge(agr_e, on="ANO", how="left")
+    for col in ("QTDE_C", "QTDE_V", "QTDE_EF"):
+        resultado[col] = resultado[col].fillna(0.0)
+
+    ano_num = resultado["ANO"].astype(int)
+    mapa_ef_por_ano = pd.Series(resultado["QTDE_EF"].to_numpy(), index=ano_num.to_numpy())
+    resultado["QTDE_EI"] = (ano_num - 1).map(mapa_ef_por_ano).fillna(0.0)
+    resultado["ALIQ"] = np.where(ano_num > _ANO_CORTE_ALIQUOTA_18, 18.0, 20.0)
+    resultado["ST"] = "S" if escolhido.get("IS_ST") else "N"
+    resultado["DESCR_PROD"] = descricao_efetiva_escolhido(escolhido)
+    resultado["DESCR_ALVO"] = escolhido["DESCR_ALVO"]
+    resultado["COD_ITEM"] = escolhido.get("COD_ITEM", "")
+    resultado["TS"] = datetime.now().isoformat(timespec="seconds")
+
+    resultado = _forcar_colunas_string(resultado, ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "ST"])
+    return resultado[_COLUNAS_CRUZAMENTO_FINAL_PRODUTO].reset_index(drop=True)
+
+
+def salvar_cruzamento_final_produto(escolhido: dict, editado: pd.DataFrame) -> dict:
+    """Persiste o Cruzamento Final do Produto (Estágio 10.2, botão "💾
+    Salvar Cruzamento Final do Produto") na tabela cruzamento_final_
+    produto — upsert por PRODUTO (não por ano isolado): substitui TODAS
+    as linhas já salvas do produto `escolhido` pelas linhas atuais de
+    `editado` (a grade que o auditor viu/ajustou na tela, uma linha por
+    ANO — pode ter Alíquota/ST/quantidades/preços médios corrigidos à
+    mão antes de gravar), preservando intocadas as linhas de QUALQUER
+    outro produto já persistido. Chave de identidade do produto:
+    _chave_produto_alvo_fiscalizacao() (COD_ITEM, fallback DESCR_ALVO —
+    mesma chave usada em toda produto_alvo_fiscalizacao desde
+    2026-08-04).
+
+    `editado` precisa das colunas de exibição (ANO/DESCR_PROD/ALIQ/ST/
+    QTDE_EI/QTDE_C/QTDE_V/QTDE_EF/MEDIA_PU_C/MEDIA_PU_V/MEDIA_PU_E) —
+    DESCR_ALVO/COD_ITEM/TS são recriados aqui a partir de `escolhido`
+    (Regra R07: string em ANO/DESCR_PROD/ST/DESCR_ALVO/COD_ITEM).
+    Devolve {'total_anos': int} ou {'erro': str} se falhar."""
+    resultado = {}
+    try:
+        novo = editado.copy()
+        novo["DESCR_ALVO"] = escolhido["DESCR_ALVO"]
+        novo["COD_ITEM"] = escolhido.get("COD_ITEM", "")
+        novo["TS"] = datetime.now().isoformat(timespec="seconds")
+        novo = _forcar_colunas_string(novo, ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "ST"])
+        novo = novo[_COLUNAS_CRUZAMENTO_FINAL_PRODUTO]
+
+        existente, _ = consultar_cruzamento_final_produto(limite=None)
+        if not existente.empty:
+            chave_existente = _chave_produto_alvo_fiscalizacao(existente)
+            chave_atual = _chave_produto_alvo_fiscalizacao(
+                pd.DataFrame([{"COD_ITEM": escolhido.get("COD_ITEM", ""), "DESCR_ALVO": escolhido["DESCR_ALVO"]}]),
+            ).iloc[0]
+            preservar = existente[chave_existente != chave_atual]
+            combinado = pd.concat([preservar, novo], ignore_index=True)
+        else:
+            combinado = novo
+
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            con.register("_df_cruzamento_final_produto", combinado)
+            con.execute(
+                "CREATE OR REPLACE TABLE cruzamento_final_produto AS "
+                "SELECT * FROM _df_cruzamento_final_produto"
+            )
+            con.unregister("_df_cruzamento_final_produto")
+
+        resultado["total_anos"] = int(len(novo))
+    except Exception as exc:
+        logger.exception("Erro ao salvar cruzamento_final_produto: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def consultar_cruzamento_final_produto(
+    descr_alvo: "str | None" = None, limite: "int | None" = 200,
+) -> "tuple[pd.DataFrame, int]":
+    """Lê cruzamento_final_produto já persistida (sem reprocessar) —
+    opcionalmente filtrada por DESCR_ALVO. limite=None devolve tudo."""
+    colunas = _COLUNAS_CRUZAMENTO_FINAL_PRODUTO
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "cruzamento_final_produto" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            filtro = ""
+            if descr_alvo is not None:
+                filtro = f"WHERE DESCR_ALVO = '{descr_alvo.replace(chr(39), chr(39) * 2)}'"
+            total = con.execute(f"SELECT COUNT(*) FROM cruzamento_final_produto {filtro}").fetchone()[0]
+            query = f"SELECT * FROM cruzamento_final_produto {filtro}"
+            if limite is not None:
+                query += f" LIMIT {limite}"
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar cruzamento_final_produto em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
 
 
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────

@@ -196,3 +196,14 @@ DESCR_EDITADA;Descricao Editada
 
 # Novos campos - 2026-08-04 (Estagio 10 - Produtos Alvos Salvos, tabela produto_alvo_fiscalizacao)
 UNID_EDITADA;Unidade Editada
+
+# Novos campos - 2026-08-05 (Estagio 10.2 - Cruzamento Final do Produto, tabela cruzamento_final_produto)
+ALIQ;Aliquota (%)
+ST;ST
+QTDE_EI;Qtde. Estoque Inicial
+QTDE_C;Qtde. Compras
+QTDE_V;Qtde. Vendas
+QTDE_EF;Qtde. Estoque Final
+MEDIA_PU_C;Preco Medio Compras
+MEDIA_PU_V;Preco Medio Vendas
+MEDIA_PU_E;Preco Medio Estoque
