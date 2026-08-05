@@ -1,0 +1,18 @@
+Regra de Alíquota - Cruzamento Final do Produto (Estágio 10.2)
+
+Alíquota de ICMS aplicada por ANO na grade do Cruzamento Final do Produto:
+
+ANO > 2023  -> 20%
+ANO <= 2023 -> 18%
+
+(corte: 2023 - anos até 2023 inclusive ficam com 18%; a partir de 2024 vira 20%)
+
+Implementado em loader.py, gerar_cruzamento_final_produto() - constante
+_ANO_CORTE_ALIQUOTA = 2023. Campo ALIQ da tabela cruzamento_final_produto
+é editável na grade - o auditor pode corrigir caso/produto a caso antes
+de salvar, a regra acima é só o valor DEFAULT calculado.
+
+Histórico: regra definida pelo usuário em 2026-08-05, invertendo a
+primeira versão implementada no mesmo dia (que tinha sido 18% se >2023,
+20% caso contrário, seguindo a Solicitação Técnica original ao pé da
+letra) - ver memoria/2026-08-05.md.
