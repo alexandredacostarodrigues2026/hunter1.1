@@ -214,3 +214,8 @@ TD;Total Debito (Qtd)
 TC;Total Credito (Qtd)
 INFRACAO_FINAL;Infracao (Quantidade)
 DIF_QTDE;Diferenca de Quantidade (Absoluta)
+
+# Novos campos - 2026-08-06 (Estagio 10.2 - Logica de Preco Unitario e Divergencia, tabela cruzamento_final_produto)
+PU_SUGERIDO;P.U. Sugerido
+CONDICAO_PU;Condicao do P.U.
+AGREGACAO;Agregacao (%)

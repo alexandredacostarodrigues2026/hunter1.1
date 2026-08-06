@@ -8276,6 +8276,7 @@ def aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tup
 _COLUNAS_CRUZAMENTO_FINAL_PRODUTO = [
     "DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ALIQ", "ST",
     "QTDE_EI", "QTDE_C", "TD", "QTDE_V", "QTDE_EF", "TC", "INFRACAO_FINAL", "DIF_QTDE",
+    "PU_SUGERIDO", "CONDICAO_PU", "AGREGACAO",
     "MEDIA_PU_C", "MEDIA_PU_V", "MEDIA_PU_E", "TS",
 ]
 # Regra de alíquota (pedido explícito do usuário — redefinida em
@@ -8376,6 +8377,33 @@ def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
       TAMANHO do resíduo de estoque a descoberto não precisa olhar sinal
       nem decidir qual dos 2 é maior); a DIREÇÃO já está em
       `INFRACAO_FINAL` (qual dos dois lados está sobrando).
+    - PU_SUGERIDO/CONDICAO_PU/AGREGACAO (2026-08-06, Solicitação Técnica
+      "LÓGICA DE PREÇO UNITÁRIO E DIVERGÊNCIA") — elege o preço unitário
+      OFICIAL da infração, mesma regra dos 4 sub-cenários de PU já
+      documentados em `regra de negócios unificadas/regra negocio_pu_
+      rn1_ei+c=v+ef_1.txt` (a parte da regra RN1 que ainda faltava
+      implementar — TD/TC/INFRACAO_FINAL, de 2026-08-06 mais cedo, só
+      tinham coberto a equação de balanço em si):
+      - TD < TC ("EntradaSemNota"), QTDE_C > 0: PU_SUGERIDO=MEDIA_PU_C,
+        CONDICAO_PU="PU MÉDIO COMPRAS SEM AGREGAÇÃO", AGREGACAO="0%".
+      - TD < TC, QTDE_C == 0: PU_SUGERIDO=MEDIA_PU_V×0,7 (desconto de
+        30% — não há compra no ano pra ancorar o preço, usa venda com
+        deságio), CONDICAO_PU="PU MÉDIO VENDAS COM DESCONTO DE 30%",
+        AGREGACAO="-30%".
+      - TD > TC ("SaidaSemNota"), QTDE_V > 0: PU_SUGERIDO=MEDIA_PU_V,
+        CONDICAO_PU="PU MÉDIO VENDAS SEM AGREGAÇÃO", AGREGACAO="0%".
+      - TD > TC, QTDE_V == 0: PU_SUGERIDO=MEDIA_PU_C×1,3 (agregação de
+        30% — não há venda no ano, usa compra com margem), CONDICAO_
+        PU="PU MÉDIO COMPRAS + AGREGAÇÃO DE 30%", AGREGACAO="30%".
+      - TD == TC (sem infração): PU_SUGERIDO=0.0, CONDICAO_PU=""
+        AGREGACAO="" — não há divergência pra precificar.
+      MEDIA_PU_C/MEDIA_PU_V podem vir `NaN` (ano sem nenhum item
+      confirmado naquela origem — ver `_agregar()` abaixo) — tratados
+      com `.fillna(0.0)` ANTES de entrar nas contas acima (pedido
+      explícito: "trate casos de NaN ou nulos com fallback para 0.0").
+      Rótulos com o typo do original ("AGREGAÇAO", sem til) corrigidos
+      pra "AGREGAÇÃO" — mesma grafia usada no próprio cenário 2.1 da
+      Solicitação Técnica, inconsistência não intencional do texto.
 
     Universo de ANOs = união dos anos com pelo menos 1 item confirmado
     em QUALQUER das 3 origens (outer join) — um produto com Estoque
@@ -8445,6 +8473,32 @@ def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
     )
     resultado["DIF_QTDE"] = (resultado["TD"] - resultado["TC"]).abs()
 
+    # PU Sugerido/Condição PU/Agregação (2026-08-06, Solicitação Técnica
+    # "LÓGICA DE PREÇO UNITÁRIO E DIVERGÊNCIA") — 4 sub-cenários da regra
+    # RN1 original (ver docstring). MEDIA_PU_C/MEDIA_PU_V com fallback
+    # NaN->0.0 ANTES das contas (pedido explícito do usuário).
+    media_pu_c_segura = resultado["MEDIA_PU_C"].fillna(0.0)
+    media_pu_v_segura = resultado["MEDIA_PU_V"].fillna(0.0)
+    cond_entrada_com_compra = (resultado["TD"] < resultado["TC"]) & (resultado["QTDE_C"] > 0)
+    cond_entrada_sem_compra = (resultado["TD"] < resultado["TC"]) & (resultado["QTDE_C"] == 0)
+    cond_saida_com_venda = (resultado["TD"] > resultado["TC"]) & (resultado["QTDE_V"] > 0)
+    cond_saida_sem_venda = (resultado["TD"] > resultado["TC"]) & (resultado["QTDE_V"] == 0)
+    condicoes_pu = [cond_entrada_com_compra, cond_entrada_sem_compra, cond_saida_com_venda, cond_saida_sem_venda]
+    resultado["PU_SUGERIDO"] = np.select(
+        condicoes_pu,
+        [media_pu_c_segura, media_pu_v_segura * 0.7, media_pu_v_segura, media_pu_c_segura * 1.3],
+        default=0.0,
+    )
+    resultado["CONDICAO_PU"] = np.select(
+        condicoes_pu,
+        [
+            "PU MÉDIO COMPRAS SEM AGREGAÇÃO", "PU MÉDIO VENDAS COM DESCONTO DE 30%",
+            "PU MÉDIO VENDAS SEM AGREGAÇÃO", "PU MÉDIO COMPRAS + AGREGAÇÃO DE 30%",
+        ],
+        default="",
+    )
+    resultado["AGREGACAO"] = np.select(condicoes_pu, ["0%", "-30%", "0%", "30%"], default="")
+
     # Período de Auditoria (Estágio 1/EXTRAÇÃO) — aplicado DEPOIS de
     # QTDE_EI já calculada sobre o universo completo de anos (ver
     # docstring), pra não perder a continuidade real do ano inicial do
@@ -8456,7 +8510,7 @@ def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
         if resultado.empty:
             return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_FINAL_PRODUTO)
 
-    resultado = _forcar_colunas_string(resultado, ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ST", "INFRACAO_FINAL"])
+    resultado = _forcar_colunas_string(resultado, ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ST", "INFRACAO_FINAL", "CONDICAO_PU", "AGREGACAO"])
     return resultado[_COLUNAS_CRUZAMENTO_FINAL_PRODUTO].reset_index(drop=True)
 
 
@@ -8475,12 +8529,13 @@ def salvar_cruzamento_final_produto(escolhido: dict, editado: pd.DataFrame) -> d
 
     `editado` precisa das colunas de exibição (ANO/DESCR_PROD/UP/ALIQ/ST/
     QTDE_EI/QTDE_C/TD/QTDE_V/QTDE_EF/TC/INFRACAO_FINAL/DIF_QTDE/
-    MEDIA_PU_C/MEDIA_PU_V/MEDIA_PU_E) — TD/TC/INFRACAO_FINAL/DIF_QTDE
+    PU_SUGERIDO/CONDICAO_PU/AGREGACAO/MEDIA_PU_C/MEDIA_PU_V/MEDIA_PU_E)
+    — TD/TC/INFRACAO_FINAL/DIF_QTDE/PU_SUGERIDO/CONDICAO_PU/AGREGACAO
     (2026-08-06) são campos CALCULADOS por gerar_cruzamento_final_
     produto(), mas editáveis na grade (o auditor pode sobrescrever o
     rótulo/valor automático se a divergência física for justificada por
-    outro meio) — salvos exatamente como vieram de `editado`, sem
-    recalcular aqui.
+    outro meio, ou forçar um PU/condição diferente) — salvos exatamente
+    como vieram de `editado`, sem recalcular aqui.
     DESCR_ALVO/COD_ITEM/TS são recriados aqui a partir de `escolhido`
     (Regra R07: string em ANO/DESCR_PROD/UP/ST/INFRACAO_FINAL/DESCR_ALVO/
     COD_ITEM). Devolve {'total_anos': int} ou {'erro': str} se falhar."""
@@ -8490,7 +8545,7 @@ def salvar_cruzamento_final_produto(escolhido: dict, editado: pd.DataFrame) -> d
         novo["DESCR_ALVO"] = escolhido["DESCR_ALVO"]
         novo["COD_ITEM"] = escolhido.get("COD_ITEM", "")
         novo["TS"] = datetime.now().isoformat(timespec="seconds")
-        novo = _forcar_colunas_string(novo, ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ST", "INFRACAO_FINAL"])
+        novo = _forcar_colunas_string(novo, ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ST", "INFRACAO_FINAL", "CONDICAO_PU", "AGREGACAO"])
         novo = novo[_COLUNAS_CRUZAMENTO_FINAL_PRODUTO]
 
         existente, _ = consultar_cruzamento_final_produto(limite=None)
