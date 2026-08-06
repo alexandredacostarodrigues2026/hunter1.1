@@ -222,3 +222,8 @@ AGREGACAO;Agregacao (%)
 
 # Novos campos - 2026-08-06 (Estagio 10.2 - Persistencia Automatica e Valoracao do Risco, tabela cruzamento_final_produto)
 BASE_CALCULO;Base de Calculo (R$)
+
+# Novos campos - 2026-08-06 (Estagio 10.2 - Liquidacao Tributaria do Cruzamento, tabela cruzamento_final_produto)
+ICMS;ICMS (R$)
+MULTA;Multa (75% R$)
+CREDITO_TRIBUTARIO;Credito Tributario Total (R$)

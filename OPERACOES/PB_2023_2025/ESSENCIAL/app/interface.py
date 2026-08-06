@@ -4909,12 +4909,16 @@ _COLUNA_IS_ST_PRODUTOS_ALVO_SALVOS = "E ST (Substituicao Tributaria)"
 # | MediaPuE"; BASE_CALCULO (=PU_SUGERIDO×DIF_QTDE) inserida logo após
 # PU_SUGERIDO em 2026-08-06, Solicitação Técnica "PERSISTÊNCIA
 # AUTOMÁTICA E VALORAÇÃO DO RISCO", pedido explícito "preferencialmente
-# após 'PU Sugerido'"). DESCR_ALVO/COD_ITEM/TS (identidade/upsert) não
-# aparecem na grade — recompostos a partir de `escolhido_atual` na hora
-# de salvar (ver loader.salvar_cruzamento_final_produto()).
+# após 'PU Sugerido'"; ICMS/MULTA/CREDITO_TRIBUTARIO inseridos logo após
+# BASE_CALCULO, mesmo dia, Solicitação Técnica "LIQUIDAÇÃO TRIBUTÁRIA DO
+# CRUZAMENTO": "... BaseCalculo | Icms | Multa | Crédito Tributário |
+# ..."). DESCR_ALVO/COD_ITEM/TS (identidade/upsert) não aparecem na
+# grade — recompostos a partir de `escolhido_atual` na hora de salvar
+# (ver loader.salvar_cruzamento_final_produto()).
 _COLUNAS_EXIBICAO_CRUZAMENTO_FINAL_PRODUTO = [
     "ANO", "DESCR_PROD", "UP", "ALIQ", "ST", "QTDE_EI", "QTDE_C", "TD", "QTDE_V", "QTDE_EF",
-    "TC", "INFRACAO_FINAL", "DIF_QTDE", "PU_SUGERIDO", "BASE_CALCULO", "CONDICAO_PU", "AGREGACAO",
+    "TC", "INFRACAO_FINAL", "DIF_QTDE", "PU_SUGERIDO", "BASE_CALCULO",
+    "ICMS", "MULTA", "CREDITO_TRIBUTARIO", "CONDICAO_PU", "AGREGACAO",
     "MEDIA_PU_C", "MEDIA_PU_V", "MEDIA_PU_E",
 ]
 
@@ -5245,8 +5249,15 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
 
     BASE_CALCULO (mesmo dia, Solicitação Técnica "PERSISTÊNCIA
     AUTOMÁTICA E VALORAÇÃO DO RISCO") = PU_SUGERIDO×DIF_QTDE, logo após
-    "PU Sugerido" — valor em R$ da omissão daquele ano/produto, base
-    pro futuro cálculo de imposto (Estágio 15). Também editável."""
+    "PU Sugerido" — valor em R$ da omissão daquele ano/produto.
+
+    ICMS/MULTA/CREDITO_TRIBUTARIO (mesmo dia, Solicitação Técnica
+    "LIQUIDAÇÃO TRIBUTÁRIA DO CRUZAMENTO"), logo após "Base de Cálculo":
+    ICMS=BASE_CALCULO×(ALIQ/100), MULTA=ICMS×0,75 (penalidade de 75%),
+    CREDITO_TRIBUTARIO=ICMS+MULTA (risco financeiro total da linha) —
+    fecha a camada financeira do Estágio 10.2. Todos editáveis, como o
+    resto da grade — o auditor pode ajustar ICMS/multa manualmente em
+    casos de redução de base ou multa isolada."""
     st.markdown("### ⚖️ 10.2 Cruzamento Final do Produto")
     st.caption(
         "Consolida os itens confirmados na Rubrica (Entradas/Saídas/Estoque) — já com o "
@@ -5324,6 +5335,9 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
                 rotulos["DIF_QTDE"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["PU_SUGERIDO"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["BASE_CALCULO"]: st.column_config.NumberColumn(format="%,.2f"),
+                rotulos["ICMS"]: st.column_config.NumberColumn(format="%,.2f"),
+                rotulos["MULTA"]: st.column_config.NumberColumn(format="%,.2f"),
+                rotulos["CREDITO_TRIBUTARIO"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["MEDIA_PU_C"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["MEDIA_PU_V"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["MEDIA_PU_E"]: st.column_config.NumberColumn(format="%,.2f"),
