@@ -213,3 +213,4 @@ MEDIA_PU_E;Preco Medio Estoque
 TD;Total Debito (Qtd)
 TC;Total Credito (Qtd)
 INFRACAO_FINAL;Infracao (Quantidade)
+DIF_QTDE;Diferenca de Quantidade (Absoluta)

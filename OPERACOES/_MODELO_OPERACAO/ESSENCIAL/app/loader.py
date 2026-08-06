@@ -8275,7 +8275,7 @@ def aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tup
 # divergência de embalagem ANTES do cálculo de imposto.
 _COLUNAS_CRUZAMENTO_FINAL_PRODUTO = [
     "DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ALIQ", "ST",
-    "QTDE_EI", "QTDE_C", "TD", "QTDE_V", "QTDE_EF", "TC", "INFRACAO_FINAL",
+    "QTDE_EI", "QTDE_C", "TD", "QTDE_V", "QTDE_EF", "TC", "INFRACAO_FINAL", "DIF_QTDE",
     "MEDIA_PU_C", "MEDIA_PU_V", "MEDIA_PU_E", "TS",
 ]
 # Regra de alíquota (pedido explícito do usuário — redefinida em
@@ -8371,6 +8371,11 @@ def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
       que o rótulo amigável do dicionário mude retroativamente pra
       `INFRACAO` do Estágio 7.2 (que usaria o MESMO nome_amigavel, já que
       o dicionário não faz distinção por tabela).
+    - DIF_QTDE (2026-08-06): abs(TD - TC) — magnitude da divergência
+      física, sempre >= 0 independente da direção (quem quer só o
+      TAMANHO do resíduo de estoque a descoberto não precisa olhar sinal
+      nem decidir qual dos 2 é maior); a DIREÇÃO já está em
+      `INFRACAO_FINAL` (qual dos dois lados está sobrando).
 
     Universo de ANOs = união dos anos com pelo menos 1 item confirmado
     em QUALQUER das 3 origens (outer join) — um produto com Estoque
@@ -8438,6 +8443,7 @@ def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
         ["EntradaSemNota", "SaidaSemNota"],
         default="",
     )
+    resultado["DIF_QTDE"] = (resultado["TD"] - resultado["TC"]).abs()
 
     # Período de Auditoria (Estágio 1/EXTRAÇÃO) — aplicado DEPOIS de
     # QTDE_EI já calculada sobre o universo completo de anos (ver
@@ -8468,12 +8474,13 @@ def salvar_cruzamento_final_produto(escolhido: dict, editado: pd.DataFrame) -> d
     2026-08-04).
 
     `editado` precisa das colunas de exibição (ANO/DESCR_PROD/UP/ALIQ/ST/
-    QTDE_EI/QTDE_C/TD/QTDE_V/QTDE_EF/TC/INFRACAO_FINAL/MEDIA_PU_C/
-    MEDIA_PU_V/MEDIA_PU_E) — TD/TC/INFRACAO_FINAL (2026-08-06) são
-    campos CALCULADOS por gerar_cruzamento_final_produto(), mas
-    editáveis na grade (o auditor pode sobrescrever o rótulo/valor
-    automático se a divergência física for justificada por outro meio)
-    — salvos exatamente como vieram de `editado`, sem recalcular aqui.
+    QTDE_EI/QTDE_C/TD/QTDE_V/QTDE_EF/TC/INFRACAO_FINAL/DIF_QTDE/
+    MEDIA_PU_C/MEDIA_PU_V/MEDIA_PU_E) — TD/TC/INFRACAO_FINAL/DIF_QTDE
+    (2026-08-06) são campos CALCULADOS por gerar_cruzamento_final_
+    produto(), mas editáveis na grade (o auditor pode sobrescrever o
+    rótulo/valor automático se a divergência física for justificada por
+    outro meio) — salvos exatamente como vieram de `editado`, sem
+    recalcular aqui.
     DESCR_ALVO/COD_ITEM/TS são recriados aqui a partir de `escolhido`
     (Regra R07: string em ANO/DESCR_PROD/UP/ST/INFRACAO_FINAL/DESCR_ALVO/
     COD_ITEM). Devolve {'total_anos': int} ou {'erro': str} se falhar."""

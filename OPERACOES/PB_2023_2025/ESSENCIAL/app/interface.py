@@ -4890,16 +4890,18 @@ _COLUNA_IS_ST_PRODUTOS_ALVO_SALVOS = "E ST (Substituicao Tributaria)"
 # DescrProd | Aliq | ST | QtdeEI | QtdeC | QtdeV | QtdeEF | MediaPuC |
 # MediaPuV | MediaPuE", com "UP" [Unidade de Produto] inserida logo após
 # DescrProd — ajuste pedido pelo usuário no mesmo dia: "faltou o campo
-# 'UP'"; e TD/QtdeC.../QtdeEF/TC/Infração inseridos em 2026-08-06,
+# 'UP'"; TD/QtdeC.../QtdeEF/TC/Infração inseridos em 2026-08-06,
 # Solicitação Técnica "ENRIQUECIMENTO DO CRUZAMENTO FINAL": "Ano |
 # DescrProd | Aliq | ST | QtdeEI | QtdeC | TD | QtdeV | QtdeEF | TC |
-# Infração | MediaPuC | MediaPuV | MediaPuE"). DESCR_ALVO/COD_ITEM/TS
+# Infração | MediaPuC | MediaPuV | MediaPuE"; DIF_QTDE (=abs(TD-TC))
+# inserida logo após Infração no mesmo dia, pedido separado: "crie campo
+# 'DifQtde' (TD-TC com valor absoluto)"). DESCR_ALVO/COD_ITEM/TS
 # (identidade/upsert) não aparecem na grade — recompostos a partir de
 # `escolhido_atual` na hora de salvar (ver loader.salvar_cruzamento_
 # final_produto()).
 _COLUNAS_EXIBICAO_CRUZAMENTO_FINAL_PRODUTO = [
     "ANO", "DESCR_PROD", "UP", "ALIQ", "ST", "QTDE_EI", "QTDE_C", "TD", "QTDE_V", "QTDE_EF",
-    "TC", "INFRACAO_FINAL", "MEDIA_PU_C", "MEDIA_PU_V", "MEDIA_PU_E",
+    "TC", "INFRACAO_FINAL", "DIF_QTDE", "MEDIA_PU_C", "MEDIA_PU_V", "MEDIA_PU_E",
 ]
 
 
@@ -5199,7 +5201,11 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
     QTDE_EF, INFRACAO_FINAL="EntradaSemNota"/"SaidaSemNota"/"" conforme
     TD<TC/TD>TC/TD==TC), mas EDITÁVEIS na grade como qualquer outro
     campo — o auditor pode sobrescrever se a divergência física for
-    justificada por outro meio (ex.: perda, quebra, bonificação)."""
+    justificada por outro meio (ex.: perda, quebra, bonificação).
+    DIF_QTDE (mesmo dia, pedido separado: "crie campo 'DifQtde' [TD-TC
+    com valor absoluto]") = abs(TD-TC), logo após Infração — magnitude
+    da divergência, sem depender do sinal (a direção já está em
+    INFRACAO_FINAL)."""
     st.markdown("### ⚖️ 10.2 Cruzamento Final do Produto")
     st.caption(
         "Consolida os itens confirmados na Rubrica (Entradas/Saídas/Estoque) — já com o "
@@ -5250,6 +5256,7 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
                 rotulos["QTDE_V"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["QTDE_EF"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["TC"]: st.column_config.NumberColumn(format="%,.2f"),
+                rotulos["DIF_QTDE"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["MEDIA_PU_C"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["MEDIA_PU_V"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["MEDIA_PU_E"]: st.column_config.NumberColumn(format="%,.2f"),
