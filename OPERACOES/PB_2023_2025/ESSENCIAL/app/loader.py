@@ -8323,6 +8323,54 @@ def _consolidar_detalhado_por_origem(escolhido: dict, origem: str) -> pd.DataFra
     return detalhado[colunas_vazias]
 
 
+def _calcular_campos_derivados_cruzamento_final(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcula TD/TC/INFRACAO_FINAL/DIF_QTDE/PU_SUGERIDO/CONDICAO_PU/
+    AGREGACAO a partir de QTDE_EI/QTDE_C/QTDE_V/QTDE_EF/MEDIA_PU_C/
+    MEDIA_PU_V já presentes em `df` (essas 6 colunas nunca faltam — são
+    a base original do Estágio 10.2, de 2026-08-05) — extraída em
+    2026-08-06 pra ser reaproveitada em 2 pontos:
+    gerar_cruzamento_final_produto() (cálculo novo, produto escolhido)
+    e consultar_cruzamento_final_produto() (migração de schema em
+    leitura — linhas persistidas ANTES de TD/TC/etc. existirem, mesmo
+    dia, não têm essas colunas na tabela real). Mesma regra RN1
+    documentada em `regra de negócios unificadas/regra negocio_pu_rn1_
+    ei+c=v+ef_1.txt` — ver docstring de gerar_cruzamento_final_
+    produto() pra tabela completa dos 4 sub-cenários de PU. Devolve
+    CÓPIA de `df` com as 7 colunas novas adicionadas/sobrescritas."""
+    df = df.copy()
+    df["TD"] = df["QTDE_EI"] + df["QTDE_C"]
+    df["TC"] = df["QTDE_V"] + df["QTDE_EF"]
+    df["INFRACAO_FINAL"] = np.select(
+        [df["TD"] < df["TC"], df["TD"] > df["TC"]],
+        ["EntradaSemNota", "SaidaSemNota"],
+        default="",
+    )
+    df["DIF_QTDE"] = (df["TD"] - df["TC"]).abs()
+
+    media_pu_c_segura = df["MEDIA_PU_C"].fillna(0.0)
+    media_pu_v_segura = df["MEDIA_PU_V"].fillna(0.0)
+    cond_entrada_com_compra = (df["TD"] < df["TC"]) & (df["QTDE_C"] > 0)
+    cond_entrada_sem_compra = (df["TD"] < df["TC"]) & (df["QTDE_C"] == 0)
+    cond_saida_com_venda = (df["TD"] > df["TC"]) & (df["QTDE_V"] > 0)
+    cond_saida_sem_venda = (df["TD"] > df["TC"]) & (df["QTDE_V"] == 0)
+    condicoes_pu = [cond_entrada_com_compra, cond_entrada_sem_compra, cond_saida_com_venda, cond_saida_sem_venda]
+    df["PU_SUGERIDO"] = np.select(
+        condicoes_pu,
+        [media_pu_c_segura, media_pu_v_segura * 0.7, media_pu_v_segura, media_pu_c_segura * 1.3],
+        default=0.0,
+    )
+    df["CONDICAO_PU"] = np.select(
+        condicoes_pu,
+        [
+            "PU MÉDIO COMPRAS SEM AGREGAÇÃO", "PU MÉDIO VENDAS COM DESCONTO DE 30%",
+            "PU MÉDIO VENDAS SEM AGREGAÇÃO", "PU MÉDIO COMPRAS + AGREGAÇÃO DE 30%",
+        ],
+        default="",
+    )
+    df["AGREGACAO"] = np.select(condicoes_pu, ["0%", "-30%", "0%", "30%"], default="")
+    return df
+
+
 def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
     """Estágio 10.2 — consolida os itens confirmados na Rubrica
     (Entradas/Saídas/Estoque) do produto `escolhido` num resumo POR ANO,
@@ -8460,44 +8508,12 @@ def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
     resultado["COD_ITEM"] = escolhido.get("COD_ITEM", "")
     resultado["TS"] = datetime.now().isoformat(timespec="seconds")
 
-    # Total Débito/Crédito + rótulo de infração física (2026-08-06,
-    # Solicitação Técnica "ENRIQUECIMENTO DO CRUZAMENTO FINAL") — mesma
-    # equação de balanço RN1 (EI+C=V+EF) documentada em `regra de
-    # negócios unificadas/regra negocio_pu_rn1_ei+c=v+ef_1.txt`.
-    resultado["TD"] = resultado["QTDE_EI"] + resultado["QTDE_C"]
-    resultado["TC"] = resultado["QTDE_V"] + resultado["QTDE_EF"]
-    resultado["INFRACAO_FINAL"] = np.select(
-        [resultado["TD"] < resultado["TC"], resultado["TD"] > resultado["TC"]],
-        ["EntradaSemNota", "SaidaSemNota"],
-        default="",
-    )
-    resultado["DIF_QTDE"] = (resultado["TD"] - resultado["TC"]).abs()
-
-    # PU Sugerido/Condição PU/Agregação (2026-08-06, Solicitação Técnica
-    # "LÓGICA DE PREÇO UNITÁRIO E DIVERGÊNCIA") — 4 sub-cenários da regra
-    # RN1 original (ver docstring). MEDIA_PU_C/MEDIA_PU_V com fallback
-    # NaN->0.0 ANTES das contas (pedido explícito do usuário).
-    media_pu_c_segura = resultado["MEDIA_PU_C"].fillna(0.0)
-    media_pu_v_segura = resultado["MEDIA_PU_V"].fillna(0.0)
-    cond_entrada_com_compra = (resultado["TD"] < resultado["TC"]) & (resultado["QTDE_C"] > 0)
-    cond_entrada_sem_compra = (resultado["TD"] < resultado["TC"]) & (resultado["QTDE_C"] == 0)
-    cond_saida_com_venda = (resultado["TD"] > resultado["TC"]) & (resultado["QTDE_V"] > 0)
-    cond_saida_sem_venda = (resultado["TD"] > resultado["TC"]) & (resultado["QTDE_V"] == 0)
-    condicoes_pu = [cond_entrada_com_compra, cond_entrada_sem_compra, cond_saida_com_venda, cond_saida_sem_venda]
-    resultado["PU_SUGERIDO"] = np.select(
-        condicoes_pu,
-        [media_pu_c_segura, media_pu_v_segura * 0.7, media_pu_v_segura, media_pu_c_segura * 1.3],
-        default=0.0,
-    )
-    resultado["CONDICAO_PU"] = np.select(
-        condicoes_pu,
-        [
-            "PU MÉDIO COMPRAS SEM AGREGAÇÃO", "PU MÉDIO VENDAS COM DESCONTO DE 30%",
-            "PU MÉDIO VENDAS SEM AGREGAÇÃO", "PU MÉDIO COMPRAS + AGREGAÇÃO DE 30%",
-        ],
-        default="",
-    )
-    resultado["AGREGACAO"] = np.select(condicoes_pu, ["0%", "-30%", "0%", "30%"], default="")
+    # Total Débito/Crédito, rótulo de infração física, PU Sugerido/
+    # Condição PU/Agregação (2026-08-06) — mesma equação de balanço RN1
+    # (EI+C=V+EF) e os 4 sub-cenários de PU documentados em `regra de
+    # negócios unificadas/regra negocio_pu_rn1_ei+c=v+ef_1.txt`, ver
+    # _calcular_campos_derivados_cruzamento_final().
+    resultado = _calcular_campos_derivados_cruzamento_final(resultado)
 
     # Período de Auditoria (Estágio 1/EXTRAÇÃO) — aplicado DEPOIS de
     # QTDE_EI já calculada sobre o universo completo de anos (ver
@@ -8579,7 +8595,23 @@ def consultar_cruzamento_final_produto(
     descr_alvo: "str | None" = None, limite: "int | None" = 200,
 ) -> "tuple[pd.DataFrame, int]":
     """Lê cruzamento_final_produto já persistida (sem reprocessar) —
-    opcionalmente filtrada por DESCR_ALVO. limite=None devolve tudo."""
+    opcionalmente filtrada por DESCR_ALVO. limite=None devolve tudo.
+
+    Migração de schema em leitura (2026-08-06, achado real: linhas
+    salvas na 1ª versão do Estágio 10.2, mesmo dia — ANTES de TD/TC/
+    INFRACAO_FINAL/DIF_QTDE/PU_SUGERIDO/CONDICAO_PU/AGREGACAO existirem
+    — não têm essas colunas na tabela DuckDB real; `SELECT *` só traz o
+    que existe de verdade). `UP` (2026-08-05) completado com `""` se
+    ausente (produto salvo antes até dela existir); os 7 campos
+    derivados da regra RN1, se QUALQUER um estiver ausente, são
+    RECALCULADOS via `_calcular_campos_derivados_cruzamento_final()` a
+    partir de QTDE_EI/QTDE_C/QTDE_V/QTDE_EF/MEDIA_PU_C/MEDIA_PU_V (essas
+    6 SEMPRE existem — são a base original do Estágio 10.2) — sem
+    precisar reprocessar o banco nem re-salvar nada. Crítico pra
+    `salvar_cruzamento_final_produto()`: sem essa migração, o upsert
+    preservaria linhas de OUTROS produtos com TD/TC/etc. faltando,
+    virando `NaN` no `pd.concat()` com as linhas novas (que já têm as 7
+    colunas)."""
     colunas = _COLUNAS_CRUZAMENTO_FINAL_PRODUTO
     if not _BANCO_PATH.exists():
         return pd.DataFrame(columns=colunas), 0
@@ -8596,10 +8628,69 @@ def consultar_cruzamento_final_produto(
             if limite is not None:
                 query += f" LIMIT {limite}"
             df = con.execute(query).df()
+        if "UP" not in df.columns:
+            df["UP"] = ""
+        campos_derivados_rn1 = {
+            "TD", "TC", "INFRACAO_FINAL", "DIF_QTDE", "PU_SUGERIDO", "CONDICAO_PU", "AGREGACAO",
+        }
+        if not campos_derivados_rn1.issubset(df.columns) and not df.empty:
+            df = _calcular_campos_derivados_cruzamento_final(df)
         return df, total
     except Exception:
         logger.exception("Erro ao consultar cruzamento_final_produto em %s", _BANCO_PATH)
         return pd.DataFrame(columns=colunas), 0
+
+
+# ── Estágio 11 — Consolidado Geral do Cruzamento Final (RN1) ──────────────
+# Solicitação Técnica (2026-08-06): "CONSOLIDADO DO CRUZAMENTO FINAL" —
+# visão MACRO, enquanto o Estágio 10.2 é a curadoria INDIVIDUAL de 1
+# produto por vez: lê `cruzamento_final_produto` (todos os produtos já
+# cruzados) inteira, pra que o auditor veja o passivo fiscal acumulado da
+# operação inteira — quanto de "EntradaSemNota"/"SaidaSemNota" existe no
+# total, e detecte produtos que ficaram pra trás (nunca tiveram "⚖️
+# Efetuar Cruzamento do Produto" clicado no Estágio 10.2).
+
+def consultar_consolidado_cruzamento_11() -> pd.DataFrame:
+    """Estágio 11 — leitura TOTAL de `cruzamento_final_produto` (todos os
+    produtos, sem `LIMIT`) — base do painel "📊 11: CONSOLIDADO GERAL
+    (RN1)". Diferente de `consultar_cruzamento_final_produto()` (que
+    filtra por 1 produto de cada vez, usada pelo Estágio 10.2), esta
+    função sempre devolve TUDO — é a visão macro.
+
+    Regra R07: DESCR_ALVO/COD_ITEM/ANO/DESCR_PROD/UP/ST/INFRACAO_FINAL/
+    CONDICAO_PU/AGREGACAO sempre string. Campos numéricos de preço/
+    quantidade (`ALIQ`/`QTDE_EI`/`QTDE_C`/`TD`/`QTDE_V`/`QTDE_EF`/`TC`/
+    `DIF_QTDE`/`PU_SUGERIDO`/`MEDIA_PU_C`/`MEDIA_PU_V`/`MEDIA_PU_E`) com
+    `NaN`/nulo tratado como `0.0` pra exibição (pedido explícito da
+    Solicitação Técnica) — mesma razão de sempre em `gerar_cruzamento_
+    final_produto()`: um produto pode ter, por exemplo, Compras
+    confirmadas em alguns anos e não em outros.
+
+    Ordenação padrão: `ANO` decrescente, depois `DIF_QTDE` decrescente —
+    produtos com maior divergência física do ano mais recente aparecem
+    primeiro (pedido explícito da Solicitação Técnica). Devolve
+    DataFrame vazio (mesmo schema de `_COLUNAS_CRUZAMENTO_FINAL_
+    PRODUTO`) se `cruzamento_final_produto` ainda não existir/estiver
+    vazia — nenhum produto teve o Cruzamento Final salvo ainda."""
+    df, _ = consultar_cruzamento_final_produto(limite=None)
+    if df.empty:
+        return df
+    df = _forcar_colunas_string(
+        df,
+        ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ST", "INFRACAO_FINAL", "CONDICAO_PU", "AGREGACAO"],
+    )
+    for col in (
+        "ALIQ", "QTDE_EI", "QTDE_C", "TD", "QTDE_V", "QTDE_EF", "TC",
+        "DIF_QTDE", "PU_SUGERIDO", "MEDIA_PU_C", "MEDIA_PU_V", "MEDIA_PU_E",
+    ):
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+    ano_num = df["ANO"].astype(int)
+    return (
+        df.assign(_ano_num=ano_num)
+        .sort_values(["_ano_num", "DIF_QTDE"], ascending=[False, False])
+        .drop(columns=["_ano_num"])
+        .reset_index(drop=True)
+    )
 
 
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────

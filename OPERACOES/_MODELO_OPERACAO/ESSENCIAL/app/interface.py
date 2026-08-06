@@ -2456,7 +2456,9 @@ def render_menu_principal() -> None:
     # estágios sem precisar espremer mais a 1ª. "7.3.3: Seleção Consolidada"
     # entrou aqui em 2026-08-03 (ganhou botão próprio, separado do 7.3.2 —
     # pedido do usuário) em vez da 1ª linha (já tinha 11 colunas).
-    col_consolidado_733, col_estagio8, col_estagio9, col_produtos_alvo_salvos = st.columns(4)
+    # "11: CONSOLIDADO GERAL (RN1)" entrou em 2026-08-06 (Solicitação
+    # Técnica "CONSOLIDADO DO CRUZAMENTO FINAL").
+    col_consolidado_733, col_estagio8, col_estagio9, col_produtos_alvo_salvos, col_consolidado_11 = st.columns(5)
     if col_consolidado_733.button(
         "🔍 7.3.3: SELEÇÃO CONSOLIDADA (ESTOQUE/XML)",
         key="btn_menu_consolidado_733", use_container_width=True,
@@ -2479,6 +2481,11 @@ def render_menu_principal() -> None:
         "🎯 ESTÁGIO 10 - PRODUTOS ALVOS SALVOS", key="btn_menu_produtos_alvo_salvos", use_container_width=True,
     ):
         st.session_state["pagina_ativa"] = "produtos_alvo_salvos"
+        st.rerun()
+    if col_consolidado_11.button(
+        "📊 11: CONSOLIDADO GERAL (RN1)", key="btn_menu_consolidado_11", use_container_width=True,
+    ):
+        st.session_state["pagina_ativa"] = "consolidado_11"
         st.rerun()
 
 
@@ -5297,3 +5304,132 @@ def render_pagina_produtos_alvo_salvos() -> None:
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     render_produtos_alvo_salvos()
+
+
+# Consolidado Geral do Cruzamento Final (Estágio 11, 2026-08-06) —
+# colunas de exibição, ordem EXATA pedida na Solicitação Técnica: "Ano |
+# DescrProd | UP | ST | Aliq | QtdeEI | QtdeC | TD | QtdeV | QtdeEF | TC
+# | Infração | DifQtde | PU Sugerido | MediaPuC | MediaPuV" — recorte da
+# grade completa do Estágio 10.2 (sem DESCR_ALVO/COD_ITEM/TS/CONDICAO_PU/
+# AGREGACAO/MEDIA_PU_E, que ficam só na exportação CSV completa).
+_COLUNAS_CONSOLIDADO_11 = [
+    "ANO", "DESCR_PROD", "UP", "ST", "ALIQ", "QTDE_EI", "QTDE_C", "TD", "QTDE_V", "QTDE_EF",
+    "TC", "INFRACAO_FINAL", "DIF_QTDE", "PU_SUGERIDO", "MEDIA_PU_C", "MEDIA_PU_V",
+]
+# Colunas numéricas de quantidade/valor exibidas em padrão BR (milhar '.',
+# decimal ',') — mesmo padrão de _formatar_moeda_br() já usado nas
+# tabelas somente-leitura de alta densidade deste projeto (Itens
+# Individuais, Estágio 10). ALIQ vira percentual à parte (ver abaixo).
+_COLUNAS_NUMERICAS_CONSOLIDADO_11 = (
+    "QTDE_EI", "QTDE_C", "TD", "QTDE_V", "QTDE_EF", "TC", "DIF_QTDE", "PU_SUGERIDO", "MEDIA_PU_C", "MEDIA_PU_V",
+)
+
+
+def render_consolidado_cruzamento_11() -> None:
+    """Estágio 11 — "📊 11: CONSOLIDADO GERAL (RN1)" (Solicitação
+    Técnica 2026-08-06: "CONSOLIDADO DO CRUZAMENTO FINAL"): visão MACRO
+    — lê `cruzamento_final_produto` INTEIRA (loader.consultar_
+    consolidado_cruzamento_11(), todos os produtos já cruzados no
+    Estágio 10.2), diferente do Estágio 10.2 (curadoria de 1 produto
+    por vez). Somente leitura (`st.dataframe`, não `st.data_editor` —
+    "garantir a integridade dos dados finais", pedido explícito) —
+    correções continuam sendo feitas voltando ao Estágio 10.2.
+
+    3 filtros de topo (Ano/Tipo de Infração — `st.multiselect`, começam
+    com tudo marcado; busca por Descrição — `st.text_input`, substring
+    case-insensitive) aplicados sobre o resultado JÁ carregado (não
+    reconsultam o banco a cada mudança de filtro). Alta densidade (10px,
+    mesmo padrão CSS-por-key do resto do Estágio 10) + formatação BR
+    (milhar/decimal) nas colunas de quantidade/valor e percentual em
+    Alíquota — como é `st.dataframe` (não editável), pré-formata como
+    string ANTES de exibir (mesma solução já usada nas tabelas de Itens
+    Individuais — `column_config.NumberColumn` não tem padrão BR).
+
+    Exportação CSV (mesmo padrão de segurança já usado no resto do
+    projeto pra tabelas grandes — Entradas de Terceiros, BC3, Estágio 8:
+    só monta o CSV quando o auditor clica "Preparar exportação completa
+    (CSV)", não a cada redesenho da tela): exporta o recorte FILTRADO
+    (Ano/Infração/Descrição aplicados) mas com TODAS as colunas do
+    schema (não só as 16 exibidas na tela — inclui DESCR_ALVO/COD_ITEM/
+    TS/CONDICAO_PU/AGREGACAO/MEDIA_PU_E, úteis fora da tela mas raros
+    demais pra ocupar espaço na grade principal)."""
+    st.subheader("Estágio 11 - Consolidado Geral do Cruzamento Final (RN1)")
+    st.caption(
+        "Leitura total de `cruzamento_final_produto` — todos os produtos já cruzados no "
+        "Estágio 10.2 (\"⚖️ 10.2 Cruzamento Final do Produto\"), ordenados por Ano (decrescente) "
+        "e Diferença de Quantidade (decrescente). Somente leitura — correções são feitas "
+        "voltando ao Estágio 10.2."
+    )
+    consolidado = loader.consultar_consolidado_cruzamento_11()
+    if consolidado.empty:
+        st.info(
+            "Nenhum produto com Cruzamento Final salvo ainda — use \"⚖️ 10.2 Cruzamento Final "
+            "do Produto\" (Estágio 10, depois de confirmar a Rubrica) pra gerar e salvar pelo "
+            "menos 1 produto."
+        )
+        return
+
+    col_ano, col_infracao, col_busca = st.columns(3)
+    anos_disponiveis = sorted(consolidado["ANO"].unique(), key=int, reverse=True)
+    anos_filtro = col_ano.multiselect(
+        "Ano", anos_disponiveis, default=anos_disponiveis, key="consolidado_11_filtro_ano",
+    )
+    infracoes_disponiveis = sorted(consolidado["INFRACAO_FINAL"].unique())
+    rotulos_infracao = {v: (v if v else "Sem infração") for v in infracoes_disponiveis}
+    infracao_filtro = col_infracao.multiselect(
+        "Tipo de Infração", infracoes_disponiveis, default=infracoes_disponiveis,
+        format_func=lambda v: rotulos_infracao[v], key="consolidado_11_filtro_infracao",
+    )
+    busca = col_busca.text_input("Buscar na Descrição", key="consolidado_11_busca_descricao")
+
+    filtrado = consolidado[consolidado["ANO"].isin(anos_filtro) & consolidado["INFRACAO_FINAL"].isin(infracao_filtro)]
+    if busca.strip():
+        filtrado = filtrado[filtrado["DESCR_PROD"].str.contains(busca.strip(), case=False, na=False)]
+
+    st.markdown(
+        f"**{len(filtrado):,} linha(s)** de {len(consolidado):,} no total.".replace(",", "."),
+    )
+    if filtrado.empty:
+        st.warning("Nenhuma linha bate com os filtros atuais.")
+        return
+
+    formatado = filtrado.copy()
+    for col in _COLUNAS_NUMERICAS_CONSOLIDADO_11:
+        formatado[col] = formatado[col].apply(_formatar_moeda_br)
+    formatado["ALIQ"] = formatado["ALIQ"].apply(lambda v: f"{v:.0f}%")
+
+    exibicao = _preparar_preview(formatado, _COLUNAS_CONSOLIDADO_11)
+    with st.container(key="consolidado_11_tabela"):
+        st.markdown(
+            "<style>.st-key-consolidado_11_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 10px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(exibicao, use_container_width=True, hide_index=True)
+
+    preparar = st.button("Preparar exportação completa (CSV)", key="btn_preparar_export_consolidado_11")
+    if preparar:
+        with st.spinner("Preparando exportação completa..."):
+            csv_completo = filtrado.rename(columns=loader.carregar_dicionario_campos())
+            st.session_state["consolidado_11_csv_bytes"] = csv_completo.to_csv(index=False, sep=";").encode("utf-8-sig")
+            st.session_state["consolidado_11_csv_total"] = len(filtrado)
+    if "consolidado_11_csv_bytes" in st.session_state:
+        st.download_button(
+            f"Baixar tabela completa ({st.session_state['consolidado_11_csv_total']:,} "
+            "linha(s), CSV)".replace(",", "."),
+            data=st.session_state["consolidado_11_csv_bytes"],
+            file_name="cruzamento_final_produto_consolidado.csv",
+            mime="text/csv",
+            key="btn_download_consolidado_11",
+        )
+
+
+def render_pagina_consolidado_11() -> None:
+    """Painel 'ESTÁGIO 11 - CONSOLIDADO GERAL (RN1)', botão da 2ª linha
+    do Menu Principal: ver render_consolidado_cruzamento_11(). Exige
+    dados_carregados (mesmo padrão das outras páginas)."""
+    _botao_voltar_menu()
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        return
+    render_consolidado_cruzamento_11()
