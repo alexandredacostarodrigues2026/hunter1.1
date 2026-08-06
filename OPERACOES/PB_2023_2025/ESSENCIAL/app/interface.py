@@ -5232,7 +5232,7 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
     TD/TC/INFRACAO_FINAL (2026-08-06, Solicitação Técnica
     "ENRIQUECIMENTO DO CRUZAMENTO FINAL"): calculados por loader.
     gerar_cruzamento_final_produto() (TD=QTDE_EI+QTDE_C, TC=QTDE_V+
-    QTDE_EF, INFRACAO_FINAL="EntradaSemNota"/"SaidaSemNota"/"" conforme
+    QTDE_EF, INFRACAO_FINAL="E sem NF"/"V sem NF"/"" conforme
     TD<TC/TD>TC/TD==TC), mas EDITÁVEIS na grade como qualquer outro
     campo — o auditor pode sobrescrever se a divergência física for
     justificada por outro meio (ex.: perda, quebra, bonificação).

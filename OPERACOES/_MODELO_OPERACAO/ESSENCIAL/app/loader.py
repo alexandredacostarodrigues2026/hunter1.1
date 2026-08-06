@@ -8344,7 +8344,7 @@ def _calcular_campos_derivados_cruzamento_final(df: pd.DataFrame) -> pd.DataFram
     df["TC"] = df["QTDE_V"] + df["QTDE_EF"]
     df["INFRACAO_FINAL"] = np.select(
         [df["TD"] < df["TC"], df["TD"] > df["TC"]],
-        ["EntradaSemNota", "SaidaSemNota"],
+        ["E sem NF", "V sem NF"],
         default="",
     )
     df["DIF_QTDE"] = (df["TD"] - df["TC"]).abs()
@@ -8426,12 +8426,15 @@ def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
       normalizada do produto (mesmo conceito de "UP XML" do Estágio 9).
     - TD (Total Débito, 2026-08-06): QTDE_EI + QTDE_C.
     - TC (Total Crédito, 2026-08-06): QTDE_V + QTDE_EF.
-    - INFRACAO_FINAL (2026-08-06): "EntradaSemNota" se TD < TC (mesmo
+    - INFRACAO_FINAL (2026-08-06): "E sem NF" se TD < TC (mesmo
       cenário 1 de `regra de negócios unificadas/regra negocio_pu_rn1_
-      ei+c=v+ef_1.txt`: EI+C < V+EF = compra sem nota); "SaidaSemNota"
+      ei+c=v+ef_1.txt`: EI+C < V+EF = compra sem nota); "V sem NF"
       se TD > TC (cenário 2 do mesmo arquivo: EI+C > V+EF = venda sem
       nota); "" (vazio) se TD == TC (equação balanceada, sem infração
-      física aparente). Campo NOVO (`INFRACAO_FINAL`), não reaproveita
+      física aparente). Rótulos "E sem NF"/"V sem NF" — 2026-08-06,
+      pedido do usuário: "Troque a infração por 'E sem NF' ou 'V sem
+      NF'" (antes: "EntradaSemNota"/"SaidaSemNota"). Campo NOVO
+      (`INFRACAO_FINAL`), não reaproveita
       `INFRACAO` (já cadastrado no dicionário desde 2026-07-19, usado em
       `cruzamento_valor`/Estágio 7.2 — divergência em R$, semântica
       diferente desta, que é em QUANTIDADE FÍSICA); nome sugerido pela
@@ -8451,13 +8454,13 @@ def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
       rn1_ei+c=v+ef_1.txt` (a parte da regra RN1 que ainda faltava
       implementar — TD/TC/INFRACAO_FINAL, de 2026-08-06 mais cedo, só
       tinham coberto a equação de balanço em si):
-      - TD < TC ("EntradaSemNota"), QTDE_C > 0: PU_SUGERIDO=MEDIA_PU_C,
+      - TD < TC ("E sem NF"), QTDE_C > 0: PU_SUGERIDO=MEDIA_PU_C,
         CONDICAO_PU="PU MÉDIO COMPRAS SEM AGREGAÇÃO", AGREGACAO="0%".
       - TD < TC, QTDE_C == 0: PU_SUGERIDO=MEDIA_PU_V×0,7 (desconto de
         30% — não há compra no ano pra ancorar o preço, usa venda com
         deságio), CONDICAO_PU="PU MÉDIO VENDAS COM DESCONTO DE 30%",
         AGREGACAO="-30%".
-      - TD > TC ("SaidaSemNota"), QTDE_V > 0: PU_SUGERIDO=MEDIA_PU_V,
+      - TD > TC ("V sem NF"), QTDE_V > 0: PU_SUGERIDO=MEDIA_PU_V,
         CONDICAO_PU="PU MÉDIO VENDAS SEM AGREGAÇÃO", AGREGACAO="0%".
       - TD > TC, QTDE_V == 0: PU_SUGERIDO=MEDIA_PU_C×1,3 (agregação de
         30% — não há venda no ano, usa compra com margem), CONDICAO_
@@ -8686,7 +8689,7 @@ def consultar_cruzamento_final_produto(
 # visão MACRO, enquanto o Estágio 10.2 é a curadoria INDIVIDUAL de 1
 # produto por vez: lê `cruzamento_final_produto` (todos os produtos já
 # cruzados) inteira, pra que o auditor veja o passivo fiscal acumulado da
-# operação inteira — quanto de "EntradaSemNota"/"SaidaSemNota" existe no
+# operação inteira — quanto de "E sem NF"/"V sem NF" existe no
 # total, e detecte produtos que ficaram pra trás (nunca tiveram "⚖️
 # Efetuar Cruzamento do Produto" clicado no Estágio 10.2).
 
