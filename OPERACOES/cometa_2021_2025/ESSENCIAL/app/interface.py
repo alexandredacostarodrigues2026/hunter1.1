@@ -4906,12 +4906,15 @@ _COLUNA_IS_ST_PRODUTOS_ALVO_SALVOS = "E ST (Substituicao Tributaria)"
 # AGREGACAO inseridos logo em seguida, mesmo dia, Solicitação Técnica
 # "LÓGICA DE PREÇO UNITÁRIO E DIVERGÊNCIA": "... TC | Infração |
 # DifQtde | PU Sugerido | Condição PU | Agregação | MediaPuC | MediaPuV
-# | MediaPuE"). DESCR_ALVO/COD_ITEM/TS (identidade/upsert) não aparecem
-# na grade — recompostos a partir de `escolhido_atual` na hora de salvar
-# (ver loader.salvar_cruzamento_final_produto()).
+# | MediaPuE"; BASE_CALCULO (=PU_SUGERIDO×DIF_QTDE) inserida logo após
+# PU_SUGERIDO em 2026-08-06, Solicitação Técnica "PERSISTÊNCIA
+# AUTOMÁTICA E VALORAÇÃO DO RISCO", pedido explícito "preferencialmente
+# após 'PU Sugerido'"). DESCR_ALVO/COD_ITEM/TS (identidade/upsert) não
+# aparecem na grade — recompostos a partir de `escolhido_atual` na hora
+# de salvar (ver loader.salvar_cruzamento_final_produto()).
 _COLUNAS_EXIBICAO_CRUZAMENTO_FINAL_PRODUTO = [
     "ANO", "DESCR_PROD", "UP", "ALIQ", "ST", "QTDE_EI", "QTDE_C", "TD", "QTDE_V", "QTDE_EF",
-    "TC", "INFRACAO_FINAL", "DIF_QTDE", "PU_SUGERIDO", "CONDICAO_PU", "AGREGACAO",
+    "TC", "INFRACAO_FINAL", "DIF_QTDE", "PU_SUGERIDO", "BASE_CALCULO", "CONDICAO_PU", "AGREGACAO",
     "MEDIA_PU_C", "MEDIA_PU_V", "MEDIA_PU_E",
 ]
 
@@ -5191,20 +5194,36 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
     (loader.gerar_cruzamento_final_produto()), num resumo editável por
     ano — preparação pro Estágio 15 (ainda não implementado).
 
+    Recuperação Automática (2026-08-06, Solicitação Técnica
+    "PERSISTÊNCIA AUTOMÁTICA E VALORAÇÃO DO RISCO"): na 1ª vez que a
+    tela é aberta pra um produto (nada ainda em st.session_state pra
+    ele), busca automaticamente o que já foi salvo em cruzamento_final_
+    produto (loader.consultar_cruzamento_final_produto(descr_alvo=...))
+    — o auditor não precisa clicar em nada pra continuar de onde parou
+    (ex.: uma Alíquota corrigida à mão numa sessão anterior). Mostra
+    "📂 Carregados dados salvos anteriormente." só na 1ª renderização
+    depois do auto-load (flag consumida com `.pop()`, não reaparece nos
+    reruns seguintes — inclusive os disparados pelo próprio
+    st.data_editor a cada edição de célula). Trocar de produto escolhido
+    dispara um NOVO auto-load, independente (chave por produto).
+
     2 botões, mesmo padrão de "editar depois salvar" já usado no Sumário
     de Unidades/Produtos Alvos Salvos (Estágio 10):
-    - "⚖️ Efetuar Cruzamento do Produto": (re)calcula a grade do zero e
-      guarda em st.session_state (chave por produto — trocar de produto
-      escolhido não mistura a grade de um com o de outro). Recalcular
-      DESCARTA edições não salvas ainda (avisado no botão de salvar).
-      Respeita o Período de Auditoria configurado no Estágio 1/EXTRAÇÃO
-      (loader.gerar_cruzamento_final_produto() já filtra por ele) —
-      2026-08-05, pedido do usuário: "observe o período a ser
-      fiscalizado definido em EXTRAÇÃO".
+    - "⚖️ Efetuar Cruzamento do Produto": função de "Recalcular/Resetar
+      a partir da Rubrica" (2026-08-06) — (re)calcula a grade do ZERO a
+      partir da verdade física atual (Rubrica) e SOBRESCREVE o que
+      estiver em st.session_state (carregado do banco ou editado na
+      tela), guardando por produto (trocar de produto escolhido não
+      mistura a grade de um com o de outro). Respeita o Período de
+      Auditoria configurado no Estágio 1/EXTRAÇÃO (loader.gerar_
+      cruzamento_final_produto() já filtra por ele) — 2026-08-05,
+      pedido do usuário: "observe o período a ser fiscalizado definido
+      em EXTRAÇÃO".
     - "💾 Salvar Cruzamento Final do Produto": grava o estado ATUAL da
       grade (já com os ajustes finos do auditor — Alíquota/ST/TD/TC/
-      Infração/quantidades/preços médios) em cruzamento_final_produto,
-      upsert por produto (loader.salvar_cruzamento_final_produto()).
+      Infração/Base de Cálculo/quantidades/preços médios) em
+      cruzamento_final_produto, upsert por produto (loader.salvar_
+      cruzamento_final_produto()).
 
     TD/TC/INFRACAO_FINAL (2026-08-06, Solicitação Técnica
     "ENRIQUECIMENTO DO CRUZAMENTO FINAL"): calculados por loader.
@@ -5222,7 +5241,12 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
     "LÓGICA DE PREÇO UNITÁRIO E DIVERGÊNCIA"): loader.gerar_cruzamento_
     final_produto() elege o preço unitário oficial da infração (4
     sub-cenários da regra RN1 original — ver docstring de lá), também
-    editáveis aqui — o auditor pode forçar um PU/condição diferente."""
+    editáveis aqui — o auditor pode forçar um PU/condição diferente.
+
+    BASE_CALCULO (mesmo dia, Solicitação Técnica "PERSISTÊNCIA
+    AUTOMÁTICA E VALORAÇÃO DO RISCO") = PU_SUGERIDO×DIF_QTDE, logo após
+    "PU Sugerido" — valor em R$ da omissão daquele ano/produto, base
+    pro futuro cálculo de imposto (Estágio 15). Também editável."""
     st.markdown("### ⚖️ 10.2 Cruzamento Final do Produto")
     st.caption(
         "Consolida os itens confirmados na Rubrica (Entradas/Saídas/Estoque) — já com o "
@@ -5237,7 +5261,31 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
     # grade de um com o de outro.
     chave_grade = f"cruzamento_final_produto_grade_{escolhido.get('COD_ITEM') or escolhido['DESCR_ALVO']}"
 
-    if st.button("⚖️ Efetuar Cruzamento do Produto", key="btn_efetuar_cruzamento_final_produto"):
+    # Recuperação Automática (2026-08-06) — só na 1ª vez que a tela é
+    # aberta pra este produto (chave_grade ainda não em session_state);
+    # NUNCA roda de novo a cada rerun (o próprio st.data_editor dispara
+    # rerun a cada edição de célula) — senão apagaria edições em
+    # andamento ainda não salvas. Flag "_recem_carregado" consumida via
+    # `.pop()` — mostra a nota só nesta renderização, some sozinha nos
+    # reruns seguintes.
+    if chave_grade not in st.session_state:
+        persistido, _ = loader.consultar_cruzamento_final_produto(
+            descr_alvo=escolhido["DESCR_ALVO"], limite=None,
+        )
+        if not persistido.empty:
+            st.session_state[chave_grade] = persistido
+            st.session_state[f"{chave_grade}_recem_carregado"] = True
+
+    if st.session_state.pop(f"{chave_grade}_recem_carregado", False):
+        st.info("📂 Carregados dados salvos anteriormente.")
+
+    if st.button(
+        "⚖️ Efetuar Cruzamento do Produto", key="btn_efetuar_cruzamento_final_produto",
+        help=(
+            "Recalcula a grade DO ZERO a partir da Rubrica (Entradas/Saídas/Estoque) — "
+            "sobrescreve o que estiver salvo/editado na tela agora."
+        ),
+    ):
         grade = loader.gerar_cruzamento_final_produto(escolhido)
         if grade.empty:
             st.session_state.pop(chave_grade, None)
@@ -5275,6 +5323,7 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
                 rotulos["TC"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["DIF_QTDE"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["PU_SUGERIDO"]: st.column_config.NumberColumn(format="%,.2f"),
+                rotulos["BASE_CALCULO"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["MEDIA_PU_C"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["MEDIA_PU_V"]: st.column_config.NumberColumn(format="%,.2f"),
                 rotulos["MEDIA_PU_E"]: st.column_config.NumberColumn(format="%,.2f"),

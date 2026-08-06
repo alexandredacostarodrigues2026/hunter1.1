@@ -8276,7 +8276,7 @@ def aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tup
 _COLUNAS_CRUZAMENTO_FINAL_PRODUTO = [
     "DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ALIQ", "ST",
     "QTDE_EI", "QTDE_C", "TD", "QTDE_V", "QTDE_EF", "TC", "INFRACAO_FINAL", "DIF_QTDE",
-    "PU_SUGERIDO", "CONDICAO_PU", "AGREGACAO",
+    "PU_SUGERIDO", "BASE_CALCULO", "CONDICAO_PU", "AGREGACAO",
     "MEDIA_PU_C", "MEDIA_PU_V", "MEDIA_PU_E", "TS",
 ]
 # Regra de alíquota (pedido explícito do usuário — redefinida em
@@ -8324,11 +8324,11 @@ def _consolidar_detalhado_por_origem(escolhido: dict, origem: str) -> pd.DataFra
 
 
 def _calcular_campos_derivados_cruzamento_final(df: pd.DataFrame) -> pd.DataFrame:
-    """Calcula TD/TC/INFRACAO_FINAL/DIF_QTDE/PU_SUGERIDO/CONDICAO_PU/
-    AGREGACAO a partir de QTDE_EI/QTDE_C/QTDE_V/QTDE_EF/MEDIA_PU_C/
-    MEDIA_PU_V já presentes em `df` (essas 6 colunas nunca faltam — são
-    a base original do Estágio 10.2, de 2026-08-05) — extraída em
-    2026-08-06 pra ser reaproveitada em 2 pontos:
+    """Calcula TD/TC/INFRACAO_FINAL/DIF_QTDE/PU_SUGERIDO/BASE_CALCULO/
+    CONDICAO_PU/AGREGACAO a partir de QTDE_EI/QTDE_C/QTDE_V/QTDE_EF/
+    MEDIA_PU_C/MEDIA_PU_V já presentes em `df` (essas 6 colunas nunca
+    faltam — são a base original do Estágio 10.2, de 2026-08-05) —
+    extraída em 2026-08-06 pra ser reaproveitada em 2 pontos:
     gerar_cruzamento_final_produto() (cálculo novo, produto escolhido)
     e consultar_cruzamento_final_produto() (migração de schema em
     leitura — linhas persistidas ANTES de TD/TC/etc. existirem, mesmo
@@ -8336,7 +8336,7 @@ def _calcular_campos_derivados_cruzamento_final(df: pd.DataFrame) -> pd.DataFram
     documentada em `regra de negócios unificadas/regra negocio_pu_rn1_
     ei+c=v+ef_1.txt` — ver docstring de gerar_cruzamento_final_
     produto() pra tabela completa dos 4 sub-cenários de PU. Devolve
-    CÓPIA de `df` com as 7 colunas novas adicionadas/sobrescritas."""
+    CÓPIA de `df` com as 8 colunas novas adicionadas/sobrescritas."""
     df = df.copy()
     df["TD"] = df["QTDE_EI"] + df["QTDE_C"]
     df["TC"] = df["QTDE_V"] + df["QTDE_EF"]
@@ -8359,6 +8359,13 @@ def _calcular_campos_derivados_cruzamento_final(df: pd.DataFrame) -> pd.DataFram
         [media_pu_c_segura, media_pu_v_segura * 0.7, media_pu_v_segura, media_pu_c_segura * 1.3],
         default=0.0,
     )
+    # Base de Cálculo (2026-08-06, Solicitação Técnica "PERSISTÊNCIA
+    # AUTOMÁTICA E VALORAÇÃO DO RISCO") = PU_SUGERIDO × DIF_QTDE — valor
+    # em R$ da omissão/infração daquele ano, base pro imposto do futuro
+    # Estágio 15 (× ALIQ). PU_SUGERIDO/DIF_QTDE já vêm sem NaN (fillna
+    # aplicado acima/em DIF_QTDE) — `.fillna(0.0)` aqui é só defesa
+    # extra (pedido explícito: "trate corretamente ... valores nulos").
+    df["BASE_CALCULO"] = (df["PU_SUGERIDO"] * df["DIF_QTDE"]).fillna(0.0)
     df["CONDICAO_PU"] = np.select(
         condicoes_pu,
         [
@@ -8452,6 +8459,11 @@ def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
       Rótulos com o typo do original ("AGREGAÇAO", sem til) corrigidos
       pra "AGREGAÇÃO" — mesma grafia usada no próprio cenário 2.1 da
       Solicitação Técnica, inconsistência não intencional do texto.
+    - BASE_CALCULO (2026-08-06, Solicitação Técnica "PERSISTÊNCIA
+      AUTOMÁTICA E VALORAÇÃO DO RISCO") = PU_SUGERIDO × DIF_QTDE — valor
+      em R$ da omissão daquele ano/produto, base pro cálculo do imposto
+      no futuro Estágio 15 (× ALIQ). Zero quando TD==TC (sem infração,
+      DIF_QTDE=0) — nunca `NaN` (PU_SUGERIDO/DIF_QTDE já vêm tratados).
 
     Universo de ANOs = união dos anos com pelo menos 1 item confirmado
     em QUALQUER das 3 origens (outer join) — um produto com Estoque
@@ -8545,9 +8557,10 @@ def salvar_cruzamento_final_produto(escolhido: dict, editado: pd.DataFrame) -> d
 
     `editado` precisa das colunas de exibição (ANO/DESCR_PROD/UP/ALIQ/ST/
     QTDE_EI/QTDE_C/TD/QTDE_V/QTDE_EF/TC/INFRACAO_FINAL/DIF_QTDE/
-    PU_SUGERIDO/CONDICAO_PU/AGREGACAO/MEDIA_PU_C/MEDIA_PU_V/MEDIA_PU_E)
-    — TD/TC/INFRACAO_FINAL/DIF_QTDE/PU_SUGERIDO/CONDICAO_PU/AGREGACAO
-    (2026-08-06) são campos CALCULADOS por gerar_cruzamento_final_
+    PU_SUGERIDO/BASE_CALCULO/CONDICAO_PU/AGREGACAO/MEDIA_PU_C/
+    MEDIA_PU_V/MEDIA_PU_E) — TD/TC/INFRACAO_FINAL/DIF_QTDE/PU_SUGERIDO/
+    BASE_CALCULO/CONDICAO_PU/AGREGACAO (2026-08-06) são campos
+    CALCULADOS por gerar_cruzamento_final_
     produto(), mas editáveis na grade (o auditor pode sobrescrever o
     rótulo/valor automático se a divergência física for justificada por
     outro meio, ou forçar um PU/condição diferente) — salvos exatamente
@@ -8599,19 +8612,19 @@ def consultar_cruzamento_final_produto(
 
     Migração de schema em leitura (2026-08-06, achado real: linhas
     salvas na 1ª versão do Estágio 10.2, mesmo dia — ANTES de TD/TC/
-    INFRACAO_FINAL/DIF_QTDE/PU_SUGERIDO/CONDICAO_PU/AGREGACAO existirem
-    — não têm essas colunas na tabela DuckDB real; `SELECT *` só traz o
-    que existe de verdade). `UP` (2026-08-05) completado com `""` se
-    ausente (produto salvo antes até dela existir); os 7 campos
-    derivados da regra RN1, se QUALQUER um estiver ausente, são
-    RECALCULADOS via `_calcular_campos_derivados_cruzamento_final()` a
-    partir de QTDE_EI/QTDE_C/QTDE_V/QTDE_EF/MEDIA_PU_C/MEDIA_PU_V (essas
-    6 SEMPRE existem — são a base original do Estágio 10.2) — sem
-    precisar reprocessar o banco nem re-salvar nada. Crítico pra
-    `salvar_cruzamento_final_produto()`: sem essa migração, o upsert
-    preservaria linhas de OUTROS produtos com TD/TC/etc. faltando,
-    virando `NaN` no `pd.concat()` com as linhas novas (que já têm as 7
-    colunas)."""
+    INFRACAO_FINAL/DIF_QTDE/PU_SUGERIDO/BASE_CALCULO/CONDICAO_PU/
+    AGREGACAO existirem — não têm essas colunas na tabela DuckDB real;
+    `SELECT *` só traz o que existe de verdade). `UP` (2026-08-05)
+    completado com `""` se ausente (produto salvo antes até dela
+    existir); os 8 campos derivados da regra RN1, se QUALQUER um
+    estiver ausente, são RECALCULADOS via `_calcular_campos_derivados_
+    cruzamento_final()` a partir de QTDE_EI/QTDE_C/QTDE_V/QTDE_EF/
+    MEDIA_PU_C/MEDIA_PU_V (essas 6 SEMPRE existem — são a base original
+    do Estágio 10.2) — sem precisar reprocessar o banco nem re-salvar
+    nada. Crítico pra `salvar_cruzamento_final_produto()`: sem essa
+    migração, o upsert preservaria linhas de OUTROS produtos com TD/TC/
+    etc. faltando, virando `NaN` no `pd.concat()` com as linhas novas
+    (que já têm as 8 colunas)."""
     colunas = _COLUNAS_CRUZAMENTO_FINAL_PRODUTO
     if not _BANCO_PATH.exists():
         return pd.DataFrame(columns=colunas), 0
@@ -8631,7 +8644,7 @@ def consultar_cruzamento_final_produto(
         if "UP" not in df.columns:
             df["UP"] = ""
         campos_derivados_rn1 = {
-            "TD", "TC", "INFRACAO_FINAL", "DIF_QTDE", "PU_SUGERIDO", "CONDICAO_PU", "AGREGACAO",
+            "TD", "TC", "INFRACAO_FINAL", "DIF_QTDE", "PU_SUGERIDO", "BASE_CALCULO", "CONDICAO_PU", "AGREGACAO",
         }
         if not campos_derivados_rn1.issubset(df.columns) and not df.empty:
             df = _calcular_campos_derivados_cruzamento_final(df)
