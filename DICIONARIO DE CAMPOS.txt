@@ -208,3 +208,8 @@ QTDE_EF;Qtde. Estoque Final
 MEDIA_PU_C;Preco Medio Compras
 MEDIA_PU_V;Preco Medio Vendas
 MEDIA_PU_E;Preco Medio Estoque
+
+# Novos campos - 2026-08-06 (Estagio 10.2 - Enriquecimento do Cruzamento Final, tabela cruzamento_final_produto)
+TD;Total Debito (Qtd)
+TC;Total Credito (Qtd)
+INFRACAO_FINAL;Infracao (Quantidade)

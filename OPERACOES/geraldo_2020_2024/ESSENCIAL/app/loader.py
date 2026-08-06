@@ -8275,7 +8275,8 @@ def aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tup
 # divergência de embalagem ANTES do cálculo de imposto.
 _COLUNAS_CRUZAMENTO_FINAL_PRODUTO = [
     "DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ALIQ", "ST",
-    "QTDE_EI", "QTDE_C", "QTDE_V", "QTDE_EF", "MEDIA_PU_C", "MEDIA_PU_V", "MEDIA_PU_E", "TS",
+    "QTDE_EI", "QTDE_C", "TD", "QTDE_V", "QTDE_EF", "TC", "INFRACAO_FINAL",
+    "MEDIA_PU_C", "MEDIA_PU_V", "MEDIA_PU_E", "TS",
 ]
 # Regra de alíquota (pedido explícito do usuário — redefinida em
 # 2026-08-05, invertendo a versão original da Solicitação Técnica: > 2023
@@ -8355,6 +8356,21 @@ def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
       diferente: `UNID_PROD` ali é o valor BRUTO por linha/origem antes
       de qualquer tratamento; `UP` aqui é a unidade EFETIVA já
       normalizada do produto (mesmo conceito de "UP XML" do Estágio 9).
+    - TD (Total Débito, 2026-08-06): QTDE_EI + QTDE_C.
+    - TC (Total Crédito, 2026-08-06): QTDE_V + QTDE_EF.
+    - INFRACAO_FINAL (2026-08-06): "EntradaSemNota" se TD < TC (mesmo
+      cenário 1 de `regra de negócios unificadas/regra negocio_pu_rn1_
+      ei+c=v+ef_1.txt`: EI+C < V+EF = compra sem nota); "SaidaSemNota"
+      se TD > TC (cenário 2 do mesmo arquivo: EI+C > V+EF = venda sem
+      nota); "" (vazio) se TD == TC (equação balanceada, sem infração
+      física aparente). Campo NOVO (`INFRACAO_FINAL`), não reaproveita
+      `INFRACAO` (já cadastrado no dicionário desde 2026-07-19, usado em
+      `cruzamento_valor`/Estágio 7.2 — divergência em R$, semântica
+      diferente desta, que é em QUANTIDADE FÍSICA); nome sugerido pela
+      própria Solicitação Técnica ("INFRACAO_FINAL, ou similar") — evita
+      que o rótulo amigável do dicionário mude retroativamente pra
+      `INFRACAO` do Estágio 7.2 (que usaria o MESMO nome_amigavel, já que
+      o dicionário não faz distinção por tabela).
 
     Universo de ANOs = união dos anos com pelo menos 1 item confirmado
     em QUALQUER das 3 origens (outer join) — um produto com Estoque
@@ -8411,6 +8427,18 @@ def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
     resultado["COD_ITEM"] = escolhido.get("COD_ITEM", "")
     resultado["TS"] = datetime.now().isoformat(timespec="seconds")
 
+    # Total Débito/Crédito + rótulo de infração física (2026-08-06,
+    # Solicitação Técnica "ENRIQUECIMENTO DO CRUZAMENTO FINAL") — mesma
+    # equação de balanço RN1 (EI+C=V+EF) documentada em `regra de
+    # negócios unificadas/regra negocio_pu_rn1_ei+c=v+ef_1.txt`.
+    resultado["TD"] = resultado["QTDE_EI"] + resultado["QTDE_C"]
+    resultado["TC"] = resultado["QTDE_V"] + resultado["QTDE_EF"]
+    resultado["INFRACAO_FINAL"] = np.select(
+        [resultado["TD"] < resultado["TC"], resultado["TD"] > resultado["TC"]],
+        ["EntradaSemNota", "SaidaSemNota"],
+        default="",
+    )
+
     # Período de Auditoria (Estágio 1/EXTRAÇÃO) — aplicado DEPOIS de
     # QTDE_EI já calculada sobre o universo completo de anos (ver
     # docstring), pra não perder a continuidade real do ano inicial do
@@ -8422,7 +8450,7 @@ def gerar_cruzamento_final_produto(escolhido: dict) -> pd.DataFrame:
         if resultado.empty:
             return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_FINAL_PRODUTO)
 
-    resultado = _forcar_colunas_string(resultado, ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ST"])
+    resultado = _forcar_colunas_string(resultado, ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ST", "INFRACAO_FINAL"])
     return resultado[_COLUNAS_CRUZAMENTO_FINAL_PRODUTO].reset_index(drop=True)
 
 
@@ -8440,17 +8468,22 @@ def salvar_cruzamento_final_produto(escolhido: dict, editado: pd.DataFrame) -> d
     2026-08-04).
 
     `editado` precisa das colunas de exibição (ANO/DESCR_PROD/UP/ALIQ/ST/
-    QTDE_EI/QTDE_C/QTDE_V/QTDE_EF/MEDIA_PU_C/MEDIA_PU_V/MEDIA_PU_E) —
+    QTDE_EI/QTDE_C/TD/QTDE_V/QTDE_EF/TC/INFRACAO_FINAL/MEDIA_PU_C/
+    MEDIA_PU_V/MEDIA_PU_E) — TD/TC/INFRACAO_FINAL (2026-08-06) são
+    campos CALCULADOS por gerar_cruzamento_final_produto(), mas
+    editáveis na grade (o auditor pode sobrescrever o rótulo/valor
+    automático se a divergência física for justificada por outro meio)
+    — salvos exatamente como vieram de `editado`, sem recalcular aqui.
     DESCR_ALVO/COD_ITEM/TS são recriados aqui a partir de `escolhido`
-    (Regra R07: string em ANO/DESCR_PROD/UP/ST/DESCR_ALVO/COD_ITEM).
-    Devolve {'total_anos': int} ou {'erro': str} se falhar."""
+    (Regra R07: string em ANO/DESCR_PROD/UP/ST/INFRACAO_FINAL/DESCR_ALVO/
+    COD_ITEM). Devolve {'total_anos': int} ou {'erro': str} se falhar."""
     resultado = {}
     try:
         novo = editado.copy()
         novo["DESCR_ALVO"] = escolhido["DESCR_ALVO"]
         novo["COD_ITEM"] = escolhido.get("COD_ITEM", "")
         novo["TS"] = datetime.now().isoformat(timespec="seconds")
-        novo = _forcar_colunas_string(novo, ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ST"])
+        novo = _forcar_colunas_string(novo, ["DESCR_ALVO", "COD_ITEM", "ANO", "DESCR_PROD", "UP", "ST", "INFRACAO_FINAL"])
         novo = novo[_COLUNAS_CRUZAMENTO_FINAL_PRODUTO]
 
         existente, _ = consultar_cruzamento_final_produto(limite=None)
