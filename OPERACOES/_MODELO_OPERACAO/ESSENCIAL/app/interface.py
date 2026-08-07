@@ -1,4 +1,5 @@
 """Componentes de interface (painéis, tabs, cards) do Hunter 1.1."""
+import base64
 import sys
 import time
 from datetime import datetime
@@ -5538,12 +5539,28 @@ def _render_relatorio_final() -> None:
     ALIQ como número puro ("18,00", não "18%"), igual ao PDF de
     referência.
 
-    "📥 Gerar Relatório em PDF" — mesmo padrão "preparar depois baixar"
-    já usado no resto do projeto (Entradas de Terceiros, BC3, Estágio
-    8/11) pra não reprocessar a cada rerun; chama loader.exportar_
-    relatorio_pdf(), que usa `reportlab` (dependência nova, ver
-    requirements.txt) — qualquer erro (ex.: ambiente sem `reportlab`
-    instalado) vira st.error() em vez de derrubar a página inteira."""
+    "👁️ Visualização do Relatório" (2026-08-07, pedido do usuário:
+    "gostaria que o relatório ficasse disponível para visualização,
+    antes do pdf") — o PDF é gerado AUTOMATICAMENTE (não atrás de
+    botão — dados deste relatório são de baixa cardinalidade,
+    produto×ano, nunca a base bruta inteira, então gerar a cada
+    abertura da página é rápido; diferente do padrão "preparar depois
+    baixar" usado noutras telas pra tabelas com potencialmente milhões
+    de linhas) e embutido na própria página via `<iframe>` com o PDF
+    em base64 (`unsafe_allow_html=True`) — o auditor vê o documento
+    FINAL, formatado (cabeçalho, TOTAL ANO/TOTAL, Resumo das
+    Irregularidades), sem precisar baixar às cegas antes de conferir.
+    Tentativa de usar o componente nativo `st.pdf()` (Streamlit 1.58+)
+    foi abandonada — o pacote extra que ele exige (`streamlit-pdf`)
+    quebrou na importação neste ambiente (`StreamlitAPIException`
+    ligada ao sistema de componentes v2, fora do controle deste
+    projeto) — `<iframe>` com base64 é a alternativa sem dependência
+    extra, robusta o bastante pro uso local/portátil deste app.
+    `loader.exportar_relatorio_pdf()` usa `reportlab` (dependência
+    nova, ver requirements.txt) — qualquer erro (ex.: ambiente sem
+    `reportlab` instalado) vira st.error() em vez de derrubar a página
+    inteira. Botão de download continua disponível LOGO ABAIXO da
+    visualização, pra quem quiser salvar o arquivo."""
     dados = loader.gerar_dados_relatorio_final()
     if dados.empty:
         st.info(
@@ -5567,22 +5584,28 @@ def _render_relatorio_final() -> None:
         )
         st.dataframe(exibicao, use_container_width=True, hide_index=True)
 
-    if st.button("📥 Gerar Relatório em PDF", key="btn_gerar_relatorio_pdf"):
-        with st.spinner("Gerando PDF..."):
-            try:
-                st.session_state["relatorio_final_pdf_bytes"] = loader.exportar_relatorio_pdf(dados)
-            except Exception as exc:
-                st.session_state.pop("relatorio_final_pdf_bytes", None)
-                st.error(f"Erro ao gerar PDF: {exc}")
+    st.divider()
+    st.markdown("### 👁️ Visualização do Relatório")
+    try:
+        pdf_bytes = loader.exportar_relatorio_pdf(dados)
+    except Exception as exc:
+        st.error(f"Erro ao gerar PDF: {exc}")
+        return
 
-    if "relatorio_final_pdf_bytes" in st.session_state:
-        st.download_button(
-            "Baixar Relatório Final (PDF)",
-            data=st.session_state["relatorio_final_pdf_bytes"],
-            file_name="relatorio_final.pdf",
-            mime="application/pdf",
-            key="btn_download_relatorio_final_pdf",
-        )
+    pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+    st.markdown(
+        f'<iframe src="data:application/pdf;base64,{pdf_base64}" '
+        'width="100%" height="900" style="border: 1px solid #ccc;"></iframe>',
+        unsafe_allow_html=True,
+    )
+
+    st.download_button(
+        "📥 Baixar Relatório Final (PDF)",
+        data=pdf_bytes,
+        file_name="relatorio_final.pdf",
+        mime="application/pdf",
+        key="btn_download_relatorio_final_pdf",
+    )
 
 
 def render_pagina_relatorios() -> None:
