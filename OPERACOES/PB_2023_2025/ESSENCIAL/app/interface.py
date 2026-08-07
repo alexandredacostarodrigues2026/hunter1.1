@@ -5564,9 +5564,11 @@ def _render_relatorio_final() -> None:
     dados = loader.gerar_dados_relatorio_final()
     if dados.empty:
         st.info(
-            "Nenhum produto com Cruzamento Final salvo ainda — use \"⚖️ 10.2 Cruzamento Final "
-            "do Produto\" (Estágio 10, depois de confirmar a Rubrica) pra gerar e salvar pelo "
-            "menos 1 produto."
+            "Nenhum ano com repercussão tributária (TD ≠ TC) encontrado — nenhum produto com "
+            "Cruzamento Final salvo ainda (use \"⚖️ 10.2 Cruzamento Final do Produto\", Estágio "
+            "10, depois de confirmar a Rubrica), ou os anos já salvos estão todos com a equação "
+            "de balanço fechada (sem infração a relatar). Confira o "
+            "\"📊 11: CONSOLIDADO GERAL (RN1)\" pra ver TODOS os anos, incluindo os equilibrados."
         )
         return
 

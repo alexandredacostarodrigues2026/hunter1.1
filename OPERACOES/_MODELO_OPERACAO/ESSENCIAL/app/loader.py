@@ -8776,14 +8776,32 @@ def gerar_dados_relatorio_final() -> pd.DataFrame:
     `MULTA`/`CREDITO_TRIBUTARIO` (não aparecem na tabela em tela, só
     usados no resumo do PDF, ver `exportar_relatorio_pdf()`).
 
+    Filtro `TD != TC` (2026-08-07, pedido do usuário: "quando td=tc, não
+    há repercussão tributária. Devera ficar de fora do relatório") —
+    ano/produto com a equação de balanço FECHADA (`INFRACAO_FINAL == ""`,
+    `BASE_CALCULO`/`ICMS`/`MULTA`/`CREDITO_TRIBUTARIO` todos zerados) não
+    representa nenhuma omissão fiscal a autuar, então NÃO entra no
+    Relatório Final — documento formal só lista o que tem repercussão
+    tributária de verdade. Filtro aplicado só AQUI (Estágio 12); o
+    Estágio 10.2 (curadoria por produto) e o Estágio 11 (Consolidado
+    Geral, visão de auditoria/conferência) continuam mostrando TODOS os
+    anos, incluindo os equilibrados — é intencional que aquelas 2 telas
+    sirvam pra CONFERIR o cruzamento completo, TD==TC incluído (ex.:
+    achado real, produto CERV SKOL LATA 350ML/geraldo: 2024 tem TD==TC,
+    sem repercussão — usuário confirmou "não há repercussão em 2024").
+
     Ordenação: `DESCR_PROD` (alfabética), depois `ANO` (crescente) —
     pedido explícito da Solicitação Técnica. Devolve DataFrame vazio
     (mesmo schema de `_COLUNAS_RELATORIO_FINAL`) se `cruzamento_final_
-    produto` ainda não existir/estiver vazia."""
+    produto` ainda não existir/estiver vazia, OU se todos os anos
+    calculados estiverem com a equação fechada (nenhuma repercussão
+    tributária pra relatar)."""
     df = consultar_consolidado_cruzamento_11()
     if df.empty:
         return pd.DataFrame(columns=_COLUNAS_RELATORIO_FINAL)
-    df = df.copy()
+    df = df[df["INFRACAO_FINAL"] != ""].copy()
+    if df.empty:
+        return pd.DataFrame(columns=_COLUNAS_RELATORIO_FINAL)
     df["COMPRAS_SEM_NF"] = np.where(df["INFRACAO_FINAL"] == "E sem NF", df["DIF_QTDE"], 0.0)
     df["VENDAS_SEM_NF"] = np.where(df["INFRACAO_FINAL"] == "V sem NF", df["DIF_QTDE"], 0.0)
     ano_num = df["ANO"].astype(int)

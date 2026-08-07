@@ -58,6 +58,33 @@ _calcular_campos_derivados_cruzamento_final() (usada tanto no calculo
 novo quanto na migracao de schema de linhas ja salvas). Tabela
 cruzamento_final_produto.
 
+4) Regra do Relatorio Final (Estagio 12) -- exclusao de anos sem repercussao
+
+  TD = TC (equacao de balanco fechada, INFRACAO_FINAL = "") NAO tem
+  repercussao tributaria -- nao ha omissao pra autuar naquele ano/
+  produto. Por isso o ano/produto com TD = TC fica DE FORA do
+  Relatorio Final (Estagio 12) -- so entram anos com TD < TC ("E sem
+  NF") ou TD > TC ("V sem NF").
+
+  Regra vale so pro RELATORIO FINAL (documento formal que fundamenta o
+  credito tributario). O Estagio 10.2 (curadoria por produto) e o
+  Estagio 11 (Consolidado Geral) continuam mostrando TODOS os anos,
+  incluindo os equilibrados -- servem pra CONFERIR o cruzamento
+  completo, nao so pra listar infracao.
+
+  Se TODOS os anos de um produto tiverem TD = TC, o produto inteiro
+  fica de fora do Relatorio Final (mas continua no Estagio 11).
+
+  Implementado em loader.gerar_dados_relatorio_final() -- filtro
+  `INFRACAO_FINAL != ""` logo apos ler consultar_consolidado_
+  cruzamento_11(), antes de qualquer outro calculo.
+
+  Confirmado: produto CERV SKOL LATA 350ML (geraldo) tem 2024 com
+  TD = TC (32,00 = 32,00) -- usuario confirmou "nao ha repercussao em
+  2024" -- 2024 sai do relatorio, 2021/2022/2023 (com infracao real)
+  continuam. Relatorio gerado bate exato com o PDF de referencia do
+  usuario (GRUPO3_RELATORIO.pdf), que tambem so lista 2021-2023.
+
 PENDENTE (nao implementado ainda, aguardando confirmacao do usuario):
 item "3.1" do arquivo original (regra negocio_pu_rn1_ei+c=v+ef_1.txt,
 linha 28) -- produtos com Substituicao Tributaria (ST), quando a
