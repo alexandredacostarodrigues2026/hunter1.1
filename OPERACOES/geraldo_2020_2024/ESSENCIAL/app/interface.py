@@ -789,7 +789,15 @@ def render_estoque_entradas_saidas() -> None:
     docs/estagios/04_cronologia_ano_eleito.md). Botão Gerar/Regerar (mesmo
     padrão de render_estoque_anual()) + toggle Entradas/Saídas (mesmo
     padrão de render_fluxos_fisicos()) — mas aqui o resultado fica
-    persistido, diferente da prévia sob demanda do Estágio 3."""
+    persistido, diferente da prévia sob demanda do Estágio 3.
+
+    Expander "📋 Regras de eleição da Data" (2026-08-07, pedido do
+    usuário: "no estágio 4, traga as regras das datas") — mostra a
+    tabela de hierarquia (4 prioridades × Cenário A/ET, Cenário B/EP)
+    direto na tela, pra não depender de ler docs/estagios/
+    04_cronologia_ano_eleito.md pra entender por que uma DATA_ELEITA
+    específica venceu. Conteúdo transcrito da mesma doc (regra
+    confirmada com o usuário em 2026-07-15, não mudou desde então)."""
     st.subheader("Estágio 4 — Entradas e Saídas Enriquecidas (BC3 + Cronologia)")
     st.caption(
         "Persiste xml_entradas_real/xml_saidas_real (Estágio 3) enriquecidos com o código "
@@ -800,6 +808,30 @@ def render_estoque_entradas_saidas() -> None:
         "Diferente da prévia do Estágio 3 (calculada a cada consulta), aqui o resultado é "
         "gravado em estoque_entradas/estoque_saidas."
     )
+    with st.expander("📋 Regras de eleição da Data (hierarquia de prioridade)"):
+        st.markdown(
+            "Pra cada item, `DATA_ELEITA`/`ANO_ELEITO` usam a PRIMEIRA data válida "
+            "(nesta ordem de prioridade), conforme o papel da auditada na nota "
+            "(`AUDITADA_PAPEL`, Estágio 3):\n\n"
+            "| Prioridade | Cenário A — Destinatária (ET) | Cenário B — Emitente (EP) |\n"
+            "|---|---|---|\n"
+            "| 1ª | `DT_E_S` (declaração — C100, via BC3) | `dhSaiEnt` (XML) |\n"
+            "| 2ª | `DT_FIN` (declaração — Registro 0000, via BC3) | `DT_E_S` (declaração — C100, via BC3) |\n"
+            "| 3ª | `dhSaiEnt` (XML) | `DT_FIN` (declaração — Registro 0000, via BC3) |\n"
+            "| 4ª | `dhEmi` (XML) | `dhEmi` (XML) |\n\n"
+            "`DATA_ELEITA_ORIGEM` guarda um rótulo simplificado de qual fonte venceu: "
+            "**'declaração'** (`DT_E_S`/`DT_FIN`, veio do SPED) ou **'xml'** "
+            "(`dhSaiEnt`/`dhEmi`, veio do documento fiscal).\n\n"
+            "`DATA_ORIGINAL`/`ANO_ORIGINAL` é um campo PARALELO, sempre `dhEmi` (emissão do "
+            "XML) em qualquer cenário, sem passar pela hierarquia — não substitui "
+            "`DATA_ELEITA`, serve pra medir a defasagem entre emissão e escrituração real.\n\n"
+            "*Limitação real conhecida*: a extração de XML deste projeto não inclui o campo "
+            "`dhSaiEnt` — na prática, a 3ª prioridade do Cenário A e a 1ª do Cenário B nunca "
+            "contribuem; no Cenário B, como também não existe declaração de emissão própria "
+            "(BC3 só cobre entradas de terceiros), `DATA_ELEITA` cai sempre na 4ª prioridade "
+            "(`dhEmi`, XML) — confirmado na base real: praticamente 100% de "
+            "`estoque_saidas` usa a data do XML."
+        )
 
     if "estoque_entradas_saidas_gerado" not in st.session_state:
         st.session_state["estoque_entradas_saidas_gerado"] = loader.estoque_entradas_saidas_ja_gerado()
