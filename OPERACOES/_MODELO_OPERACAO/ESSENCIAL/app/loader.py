@@ -8736,6 +8736,296 @@ def consultar_consolidado_cruzamento_11() -> pd.DataFrame:
     )
 
 
+# ── Estágio 12 — Relatórios (Relatório Final) ──────────────────────────────
+# Solicitação Técnica (2026-08-07): "MÓDULO DE RELATÓRIOS FINAIS" — saída
+# formal ("Levantamento Quantitativo de Mercadorias") espelhando o layout
+# de referência do usuário (PDF do Hunter 1.0, SEFAZ-PB — encontrado em
+# Desktop/GRUPO3_RELATÓRIO.pdf, produto CERV SKOL LATA 350ML/geraldo, os
+# mesmos números já validados no Estágio 10.2/11 hoje). Reorganiza
+# `cruzamento_final_produto` (Estágio 10.2) num layout de colunas fixo,
+# pronto pra tela (st.dataframe) e exportação em PDF.
+_COLUNAS_RELATORIO_FINAL = [
+    "DESCR_PROD", "UP", "ANO", "PU_SUGERIDO",
+    "QTDE_EI", "QTDE_C", "TD", "QTDE_V", "QTDE_EF", "TC",
+    "COMPRAS_SEM_NF", "VENDAS_SEM_NF",
+    "BASE_CALCULO", "INFRACAO_FINAL", "ST", "ALIQ",
+    "ICMS", "MULTA", "CREDITO_TRIBUTARIO",
+]
+
+
+def gerar_dados_relatorio_final() -> pd.DataFrame:
+    """Estágio 12 — monta os dados do "RELATÓRIO FINAL" a partir de
+    `cruzamento_final_produto` (Estágio 10.2), via `consultar_
+    consolidado_cruzamento_11()` (já traz TUDO, com Regra R07 e
+    `NaN`->`0.0` aplicados — reaproveitado em vez de duplicar essa
+    limpeza aqui).
+
+    2 campos NOVOS, derivados (não existem em `cruzamento_final_
+    produto`) — segregam `DIF_QTDE` em 2 colunas por DIREÇÃO da
+    infração, mesmo layout do PDF de referência (2 colunas "COMPRAS SEM
+    EMISSÃO NF"/"VENDAS SEM EMISSÃO NF" em vez de 1 coluna com sinal):
+    - COMPRAS_SEM_NF: `DIF_QTDE` quando `INFRACAO_FINAL == "E sem NF"`,
+      senão `0.0`.
+    - VENDAS_SEM_NF: `DIF_QTDE` quando `INFRACAO_FINAL == "V sem NF"`,
+      senão `0.0`.
+
+    Demais colunas reaproveitadas sem transformação: `DESCR_PROD`/`UP`/
+    `ANO` (identificação), `PU_SUGERIDO` (VU $), `QTDE_EI`/`QTDE_C`/
+    `TD`/`QTDE_V`/`QTDE_EF`/`TC` (movimentação física), `BASE_CALCULO`
+    (BC Total $), `INFRACAO_FINAL` (Obs), `ST`, `ALIQ` — mais `ICMS`/
+    `MULTA`/`CREDITO_TRIBUTARIO` (não aparecem na tabela em tela, só
+    usados no resumo do PDF, ver `exportar_relatorio_pdf()`).
+
+    Ordenação: `DESCR_PROD` (alfabética), depois `ANO` (crescente) —
+    pedido explícito da Solicitação Técnica. Devolve DataFrame vazio
+    (mesmo schema de `_COLUNAS_RELATORIO_FINAL`) se `cruzamento_final_
+    produto` ainda não existir/estiver vazia."""
+    df = consultar_consolidado_cruzamento_11()
+    if df.empty:
+        return pd.DataFrame(columns=_COLUNAS_RELATORIO_FINAL)
+    df = df.copy()
+    df["COMPRAS_SEM_NF"] = np.where(df["INFRACAO_FINAL"] == "E sem NF", df["DIF_QTDE"], 0.0)
+    df["VENDAS_SEM_NF"] = np.where(df["INFRACAO_FINAL"] == "V sem NF", df["DIF_QTDE"], 0.0)
+    ano_num = df["ANO"].astype(int)
+    return (
+        df.assign(_ano_num=ano_num)
+        .sort_values(["DESCR_PROD", "_ano_num"])
+        .drop(columns=["_ano_num"])
+        .reset_index(drop=True)
+    )[_COLUNAS_RELATORIO_FINAL]
+
+
+_TRANS_MILHAR_BR = str.maketrans({",": ".", ".": ","})
+
+
+def _formatar_numero_br(v: float) -> str:
+    """Formata número como "1.234,56" (padrão BR: milhar '.', decimal
+    ',') — mesmo formato/técnica de `interface._formatar_moeda_br()`
+    (não importado de lá pra evitar import circular — `interface.py`
+    já importa `loader`, o inverso quebraria). Usado só no PDF do
+    Estágio 12 (`exportar_relatorio_pdf()`), onde `st.column_config`
+    não existe (documento estático, não widget Streamlit)."""
+    return f"{v:,.2f}".translate(_TRANS_MILHAR_BR)
+
+
+def _cabecalho_empresa_relatorio_final() -> "tuple[str, str]":
+    """Devolve (linha_empresa, linha_cnpj) pro cabeçalho do PDF, a
+    partir de `obter_entidade_auditada()` (Estágio 1) — só CNPJ/Razão
+    Social estão disponíveis nesta base (o layout de referência também
+    tem ENDEREÇO/CCICMS, que o Hunter 1.1 não coleta em lugar nenhum;
+    omitidos aqui em vez de inventar dado falso). `("", "")` se a
+    entidade ainda não foi identificada."""
+    info = obter_entidade_auditada()
+    if not info or not info.get("cnpj"):
+        return "", ""
+    return f"EMPRESA: {info.get('razao_social') or ''}", f"CNPJ/CPF: {info['cnpj']}"
+
+
+def exportar_relatorio_pdf(df: pd.DataFrame) -> bytes:
+    """Estágio 12 — gera o PDF do "RELATÓRIO FINAL" replicando o layout
+    de referência do usuário (SEFAZ-PB, "Levantamento Quantitativo de
+    Mercadorias" — `Desktop/GRUPO3_RELATÓRIO.pdf`): cabeçalho
+    institucional, tabela detalhada (1 linha por produto/ano + 1 linha
+    "TOTAL ANO" logo abaixo, mesmo padrão visual do original — repete
+    os totais físicos da própria linha, sem BC/VU$/ST), linha final
+    "TOTAL" (só nas colunas que fazem sentido somar ENTRE anos — `TD`/
+    `TC`/`COMPRAS_SEM_NF`/`VENDAS_SEM_NF`/`BASE_CALCULO`; `QTDE_EI`/
+    `QTDE_C`/`QTDE_V`/`QTDE_EF` ficam em branco, porque estoque não se
+    soma entre anos sem duplicar contagem) e "RESUMO DAS
+    IRREGULARIDADES" (Compras/Vendas sem NF × Valor Tributável/ICMS/
+    Multa/Total, usando `ICMS`/`MULTA`/`CREDITO_TRIBUTARIO` já
+    calculados no Estágio 10.2 — validado contra o PDF de referência:
+    mesmos valores, mesmo produto/CERV SKOL LATA 350ML/geraldo).
+
+    `df` = saída de `gerar_dados_relatorio_final()` (já ordenada por
+    Descrição/Ano) — usada como veio, sem reordenar. Import de
+    `reportlab` fica DENTRO da função (não no topo do módulo) — é uma
+    dependência nova, só usada nesta função; um ambiente sem `reportlab`
+    instalado continua rodando o resto do app normalmente, só esta
+    exportação que falharia. Devolve os bytes do PDF (A4 paisagem),
+    prontos pra `st.download_button()`."""
+    import io
+
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    def _br(v) -> str:
+        return _formatar_numero_br(float(v)) if pd.notna(v) else "0,00"
+
+    def _rs(v) -> str:
+        return f"R$ {_br(v)}"
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        leftMargin=8 * mm, rightMargin=8 * mm, topMargin=10 * mm, bottomMargin=10 * mm,
+    )
+    estilos = getSampleStyleSheet()
+    estilo_titulo = ParagraphStyle("titulo_relatorio", parent=estilos["Heading2"], alignment=TA_CENTER)
+    estilo_normal = ParagraphStyle("normal_relatorio", parent=estilos["Normal"], fontSize=8, leading=10)
+    estilo_negrito = ParagraphStyle("negrito_relatorio", parent=estilo_normal, fontName="Helvetica-Bold")
+    estilo_celula = ParagraphStyle("celula_relatorio", parent=estilos["Normal"], fontSize=6.5, leading=8)
+
+    elementos = []
+
+    linha_empresa, linha_cnpj = _cabecalho_empresa_relatorio_final()
+    cabecalho = Table(
+        [[
+            Paragraph(
+                "<b>GOVERNO DA PARAÍBA</b><br/><b>SECRETARIA DE ESTADO DA FAZENDA</b><br/>"
+                "<b>GERÊNCIA EXECUTIVA DE COMBATE À FRAUDE FISCAL</b>",
+                estilo_normal,
+            ),
+            Paragraph("<b>LEVANTAMENTO QUANTITATIVO<br/>DE MERCADORIAS</b>", estilo_titulo),
+        ]],
+        colWidths=[160 * mm, 100 * mm],
+    )
+    cabecalho.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    elementos.append(cabecalho)
+    elementos.append(Spacer(1, 4 * mm))
+    elementos.append(Paragraph("RELATÓRIO FINAL", estilo_titulo))
+    elementos.append(Spacer(1, 3 * mm))
+    if linha_empresa:
+        elementos.append(Paragraph(linha_empresa, estilo_normal))
+        elementos.append(Paragraph(linha_cnpj, estilo_normal))
+        elementos.append(Spacer(1, 3 * mm))
+    elementos.append(Paragraph(
+        "<b>FINALIDADE DO RELATÓRIO FINAL: RETORNAR CRÉDITO TRIBUTÁRIO DE ITENS CRUZADOS "
+        "EM LEVANTAMENTO DE QUANTITATIVO DE MERCADORIAS</b>",
+        estilo_normal,
+    ))
+    elementos.append(Spacer(1, 4 * mm))
+
+    cabecalho_tabela = [
+        "ANO", "DESCRIÇÃO", "UP", "ESTOQUE\nINICIAL\n(QTDE)", "ENTRADAS\n(QTDE)",
+        "TOTAL DÉBITO\n(QTDE)", "SAÍDAS\n(QTDE)", "ESTOQUE\nFINAL\n(QTDE)",
+        "TOTAL CRÉDITO\n(QTDE)", "COMPRAS SEM\nNF (QTDE)", "VENDAS SEM\nNF (QTDE)",
+        "VU $", "BC TOTAL $", "ALIQ", "OBS", "ST",
+    ]
+    linhas_tabela = [cabecalho_tabela]
+    estilos_linha = []
+    for i, linha in df.reset_index(drop=True).iterrows():
+        linha_pos = len(linhas_tabela)
+        linhas_tabela.append([
+            linha["ANO"], Paragraph(str(linha["DESCR_PROD"]), estilo_celula), linha["UP"],
+            _br(linha["QTDE_EI"]), _br(linha["QTDE_C"]), _br(linha["TD"]),
+            _br(linha["QTDE_V"]), _br(linha["QTDE_EF"]), _br(linha["TC"]),
+            _br(linha["COMPRAS_SEM_NF"]), _br(linha["VENDAS_SEM_NF"]),
+            _rs(linha["PU_SUGERIDO"]), _rs(linha["BASE_CALCULO"]),
+            _br(linha["ALIQ"]), linha["INFRACAO_FINAL"], linha["ST"],
+        ])
+        # "TOTAL ANO" — repete os totais físicos da MESMA linha (mesmo
+        # padrão visual do PDF de referência: uma linha "caixa" logo
+        # abaixo, sem UP/VU$/ALIQ/OBS/ST), pra separar visualmente cada
+        # produto/ano antes do próximo.
+        linhas_tabela.append([
+            "", Paragraph("TOTAL ANO", estilo_negrito), "",
+            _br(linha["QTDE_EI"]), _br(linha["QTDE_C"]), _br(linha["TD"]),
+            _br(linha["QTDE_V"]), _br(linha["QTDE_EF"]), _br(linha["TC"]),
+            _br(linha["COMPRAS_SEM_NF"]), _br(linha["VENDAS_SEM_NF"]),
+            "", _rs(linha["BASE_CALCULO"]), "", "", "",
+        ])
+        estilos_linha.append(("BACKGROUND", (0, linha_pos + 1), (-1, linha_pos + 1), colors.whitesmoke))
+        estilos_linha.append(("FONTNAME", (0, linha_pos + 1), (-1, linha_pos + 1), "Helvetica-Bold"))
+
+    # TOTAL geral — só nas colunas que fazem sentido somar ENTRE anos
+    # (TD/TC/COMPRAS_SEM_NF/VENDAS_SEM_NF/BASE_CALCULO); QTDE_EI/QTDE_C/
+    # QTDE_V/QTDE_EF ficam em branco (estoque não se soma entre anos sem
+    # duplicar contagem — mesmo raciocínio validado contra o PDF de
+    # referência: 3 anos do CERV SKOL, TOTAL só aparece nessas 5
+    # colunas).
+    linha_total_geral = len(linhas_tabela)
+    linhas_tabela.append([
+        "", Paragraph("TOTAL", estilo_negrito), "", "", "",
+        _br(df["TD"].sum()), "", "", _br(df["TC"].sum()),
+        _br(df["COMPRAS_SEM_NF"].sum()), _br(df["VENDAS_SEM_NF"].sum()),
+        "", _rs(df["BASE_CALCULO"].sum()), "", "", "",
+    ])
+    estilos_linha.append(("BACKGROUND", (0, linha_total_geral), (-1, linha_total_geral), colors.lightgrey))
+    estilos_linha.append(("FONTNAME", (0, linha_total_geral), (-1, linha_total_geral), "Helvetica-Bold"))
+
+    larguras_colunas = [
+        10 * mm, 42 * mm, 10 * mm, 15 * mm, 15 * mm, 17 * mm, 15 * mm, 15 * mm,
+        17 * mm, 17 * mm, 17 * mm, 15 * mm, 18 * mm, 10 * mm, 16 * mm, 8 * mm,
+    ]
+    tabela_principal = Table(linhas_tabela, colWidths=larguras_colunas, repeatRows=1)
+    tabela_principal.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D9E2F3")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("ALIGN", (3, 1), (-3, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+        *estilos_linha,
+    ]))
+    elementos.append(tabela_principal)
+    elementos.append(Spacer(1, 6 * mm))
+
+    # Resumo das Irregularidades — Compras/Vendas sem NF × Valor
+    # Tributável (BASE_CALCULO)/ICMS/Multa/Total (CREDITO_TRIBUTARIO),
+    # já calculados no Estágio 10.2 (loader._calcular_campos_derivados_
+    # cruzamento_final()) — validado contra o PDF de referência.
+    compras_sem_nf = df[df["INFRACAO_FINAL"] == "E sem NF"]
+    vendas_sem_nf = df[df["INFRACAO_FINAL"] == "V sem NF"]
+    linhas_resumo = [
+        ["RESUMO DAS IRREGULARIDADES", "VALOR TRIBUTÁVEL", "ICMS", "MULTA", "TOTAL"],
+        [
+            "COMPRAS SEM EMISSÃO NF", _rs(compras_sem_nf["BASE_CALCULO"].sum()),
+            _rs(compras_sem_nf["ICMS"].sum()), _rs(compras_sem_nf["MULTA"].sum()),
+            _rs(compras_sem_nf["CREDITO_TRIBUTARIO"].sum()),
+        ],
+        [
+            "VENDAS SEM EMISSÃO NF", _rs(vendas_sem_nf["BASE_CALCULO"].sum()),
+            _rs(vendas_sem_nf["ICMS"].sum()), _rs(vendas_sem_nf["MULTA"].sum()),
+            _rs(vendas_sem_nf["CREDITO_TRIBUTARIO"].sum()),
+        ],
+        [
+            "", "", _rs(df["ICMS"].sum()), _rs(df["MULTA"].sum()),
+            _rs(df["CREDITO_TRIBUTARIO"].sum()),
+        ],
+    ]
+    tabela_resumo = Table(linhas_resumo, colWidths=[55 * mm, 45 * mm, 40 * mm, 40 * mm, 40 * mm])
+    tabela_resumo.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D9E2F3")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.whitesmoke),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+    ]))
+    elementos.append(tabela_resumo)
+    elementos.append(Spacer(1, 8 * mm))
+
+    tabela_assinatura = Table(
+        [["AUDITORES", "MATRÍCULA"], ["", ""], ["", ""]],
+        colWidths=[140 * mm, 60 * mm],
+    )
+    tabela_assinatura.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("GRID", (0, 1), (-1, -1), 0.4, colors.grey),
+    ]))
+    elementos.append(tabela_assinatura)
+    elementos.append(Spacer(1, 4 * mm))
+    elementos.append(Paragraph(f"João Pessoa, {datetime.now().strftime('%d/%m/%Y')}", estilo_normal))
+    elementos.append(Spacer(1, 4 * mm))
+    elementos.append(Paragraph(
+        "<b>NOTA AO CONTRIBUINTE:</b> DICIONÁRIO DE LEGENDAS ENCONTRA-SE NO PDF 'GUIA RELATÓRIOS'",
+        estilo_normal,
+    ))
+
+    doc.build(elementos)
+    return buffer.getvalue()
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio

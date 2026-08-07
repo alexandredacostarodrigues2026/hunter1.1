@@ -2457,8 +2457,12 @@ def render_menu_principal() -> None:
     # entrou aqui em 2026-08-03 (ganhou botão próprio, separado do 7.3.2 —
     # pedido do usuário) em vez da 1ª linha (já tinha 11 colunas).
     # "11: CONSOLIDADO GERAL (RN1)" entrou em 2026-08-06 (Solicitação
-    # Técnica "CONSOLIDADO DO CRUZAMENTO FINAL").
-    col_consolidado_733, col_estagio8, col_estagio9, col_produtos_alvo_salvos, col_consolidado_11 = st.columns(5)
+    # Técnica "CONSOLIDADO DO CRUZAMENTO FINAL"). "12: RELATÓRIOS" entrou
+    # em 2026-08-07 (Solicitação Técnica "MÓDULO DE RELATÓRIOS FINAIS").
+    (
+        col_consolidado_733, col_estagio8, col_estagio9, col_produtos_alvo_salvos,
+        col_consolidado_11, col_relatorios,
+    ) = st.columns(6)
     if col_consolidado_733.button(
         "🔍 7.3.3: SELEÇÃO CONSOLIDADA (ESTOQUE/XML)",
         key="btn_menu_consolidado_733", use_container_width=True,
@@ -2486,6 +2490,11 @@ def render_menu_principal() -> None:
         "📊 11: CONSOLIDADO GERAL (RN1)", key="btn_menu_consolidado_11", use_container_width=True,
     ):
         st.session_state["pagina_ativa"] = "consolidado_11"
+        st.rerun()
+    if col_relatorios.button(
+        "📄 12: RELATÓRIOS", key="btn_menu_relatorios", use_container_width=True,
+    ):
+        st.session_state["pagina_ativa"] = "relatorios"
         st.rerun()
 
 
@@ -5496,3 +5505,99 @@ def render_pagina_consolidado_11() -> None:
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     render_consolidado_cruzamento_11()
+
+
+# Relatório Final (Estágio 12, 2026-08-07) — colunas de exibição em
+# tela, ordem EXATA pedida na Solicitação Técnica: "Descrição, UP, Ano,
+# VU $, EI (Qtde), Compras (Qtde), Total Débito, Vendas (Qtde), EF
+# (Qtde), Total Crédito, Compras Sem NF, Vendas Sem NF, BC Total, Obs,
+# ST, Aliq". ICMS/MULTA/CREDITO_TRIBUTARIO (também presentes em
+# loader.gerar_dados_relatorio_final()) NÃO aparecem aqui — só usados
+# no resumo do PDF (loader.exportar_relatorio_pdf()).
+_COLUNAS_EXIBICAO_RELATORIO_FINAL = [
+    "DESCR_PROD", "UP", "ANO", "PU_SUGERIDO",
+    "QTDE_EI", "QTDE_C", "TD", "QTDE_V", "QTDE_EF", "TC",
+    "COMPRAS_SEM_NF", "VENDAS_SEM_NF",
+    "BASE_CALCULO", "INFRACAO_FINAL", "ST", "ALIQ",
+]
+_COLUNAS_NUMERICAS_RELATORIO_FINAL = (
+    "PU_SUGERIDO", "QTDE_EI", "QTDE_C", "TD", "QTDE_V", "QTDE_EF", "TC",
+    "COMPRAS_SEM_NF", "VENDAS_SEM_NF", "BASE_CALCULO", "ALIQ",
+)
+
+
+def _render_relatorio_final() -> None:
+    """"RELATÓRIO FINAL" (Estágio 12, Solicitação Técnica 2026-08-07:
+    "MÓDULO DE RELATÓRIOS FINAIS") — "Levantamento Quantitativo de
+    Mercadorias", layout espelhando o relatório de referência do
+    usuário (Hunter 1.0, SEFAZ-PB). Lê loader.gerar_dados_relatorio_
+    final() (já ordenado por Descrição/Ano) e exibe em st.dataframe
+    (somente leitura — "garantir a integridade dos dados finais", mesmo
+    raciocínio do Estágio 11) de alta densidade (10px). Formatação BR
+    (milhar '.', decimal ',') em TODAS as colunas numéricas — inclusive
+    ALIQ como número puro ("18,00", não "18%"), igual ao PDF de
+    referência.
+
+    "📥 Gerar Relatório em PDF" — mesmo padrão "preparar depois baixar"
+    já usado no resto do projeto (Entradas de Terceiros, BC3, Estágio
+    8/11) pra não reprocessar a cada rerun; chama loader.exportar_
+    relatorio_pdf(), que usa `reportlab` (dependência nova, ver
+    requirements.txt) — qualquer erro (ex.: ambiente sem `reportlab`
+    instalado) vira st.error() em vez de derrubar a página inteira."""
+    dados = loader.gerar_dados_relatorio_final()
+    if dados.empty:
+        st.info(
+            "Nenhum produto com Cruzamento Final salvo ainda — use \"⚖️ 10.2 Cruzamento Final "
+            "do Produto\" (Estágio 10, depois de confirmar a Rubrica) pra gerar e salvar pelo "
+            "menos 1 produto."
+        )
+        return
+
+    st.markdown(f"**{len(dados):,} linha(s)** (produto × ano).".replace(",", "."))
+
+    formatado = dados.copy()
+    for col in _COLUNAS_NUMERICAS_RELATORIO_FINAL:
+        formatado[col] = formatado[col].apply(_formatar_moeda_br)
+    exibicao = _preparar_preview(formatado, _COLUNAS_EXIBICAO_RELATORIO_FINAL)
+    with st.container(key="relatorio_final_tabela"):
+        st.markdown(
+            "<style>.st-key-relatorio_final_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 10px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(exibicao, use_container_width=True, hide_index=True)
+
+    if st.button("📥 Gerar Relatório em PDF", key="btn_gerar_relatorio_pdf"):
+        with st.spinner("Gerando PDF..."):
+            try:
+                st.session_state["relatorio_final_pdf_bytes"] = loader.exportar_relatorio_pdf(dados)
+            except Exception as exc:
+                st.session_state.pop("relatorio_final_pdf_bytes", None)
+                st.error(f"Erro ao gerar PDF: {exc}")
+
+    if "relatorio_final_pdf_bytes" in st.session_state:
+        st.download_button(
+            "Baixar Relatório Final (PDF)",
+            data=st.session_state["relatorio_final_pdf_bytes"],
+            file_name="relatorio_final.pdf",
+            mime="application/pdf",
+            key="btn_download_relatorio_final_pdf",
+        )
+
+
+def render_pagina_relatorios() -> None:
+    """Painel 'ESTÁGIO 12 - RELATÓRIOS' (Solicitação Técnica 2026-08-07:
+    "MÓDULO DE RELATÓRIOS FINAIS"), botão da 2ª linha do Menu Principal.
+    `st.selectbox` pra escolher qual relatório ver — só "RELATÓRIO
+    FINAL" implementado por enquanto, mas a tela já nasce pronta pra
+    crescer (outros relatórios futuros entram como opção nova no
+    mesmo selectbox, sem precisar de botão de menu extra). Exige
+    dados_carregados (mesmo padrão das outras páginas)."""
+    _botao_voltar_menu()
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        return
+    st.subheader("Estágio 12 - Relatórios")
+    relatorio = st.selectbox("Relatório", ["RELATÓRIO FINAL"], key="relatorios_selectbox")
+    if relatorio == "RELATÓRIO FINAL":
+        _render_relatorio_final()

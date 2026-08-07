@@ -227,3 +227,7 @@ BASE_CALCULO;Base de Calculo (R$)
 ICMS;ICMS (R$)
 MULTA;Multa (75% R$)
 CREDITO_TRIBUTARIO;Credito Tributario Total (R$)
+
+# Novos campos - 2026-08-07 (Estagio 12 - Modulo de Relatorios Finais, relatorio final)
+COMPRAS_SEM_NF;Compras Sem NF (Qtde)
+VENDAS_SEM_NF;Vendas Sem NF (Qtde)
