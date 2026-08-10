@@ -9044,6 +9044,466 @@ def exportar_relatorio_pdf(df: pd.DataFrame) -> bytes:
     return buffer.getvalue()
 
 
+# ── Estágio 12.2 — Relatório Itens Cruzados ────────────────────────────────
+# Solicitação Técnica (2026-08-10): "RELATÓRIO ANALÍTICO DE ITENS CRUZADOS" —
+# complementa o Relatório Final (12.1, visão anual consolidada) com a
+# "memória de cálculo" item a item (nota a nota/declaração a declaração) que
+# compõe a rubrica do PRODUTO ESCOLHIDO (loader.consultar_produto_cruzamento_
+# escolhido() — mesmo produto do Estágio 9/10/10.2, diferente do 12.1 que é
+# consolidado geral de todos os produtos). Layout replicado do PDF de
+# referência do usuário (Hunter 1.0, SEFAZ-PB —
+# OPERACOES/geraldo_2020_2024/GRUPO2_RELATORIO_ITEM_CRUZADO.pdf), validado
+# campo a campo contra os dados reais daquele PDF (produto "skol", operação
+# geraldo).
+_COLUNAS_RELATORIO_ITENS_CRUZADOS = [
+    "CATEGORIA", "ANO", "DATA", "DC", "LOC", "DOCUMENTO_ORIGEM", "NUMERO", "CFOP", "QTDE_ITENS", "TIPO", "OBS",
+]
+_CATEGORIA_ENTRADAS        = "1-ENTRADAS"
+_CATEGORIA_SAIDAS          = "2-SAÍDAS"
+_CATEGORIA_ESTOQUE_INICIAL = "3-ESTOQUE INICIAL"
+_CATEGORIA_ESTOQUE_FINAL   = "4-ESTOQUE FINAL"
+_ORDEM_CATEGORIAS_ITENS_CRUZADOS = {
+    _CATEGORIA_ENTRADAS: 1, _CATEGORIA_SAIDAS: 2, _CATEGORIA_ESTOQUE_INICIAL: 3, _CATEGORIA_ESTOQUE_FINAL: 4,
+}
+_MESES_ABREV_PT = {
+    1: "jan", 2: "fev", 3: "mar", 4: "abr", 5: "mai", 6: "jun",
+    7: "jul", 8: "ago", 9: "set", 10: "out", 11: "nov", 12: "dez",
+}
+
+
+def _mes_ano_abreviado(data_ddmmaaaa: str) -> str:
+    """Converte "DD/MM/AAAA" (formato de `dt_decl`, ver `consultar_
+    atributos_estoque_estoque_por_idunico()`) pro formato "mmm/aaaa" em
+    português ("28/02/2021" -> "fev/2021") — mesmo formato do PDF de
+    referência do Estágio 12.2 (coluna DATA/DOCUMENTO DE ORIGEM das
+    categorias de Estoque). "" se `data_ddmmaaaa` não tiver o formato
+    esperado (ex.: item de Estoque sem dt_decl calculado)."""
+    partes = str(data_ddmmaaaa).split("/")
+    if len(partes) != 3:
+        return ""
+    _, mes, ano = partes
+    if not mes.isdigit():
+        return ""
+    return f"{_MESES_ABREV_PT.get(int(mes), mes)}/{ano}"
+
+
+def _formatar_data_eleita_br(data_eleita: str) -> str:
+    """Formata `DATA_ELEITA` (Estágio 4) pro padrão BR "DD/MM/AAAA",
+    usado na coluna DATA do Relatório Itens Cruzados — `DATA_ELEITA` vem
+    em 2 formatos BRUTOS conforme a fonte que venceu a hierarquia (ver
+    `_aplicar_hierarquia_data()`): "DDMMAAAA" sem separador (SPED, DT_E_S/
+    DT_FIN) ou ISO "AAAA-MM-DD..." (XML, dhEmi/dhSaiEnt). "" se vazio ou
+    fora dos 2 formatos esperados (Regra R07: nunca "None"/"nan")."""
+    valor = str(data_eleita or "").strip()
+    if re.fullmatch(r"\d{8}", valor):
+        return f"{valor[0:2]}/{valor[2:4]}/{valor[4:8]}"
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", valor)
+    if m:
+        ano, mes, dia = m.groups()
+        return f"{dia}/{mes}/{ano}"
+    return ""
+
+
+def _detalhar_documento_fiscal_por_idunico(idunicos: "set | list", origem: str) -> pd.DataFrame:
+    """Estágio 12.2 — enriquecimento fiscal EXCLUSIVO do Relatório Itens
+    Cruzados: NÚMERO da nota, CFOP, TIPO (modelo NFe/NFCe) e DC (Data
+    Considerada) por `idunico`, pra `estoque_entradas`/`estoque_saidas`
+    (`origem` 'entradas'/'saidas' — Estoque não usa esta função, ver
+    `_montar_categorias_estoque_itens_cruzados()`). Esses 4 campos NÃO
+    estão em `consultar_atributos_estoque_por_idunico()` (que já cobre
+    CHV_NFE/ANO_ELEITO/preço/quantidade) — join extra, só usado aqui, pra
+    não inchar aquela função com colunas que só este relatório precisa.
+
+    - NUMERO: dígitos 26-34 da chave de acesso (`nNF`, 9 dígitos) — ex.:
+      chave "...0007261971..." -> NUMERO "726197" (zeros à esquerda
+      removidos via `int()`, validado contra o PDF de referência do
+      usuário). "" se a chave não tiver os 44 dígitos esperados.
+    - CFOP: `_COL_CFOP_NFE` (já usado no Estágio 3, watchlist) — CFOP do
+      item, direto, sem tradução.
+    - TIPO: `_COL_MODELO_NFE` traduzido — "55" -> "NFe", "65" -> "NFCe",
+      qualquer outro valor mantido cru (não deveria ocorrer nos 2 modelos
+      fiscais deste projeto, mas evita perder o dado se ocorrer).
+    - DC (Data Considerada): reaproveita `DATA_ELEITA_ORIGEM`, já
+      persistida no Estágio 4 (`_aplicar_data_eleita()`) — 'declaração'
+      (SPED, DT_E_S/DT_FIN) -> 'D'; qualquer outra origem não-vazia
+      (sempre 'xml' hoje) -> 'E' (Emissão/dhEmi). Não existe hoje um 3º
+      valor 'S' (Saída/dhSaiEnt) porque esse campo do XML está documentado
+      (`_COL_DHSAIENT_XML`, Estágio 4) como NÃO populado pelo pipeline de
+      extração atual — todo "xml" cai sempre em dhEmi. Limitação
+      conhecida, não um bug desta função: se `dhSaiEnt` passar a ser
+      extraído no futuro, 'S' aparece sozinho, sem mudança de código
+      aqui. "" (vazio) só no caso limite de item sem nenhuma data eleita
+      válida.
+
+    Devolve DataFrame com colunas (idunico, DATA_ELEITA, NUMERO, CFOP,
+    TIPO, DC) — vazio se `idunicos` vazio, banco/tabela não existir, ou
+    as colunas fiscais esperadas não existirem na tabela de origem."""
+    colunas = ["idunico", "DATA_ELEITA", "NUMERO", "CFOP", "TIPO", "DC"]
+    if not idunicos or not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas)
+    tabela_origem = "estoque_entradas" if origem == "entradas" else "estoque_saidas"
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if tabela_origem not in tabelas:
+                return pd.DataFrame(columns=colunas)
+            colunas_tabela = {r[1] for r in con.execute(f"PRAGMA table_info('{tabela_origem}')").fetchall()}
+            campos_esperados = {
+                "fatoitemnfe_infprot_chnfe", _COL_CFOP_NFE, _COL_MODELO_NFE,
+                "DATA_ELEITA", "DATA_ELEITA_ORIGEM",
+            }
+            if not campos_esperados.issubset(colunas_tabela):
+                return pd.DataFrame(columns=colunas)
+            con.register("_idunicos_doc_fiscal_12_2", pd.DataFrame({"ID_UNICO": list(idunicos)}))
+            df = con.execute(
+                f"SELECT DISTINCT e.ID_UNICO AS idunico, "
+                f"e.fatoitemnfe_infprot_chnfe AS CHV_NFE, "
+                f"e.DATA_ELEITA, e.DATA_ELEITA_ORIGEM, "
+                f"e.{_COL_CFOP_NFE} AS CFOP, "
+                f"e.{_COL_MODELO_NFE} AS MODELO "
+                f"FROM {tabela_origem} e "
+                "INNER JOIN _idunicos_doc_fiscal_12_2 b ON e.ID_UNICO = b.ID_UNICO"
+            ).df()
+            con.unregister("_idunicos_doc_fiscal_12_2")
+    except Exception:
+        logger.exception("Erro ao detalhar documento fiscal por idunico em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas)
+    df["idunico"] = df["idunico"].astype(str)
+    df["CHV_NFE"] = df["CHV_NFE"].fillna("").astype(str)
+    df["DATA_ELEITA"] = df["DATA_ELEITA"].fillna("").astype(str)
+    df["DATA_ELEITA_ORIGEM"] = df["DATA_ELEITA_ORIGEM"].fillna("").astype(str)
+    df["DC"] = np.where(
+        df["DATA_ELEITA_ORIGEM"] == "declaração", "D",
+        np.where(df["DATA_ELEITA_ORIGEM"] == "", "", "E"),
+    )
+    chave_valida = df["CHV_NFE"].str.fullmatch(r"\d{44}").fillna(False)
+    df["NUMERO"] = ""
+    df.loc[chave_valida, "NUMERO"] = df.loc[chave_valida, "CHV_NFE"].str[25:34].astype(int).astype(str)
+    df["CFOP"] = df["CFOP"].fillna("").astype(str)
+    df["MODELO"] = df["MODELO"].fillna("").astype(str)
+    df["TIPO"] = df["MODELO"].map({"55": "NFe", "65": "NFCe"}).fillna(df["MODELO"])
+    return df[colunas]
+
+
+def _montar_categoria_documento_itens_cruzados(
+    escolhido: dict, origem: str, categoria: str, n_categoria: str,
+) -> pd.DataFrame:
+    """Estágio 12.2 — monta as linhas de "1-ENTRADAS"/"2-SAÍDAS" (`origem`
+    'entradas'/'saidas', `categoria`/`n_categoria` já resolvidos pelo
+    chamador): reaproveita o MESMO pipeline de `_consolidar_detalhado_
+    por_origem()` (consultar_cruzamento_confirmado_detalhado() +
+    consultar_atributos_estoque_por_idunico() + aplicar_tratamento_fm_
+    detalhado()) pra obter `quant_utiliz`/`TRATAMENTO` item a item, e
+    acrescenta NUMERO/CFOP/TIPO/DC via `_detalhar_documento_fiscal_por_
+    idunico()`. LOC = `n_categoria + "_" + idunico` (link com a memória de
+    cálculo, ver docstring de `gerar_dados_relatorio_itens_cruzados()`).
+    Devolve DataFrame vazio (colunas de `_COLUNAS_RELATORIO_ITENS_
+    CRUZADOS`) se o produto não tiver nenhum item confirmado nesta
+    origem."""
+    colunas_vazias = _COLUNAS_RELATORIO_ITENS_CRUZADOS
+    detalhado, _ = consultar_cruzamento_confirmado_detalhado(
+        descr_alvo=escolhido["DESCR_ALVO"], origem=origem, limite=None,
+    )
+    if detalhado.empty:
+        return pd.DataFrame(columns=colunas_vazias)
+    atributos = consultar_atributos_estoque_por_idunico(set(detalhado["idunico"]), origem=origem)
+    if atributos.empty:
+        return pd.DataFrame(columns=colunas_vazias)
+    detalhado = detalhado.merge(atributos, left_on="idunico", right_on="ID_UNICO", how="left")
+    detalhado, _, _ = aplicar_tratamento_fm_detalhado(detalhado, origem=origem)
+    doc_fiscal = _detalhar_documento_fiscal_por_idunico(set(detalhado["idunico"]), origem=origem)
+    detalhado = detalhado.merge(doc_fiscal, on="idunico", how="left")
+    return pd.DataFrame({
+        "CATEGORIA": categoria,
+        "ANO": detalhado["ANO_ELEITO"].fillna(""),
+        "DATA": detalhado["DATA_ELEITA"].fillna("").apply(_formatar_data_eleita_br),
+        "DC": detalhado["DC"].fillna(""),
+        "LOC": n_categoria + "_" + detalhado["idunico"].astype(str),
+        "DOCUMENTO_ORIGEM": detalhado["CHV_NFE"].fillna(""),
+        "NUMERO": detalhado["NUMERO"].fillna(""),
+        "CFOP": detalhado["CFOP"].fillna(""),
+        "QTDE_ITENS": pd.to_numeric(detalhado["quant_utiliz"], errors="coerce").fillna(0.0),
+        "TIPO": detalhado["TIPO"].fillna(""),
+        "OBS": np.where(detalhado["TRATAMENTO"] == "T", "T", ""),
+    })[colunas_vazias]
+
+
+def _montar_categorias_estoque_itens_cruzados(escolhido: dict) -> pd.DataFrame:
+    """Estágio 12.2 — monta as linhas de "3-ESTOQUE INICIAL"/"4-ESTOQUE
+    FINAL": cada item de Estoque confirmado na Rubrica (`ORIGEM=
+    'estoque'` em cruzamento_confirmado_detalhado) aparece DUAS vezes —
+    Regra de Continuidade, a MESMA já implementada em `gerar_cruzamento_
+    final_produto()` (QTDE_EI de um ano = QTDE_EF do ano anterior):
+    - "4-ESTOQUE FINAL", ANO = ano_ef (ano da declaração/H010 que originou
+      o item).
+    - "3-ESTOQUE INICIAL", ANO = ano_ef + 1 (abertura do ano seguinte,
+      mesmo item físico).
+    Validado contra o PDF de referência do usuário: mesmo item físico
+    (mesmo `idunico`) aparece com DATA "fev/2021" tanto em Estoque
+    Final-2020 quanto em Estoque Inicial-2021, só relabeled por
+    categoria/ano — mesma quantidade (`quant_utiliz`) nas duas linhas.
+    LOC aqui é só um placeholder (baseado em `idunico`) — o valor final,
+    sequencial e legível, é atribuído por `gerar_dados_relatorio_itens_
+    cruzados()` depois da ordenação (ver docstring de lá).
+
+    DOCUMENTO DE ORIGEM/DATA/NÚMERO/CFOP/TIPO seguem o PDF de referência
+    literalmente (não a redação mais solta da Solicitação Técnica):
+    "DECLARAÇÃO/LEVANTAMENTO DE <mês abrev.>/<ano>" (`_mes_ano_
+    abreviado()` sobre `dt_decl`), NÚMERO="NC", CFOP="NC", TIPO="D" — não
+    há chave de acesso/CFOP/modelo fiscal pra um item declarado (Bloco H
+    do SPED, sem XML). DC="D" sempre (Declaração do Contribuinte).
+
+    Devolve DataFrame vazio (colunas de `_COLUNAS_RELATORIO_ITENS_
+    CRUZADOS`) se o produto não tiver nenhum item de Estoque confirmado."""
+    colunas_vazias = _COLUNAS_RELATORIO_ITENS_CRUZADOS
+    detalhado, _ = consultar_cruzamento_confirmado_detalhado(
+        descr_alvo=escolhido["DESCR_ALVO"], origem="estoque", limite=None,
+    )
+    if detalhado.empty:
+        return pd.DataFrame(columns=colunas_vazias)
+    atributos = consultar_atributos_estoque_estoque_por_idunico(set(detalhado["idunico"]))
+    if atributos.empty:
+        return pd.DataFrame(columns=colunas_vazias)
+    detalhado = detalhado.merge(atributos, left_on="idunico", right_on="ID_UNICO", how="left")
+    detalhado, _, _ = aplicar_tratamento_fm_detalhado(detalhado, origem="estoque")
+
+    ano_ef_num = pd.to_numeric(detalhado["ano_ef"], errors="coerce")
+    data_declaracao = detalhado["dt_decl"].fillna("").apply(_mes_ano_abreviado)
+    base_comum = pd.DataFrame({
+        "_loc_sufixo": detalhado["idunico"].astype(str),
+        "DATA": data_declaracao,
+        "DC": "D",
+        "DOCUMENTO_ORIGEM": "DECLARAÇÃO/LEVANTAMENTO DE " + data_declaracao,
+        "NUMERO": "NC",
+        "CFOP": "NC",
+        "QTDE_ITENS": pd.to_numeric(detalhado["quant_utiliz"], errors="coerce").fillna(0.0),
+        "TIPO": "D",
+        "OBS": np.where(detalhado["TRATAMENTO"] == "T", "T", ""),
+    })
+
+    final = base_comum.copy()
+    final["CATEGORIA"] = _CATEGORIA_ESTOQUE_FINAL
+    final["ANO"] = ano_ef_num.astype("Int64").astype(str)
+    final["LOC"] = "4_" + final["_loc_sufixo"]
+
+    inicial = base_comum.copy()
+    inicial["CATEGORIA"] = _CATEGORIA_ESTOQUE_INICIAL
+    inicial["ANO"] = (ano_ef_num + 1).astype("Int64").astype(str)
+    inicial["LOC"] = "3_" + inicial["_loc_sufixo"]
+
+    return pd.concat([inicial, final], ignore_index=True).drop(columns=["_loc_sufixo"])[colunas_vazias]
+
+
+def gerar_dados_relatorio_itens_cruzados(escolhido: dict) -> pd.DataFrame:
+    """Estágio 12.2 — monta os dados do "RELATÓRIO ITENS CRUZADOS": a
+    memória de cálculo item a item (nota a nota/declaração a declaração)
+    por trás do Relatório Final (12.1), pro PRODUTO ESCOLHIDO (`escolhido`
+    — mesmo produto do Estágio 9/10/10.2, obtido via `consultar_produto_
+    cruzamento_escolhido()`; diferente do 12.1, que é consolidado geral de
+    TODOS os produtos). Junta as 4 categorias (`_montar_categoria_
+    documento_itens_cruzados()` pra Entradas/Saídas, `_montar_categorias_
+    estoque_itens_cruzados()` pra Estoque Inicial/Final) e aplica:
+
+    - Período de Auditoria (Estágio 1/EXTRAÇÃO, mesmo critério de
+      `gerar_cruzamento_final_produto()`/`gerar_dados_relatorio_final()`):
+      quando configurado, só mantém ANO dentro de [ano_inicial, ano_final].
+    - Ordenação: CATEGORIA (1-Entradas -> 4-Estoque Final), depois ANO,
+      depois DATA cronológica — mesma ordem do PDF de referência do
+      usuário. Linhas de Estoque (DATA em formato "mmm/aaaa", sem dia)
+      não têm ordenação cronológica exata dentro do mês — aceitável, já
+      que normalmente há só 1 item de Estoque por (produto, ano).
+    - LOC (2026-08-10, pedido do usuário: "crie localizador de mais fácil
+      leitura ... numeração começando do 1" — LOC deixou de ser
+      `idunico` cru, ilegível por ser hash MD5): recalculado por ÚLTIMO,
+      DEPOIS da ordenação acima, como `"<nº categoria>_<sequencial>"`
+      (ex.: "1_1", "1_2", ... "2_1", "2_2", ...) — sequencial 1-based,
+      reiniciado a cada categoria, na MESMA ordem em que a linha aparece
+      no relatório (tela/PDF). Os valores de LOC construídos em
+      `_montar_categoria_documento_itens_cruzados()`/`_montar_categorias_
+      estoque_itens_cruzados()` (baseados em `idunico`) são só
+      placeholders, sempre sobrescritos aqui.
+
+    Regra R07: CATEGORIA/ANO/DATA/DC/LOC/DOCUMENTO_ORIGEM/NUMERO/CFOP/
+    TIPO/OBS sempre string. Devolve DataFrame vazio (colunas de
+    `_COLUNAS_RELATORIO_ITENS_CRUZADOS`) se o produto não tiver nenhum
+    item confirmado em nenhuma origem, OU se o Período de Auditoria
+    filtrar todos os anos calculados."""
+    entradas = _montar_categoria_documento_itens_cruzados(escolhido, "entradas", _CATEGORIA_ENTRADAS, "1")
+    saidas = _montar_categoria_documento_itens_cruzados(escolhido, "saidas", _CATEGORIA_SAIDAS, "2")
+    estoque = _montar_categorias_estoque_itens_cruzados(escolhido)
+    resultado = pd.concat([entradas, saidas, estoque], ignore_index=True)
+    if resultado.empty:
+        return pd.DataFrame(columns=_COLUNAS_RELATORIO_ITENS_CRUZADOS)
+
+    resultado = _forcar_colunas_string(
+        resultado, ["CATEGORIA", "ANO", "DATA", "DC", "LOC", "DOCUMENTO_ORIGEM", "NUMERO", "CFOP", "TIPO", "OBS"],
+    )
+    resultado["QTDE_ITENS"] = pd.to_numeric(resultado["QTDE_ITENS"], errors="coerce").fillna(0.0)
+
+    periodo = obter_periodo_auditoria()
+    if periodo:
+        ano_ini_periodo, ano_fim_periodo = int(periodo["ano_inicial"]), int(periodo["ano_final"])
+        ano_num_filtro = pd.to_numeric(resultado["ANO"], errors="coerce")
+        resultado = resultado[ano_num_filtro.between(ano_ini_periodo, ano_fim_periodo)]
+        if resultado.empty:
+            return pd.DataFrame(columns=_COLUNAS_RELATORIO_ITENS_CRUZADOS)
+
+    cat_num = resultado["CATEGORIA"].map(_ORDEM_CATEGORIAS_ITENS_CRUZADOS)
+    ano_num = pd.to_numeric(resultado["ANO"], errors="coerce")
+    data_ordenavel = pd.to_datetime(resultado["DATA"], format="%d/%m/%Y", errors="coerce")
+    resultado = (
+        resultado.assign(_cat_num=cat_num, _ano_num=ano_num, _data_ord=data_ordenavel)
+        .sort_values(["_cat_num", "_ano_num", "_data_ord"])
+        .reset_index(drop=True)
+    )
+    sequencial_por_categoria = resultado.groupby("CATEGORIA").cumcount() + 1
+    resultado["LOC"] = resultado["_cat_num"].astype(int).astype(str) + "_" + sequencial_por_categoria.astype(str)
+    return resultado.drop(columns=["_cat_num", "_ano_num", "_data_ord"])[_COLUNAS_RELATORIO_ITENS_CRUZADOS]
+
+
+def exportar_relatorio_itens_cruzados_pdf(df: pd.DataFrame, escolhido: dict) -> bytes:
+    """Estágio 12.2 — gera o PDF do "RELATÓRIO ITENS CRUZADOS" replicando
+    o layout de referência do usuário (SEFAZ-PB — GRUPO2_RELATORIO_ITEM_
+    CRUZADO.pdf): cabeçalho institucional (mesmo bloco de `exportar_
+    relatorio_pdf()`), caixa "ITEM CRUZADO"/"UNIDADE DO PRODUTO" (`descricao_
+    efetiva_escolhido()`/`unidade_efetiva_escolhido()` de `escolhido`),
+    tabela única (ANO/DATA/DC/LOC/DOCUMENTO DE ORIGEM/NÚMERO/CFOP/QTDE DE
+    ITENS/TIPO/OBS) com linhas de item intercaladas com subtotais — "QTDE
+    DE PRODUTOS POR MÊS" a cada troca de mês dentro do mesmo (CATEGORIA,
+    ANO), "QTDE TOTAL DE PRODUTOS AGRUPADOS POR ANO" a cada troca de ANO,
+    "QTDE TOTAL DE PRODUTOS POR CATEGORIA" ao fechar cada categoria — e
+    nota final "DICIONÁRIO DE LEGENDAS", mesmo texto do 12.1.
+
+    `df` = saída de `gerar_dados_relatorio_itens_cruzados()` (já ordenada
+    por Categoria/Ano/Data) — usada como veio, sem reordenar. Import de
+    `reportlab` DENTRO da função, mesmo raciocínio de `exportar_relatorio_
+    pdf()`. Devolve os bytes do PDF (A4 retrato — tabela mais estreita que
+    o 12.1, cabe em retrato), prontos pra `st.download_button()`."""
+    import io
+
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    def _br(v) -> str:
+        return _formatar_numero_br(float(v)) if pd.notna(v) else "0,00"
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=10 * mm, bottomMargin=10 * mm,
+    )
+    estilos = getSampleStyleSheet()
+    estilo_titulo = ParagraphStyle("titulo_itens_cruzados", parent=estilos["Heading2"], alignment=TA_CENTER)
+    estilo_normal = ParagraphStyle("normal_itens_cruzados", parent=estilos["Normal"], fontSize=8, leading=10)
+    estilo_celula = ParagraphStyle("celula_itens_cruzados", parent=estilos["Normal"], fontSize=6.5, leading=8)
+    estilo_categoria = ParagraphStyle(
+        "categoria_itens_cruzados", parent=estilos["Normal"], fontSize=10, leading=13, textColor=colors.white,
+    )
+
+    elementos = []
+
+    cabecalho = Table(
+        [[
+            Paragraph(
+                "<b>GOVERNO DA PARAÍBA</b><br/><b>SECRETARIA DE ESTADO DA FAZENDA</b><br/>"
+                "<b>GERÊNCIA EXECUTIVA DE COMBATE À FRAUDE FISCAL</b>",
+                estilo_normal,
+            ),
+            Paragraph("<b>RELATÓRIO ITENS<br/>CRUZADOS</b>", estilo_titulo),
+            Paragraph(
+                f"<b>ITEM CRUZADO:</b> {descricao_efetiva_escolhido(escolhido)}<br/>"
+                f"<b>UNIDADE DO PRODUTO:</b> {unidade_efetiva_escolhido(escolhido)}",
+                estilo_normal,
+            ),
+        ]],
+        colWidths=[70 * mm, 45 * mm, 65 * mm],
+    )
+    cabecalho.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#D9E2F3")),
+    ]))
+    elementos.append(cabecalho)
+    elementos.append(Spacer(1, 4 * mm))
+
+    cabecalho_tabela = [
+        "ANO", "DATA", "DC", "LOC", "DOCUMENTO DE ORIGEM", "NÚMERO", "CFOP", "QTDE DE ITENS", "TIPO", "OBS",
+    ]
+    larguras_colunas = [12 * mm, 16 * mm, 8 * mm, 14 * mm, 61 * mm, 18 * mm, 12 * mm, 18 * mm, 13 * mm, 8 * mm]
+    linhas_tabela = [cabecalho_tabela]
+    estilos_linha = []
+
+    def _linha_destaque(texto_esquerda: str, texto_qtde: str, negrito: bool = True, fundo=colors.whitesmoke):
+        # SPAN só desenha o conteúdo da célula TOP-LEFT do intervalo mesclado
+        # (col 0) — as demais colunas do span são ignoradas pelo reportlab
+        # mesmo se tiverem conteúdo; por isso o texto do rótulo entra na
+        # posição 0, não numa coluna "central" do intervalo mesclado.
+        pos = len(linhas_tabela)
+        linhas_tabela.append([Paragraph(f"<b>{texto_esquerda}</b>", estilo_celula),
+                               "", "", "", "", "", "", texto_qtde, "", ""])
+        estilos_linha.append(("SPAN", (0, pos), (4, pos)))
+        estilos_linha.append(("BACKGROUND", (0, pos), (-1, pos), fundo))
+        if negrito:
+            estilos_linha.append(("FONTNAME", (0, pos), (-1, pos), "Helvetica-Bold"))
+
+    df_indexado = df.reset_index(drop=True)
+    for categoria in sorted(df_indexado["CATEGORIA"].unique(), key=lambda c: _ORDEM_CATEGORIAS_ITENS_CRUZADOS.get(c, 99)):
+        bloco_categoria = df_indexado[df_indexado["CATEGORIA"] == categoria]
+        pos_categoria = len(linhas_tabela)
+        linhas_tabela.append([Paragraph(f"<b>CATEGORIA {categoria}</b>", estilo_categoria),
+                               "", "", "", "", "", "", "", "", ""])
+        estilos_linha.append(("SPAN", (0, pos_categoria), (-1, pos_categoria)))
+        estilos_linha.append(("BACKGROUND", (0, pos_categoria), (-1, pos_categoria), colors.HexColor("#4472C4")))
+        estilos_linha.append(("TOPPADDING", (0, pos_categoria), (-1, pos_categoria), 4))
+        estilos_linha.append(("BOTTOMPADDING", (0, pos_categoria), (-1, pos_categoria), 4))
+
+        for ano in sorted(bloco_categoria["ANO"].unique(), key=lambda a: int(a) if str(a).isdigit() else 0):
+            bloco_ano = bloco_categoria[bloco_categoria["ANO"] == ano]
+            mes_atual = None
+            qtde_mes = 0.0
+            for _, linha in bloco_ano.iterrows():
+                mes_linha = linha["DATA"][3:] if len(linha["DATA"]) == 10 else linha["DATA"]
+                if mes_atual is not None and mes_linha != mes_atual:
+                    _linha_destaque("QTDE DE PRODUTOS POR MÊS", _br(qtde_mes))
+                    qtde_mes = 0.0
+                mes_atual = mes_linha
+                qtde_mes += float(linha["QTDE_ITENS"])
+                linhas_tabela.append([
+                    linha["ANO"], linha["DATA"], linha["DC"], Paragraph(linha["LOC"], estilo_celula),
+                    Paragraph(linha["DOCUMENTO_ORIGEM"], estilo_celula), linha["NUMERO"], linha["CFOP"],
+                    _br(linha["QTDE_ITENS"]), linha["TIPO"], linha["OBS"],
+                ])
+            _linha_destaque("QTDE DE PRODUTOS POR MÊS", _br(qtde_mes))
+            _linha_destaque("QTDE TOTAL DE PRODUTOS AGRUPADOS POR ANO", _br(bloco_ano["QTDE_ITENS"].sum()), fundo=colors.lightgrey)
+
+        _linha_destaque(
+            "QTDE TOTAL DE PRODUTOS POR CATEGORIA", _br(bloco_categoria["QTDE_ITENS"].sum()), fundo=colors.HexColor("#BFBFBF"),
+        )
+
+    tabela_principal = Table(linhas_tabela, colWidths=larguras_colunas, repeatRows=1)
+    tabela_principal.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D9E2F3")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+        *estilos_linha,
+    ]))
+    elementos.append(tabela_principal)
+    elementos.append(Spacer(1, 6 * mm))
+    elementos.append(Paragraph(
+        "<b>NOTA AO CONTRIBUINTE:</b> DICIONÁRIO DE LEGENDAS ENCONTRA-SE NO PDF 'GUIA RELATÓRIOS'",
+        estilo_normal,
+    ))
+
+    doc.build(elementos)
+    return buffer.getvalue()
+
+
 # ── Auditoria — Divergência de Entradas (Hunter × Excel de referência) ─────
 # Estudo pontual (2026-07-13), SEM cruzar código de item: compara um Excel
 # de referência de outra aplicação do usuário com estoque_entradas (Estágio

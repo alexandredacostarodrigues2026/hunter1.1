@@ -5642,19 +5642,105 @@ def _render_relatorio_final() -> None:
     )
 
 
+_COLUNAS_EXIBICAO_RELATORIO_ITENS_CRUZADOS = [
+    "ANO", "DATA", "DC", "LOC", "DOCUMENTO_ORIGEM", "NUMERO", "CFOP", "QTDE_ITENS", "TIPO", "OBS",
+]
+_ROTULOS_COLUNAS_RELATORIO_ITENS_CRUZADOS = {
+    "ANO": "Ano", "DATA": "Data", "DC": "DC", "LOC": "LOC",
+    "DOCUMENTO_ORIGEM": "Documento de Origem", "NUMERO": "Número", "CFOP": "CFOP",
+    "QTDE_ITENS": "Qtde de Itens", "TIPO": "Tipo", "OBS": "Obs",
+}
+
+
+def _render_relatorio_itens_cruzados() -> None:
+    """"RELATÓRIO ITENS CRUZADOS" (Estágio 12.2, Solicitação Técnica
+    2026-08-10) — "memória de cálculo" analítica por trás do Relatório
+    Final (12.1): 1 linha por item físico (nota a nota/declaração a
+    declaração) do PRODUTO ATUALMENTE ESCOLHIDO pra cruzamento (Estágio
+    9/10/10.2, `loader.consultar_produto_cruzamento_escolhido()`) —
+    diferente do 12.1, que é consolidado geral de todos os produtos.
+    Mesmo padrão de `_render_relatorio_final()`: tabela em tela (10px,
+    somente leitura) + PDF gerado automaticamente e embutido via
+    `<iframe>` base64, com botão de download logo abaixo."""
+    escolhido = loader.consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        st.info(
+            'Nenhum produto escolhido pra cruzamento ainda — em "📋 10: PRODUTOS ALVOS SALVOS", '
+            'marque "Escolher p/ Cruzamento" pra um produto e confirme.'
+        )
+        return
+    st.markdown(
+        f"**Item Cruzado:** {loader.descricao_efetiva_escolhido(escolhido)} — "
+        f"**Unidade do Produto:** {loader.unidade_efetiva_escolhido(escolhido)}"
+    )
+
+    dados = loader.gerar_dados_relatorio_itens_cruzados(escolhido)
+    if dados.empty:
+        st.info(
+            "Nenhum item confirmado na Rubrica pra este produto ainda (Entradas/Saídas/Estoque) — "
+            'confirme itens em "⚖️ 10: PRODUTOS ALVOS SALVOS" primeiro, ou os anos confirmados '
+            "estão fora do Período de Auditoria configurado."
+        )
+        return
+
+    st.markdown(f"**{len(dados):,} item(ns)**.".replace(",", "."))
+
+    exibicao = dados[_COLUNAS_EXIBICAO_RELATORIO_ITENS_CRUZADOS].rename(
+        columns=_ROTULOS_COLUNAS_RELATORIO_ITENS_CRUZADOS,
+    )
+    exibicao[_ROTULOS_COLUNAS_RELATORIO_ITENS_CRUZADOS["QTDE_ITENS"]] = exibicao[
+        _ROTULOS_COLUNAS_RELATORIO_ITENS_CRUZADOS["QTDE_ITENS"]
+    ].apply(_formatar_moeda_br)
+    with st.container(key="relatorio_itens_cruzados_tabela"):
+        st.markdown(
+            "<style>.st-key-relatorio_itens_cruzados_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 10px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(exibicao, use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.markdown("### 👁️ Visualização do Relatório")
+    try:
+        pdf_bytes = loader.exportar_relatorio_itens_cruzados_pdf(dados, escolhido)
+    except Exception as exc:
+        st.error(f"Erro ao gerar PDF: {exc}")
+        return
+
+    pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+    st.markdown(
+        f'<iframe src="data:application/pdf;base64,{pdf_base64}" '
+        'width="100%" height="900" style="border: 1px solid #ccc;"></iframe>',
+        unsafe_allow_html=True,
+    )
+
+    st.download_button(
+        "📥 Baixar Relatório Itens Cruzados (PDF)",
+        data=pdf_bytes,
+        file_name="relatorio_itens_cruzados.pdf",
+        mime="application/pdf",
+        key="btn_download_relatorio_itens_cruzados_pdf",
+    )
+
+
 def render_pagina_relatorios() -> None:
     """Painel 'ESTÁGIO 12 - RELATÓRIOS' (Solicitação Técnica 2026-08-07:
     "MÓDULO DE RELATÓRIOS FINAIS"), botão da 2ª linha do Menu Principal.
-    `st.selectbox` pra escolher qual relatório ver — só "RELATÓRIO
-    FINAL" implementado por enquanto, mas a tela já nasce pronta pra
-    crescer (outros relatórios futuros entram como opção nova no
-    mesmo selectbox, sem precisar de botão de menu extra). Exige
-    dados_carregados (mesmo padrão das outras páginas)."""
+    `st.selectbox` pra escolher qual relatório ver — "RELATÓRIO FINAL"
+    (12.1, consolidado geral) e "RELATÓRIO ITENS CRUZADOS" (12.2,
+    memória de cálculo analítica do produto escolhido, 2026-08-10) — a
+    tela já nasce pronta pra crescer (outros relatórios futuros entram
+    como opção nova no mesmo selectbox, sem precisar de botão de menu
+    extra). Exige dados_carregados (mesmo padrão das outras páginas)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     st.subheader("Estágio 12 - Relatórios")
-    relatorio = st.selectbox("Relatório", ["RELATÓRIO FINAL"], key="relatorios_selectbox")
+    relatorio = st.selectbox(
+        "Relatório", ["RELATÓRIO FINAL", "RELATÓRIO ITENS CRUZADOS"], key="relatorios_selectbox",
+    )
     if relatorio == "RELATÓRIO FINAL":
         _render_relatorio_final()
+    elif relatorio == "RELATÓRIO ITENS CRUZADOS":
+        _render_relatorio_itens_cruzados()
