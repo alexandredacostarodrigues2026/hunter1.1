@@ -5821,16 +5821,109 @@ def _render_relatorio_mc_quantidades() -> None:
     )
 
 
+_COLUNAS_EXIBICAO_RELATORIO_MC_PU = [
+    "CATEGORIA", "ANO", "DOCUMENTO_ORIGEM", "TIPO", "DESCR_ORIGINAL", "UP_ORIGINAL",
+    "QTDE_ORIGINAL", "VU_ORIGINAL", "OBS", "FATOR", "QTDE_UTILIZ", "VU_UTILIZADO",
+]
+_ROTULOS_COLUNAS_RELATORIO_MC_PU = {
+    "CATEGORIA": "Categoria", "ANO": "Ano", "DOCUMENTO_ORIGEM": "Documento de Origem", "TIPO": "Tipo",
+    "DESCR_ORIGINAL": "Descrição Original", "UP_ORIGINAL": "Unidade Original",
+    "QTDE_ORIGINAL": "Qtde Original", "VU_ORIGINAL": "VU Original", "OBS": "Obs", "FATOR": "Fator",
+    "QTDE_UTILIZ": "Qtde Utilizada", "VU_UTILIZADO": "VU Utilizado",
+}
+_COLUNAS_NUMERICAS_RELATORIO_MC_PU = ("QTDE_ORIGINAL", "VU_ORIGINAL", "FATOR", "QTDE_UTILIZ", "VU_UTILIZADO")
+
+
+def _render_relatorio_mc_pu() -> None:
+    """"RELATÓRIO MC PREÇOS UNITÁRIOS" (Estágio 12.4, Solicitação
+    Técnica 2026-08-10: "MEMÓRIA DE CÁLCULO DE PREÇOS UNITÁRIOS") —
+    prova aritmética, item a item, do preço unitário usado na valoração
+    da infração (`VU ORIGINAL ÷ FATOR = VU UTILIZADO`). DIFERENTE do
+    12.2/12.3 — só mostra os itens do ANO×CATEGORIA que efetivamente
+    alimentou o `PU_SUGERIDO` daquele ano no Estágio 10.2/RN1 (ver
+    docstring de `loader.gerar_dados_relatorio_mc_pu()`); nunca mostra
+    Estoque, e cada ano só tem 1 categoria. Mesmo produto atualmente
+    escolhido pra cruzamento do 12.2/12.3.
+
+    Grade em `st.data_editor` (pedido explícito da Solicitação Técnica),
+    todas as colunas desabilitadas (`disabled=True`) — prova de cálculo,
+    não tela de edição. PDF gerado automaticamente e embutido via
+    `<iframe>` base64, mesmo padrão do 12.1/12.2/12.3 — no PDF (não na
+    grade em tela) aparecem também as caixas "PU MÉDIO"/"MEMÓRIA DE
+    CÁLCULO"/"PU MÉDIO + AGREGAÇÃO" por (ANO, CATEGORIA), ver `loader.
+    exportar_relatorio_mc_pu_pdf()`."""
+    escolhido = loader.consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        st.info(
+            'Nenhum produto escolhido pra cruzamento ainda — em "📋 10: PRODUTOS ALVOS SALVOS", '
+            'marque "Escolher p/ Cruzamento" pra um produto e confirme.'
+        )
+        return
+    st.markdown(
+        f"**Item Cruzado:** {loader.descricao_efetiva_escolhido(escolhido)} — "
+        f"**Unidade do Produto:** {loader.unidade_efetiva_escolhido(escolhido)}"
+    )
+
+    dados = loader.gerar_dados_relatorio_mc_pu(escolhido)
+    if dados.empty:
+        st.info(
+            "Nenhum ano com repercussão tributária (TD ≠ TC) encontrado pra este produto — use "
+            '"⚖️ 10.2 Cruzamento Final do Produto" primeiro, ou os anos com infração estão fora '
+            "do Período de Auditoria configurado."
+        )
+        return
+
+    st.markdown(f"**{len(dados):,} item(ns)**.".replace(",", "."))
+
+    exibicao = dados[_COLUNAS_EXIBICAO_RELATORIO_MC_PU].rename(columns=_ROTULOS_COLUNAS_RELATORIO_MC_PU)
+    for col in _COLUNAS_NUMERICAS_RELATORIO_MC_PU:
+        rotulo = _ROTULOS_COLUNAS_RELATORIO_MC_PU[col]
+        exibicao[rotulo] = exibicao[rotulo].apply(_formatar_moeda_br)
+    with st.container(key="relatorio_mc_pu_tabela"):
+        st.markdown(
+            "<style>.st-key-relatorio_mc_pu_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 10px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.data_editor(exibicao, use_container_width=True, hide_index=True, disabled=True)
+
+    st.divider()
+    st.markdown("### 👁️ Visualização do Relatório")
+    try:
+        pdf_bytes = loader.exportar_relatorio_mc_pu_pdf(dados, escolhido)
+    except Exception as exc:
+        st.error(f"Erro ao gerar PDF: {exc}")
+        return
+
+    pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+    st.markdown(
+        f'<iframe src="data:application/pdf;base64,{pdf_base64}" '
+        'width="100%" height="900" style="border: 1px solid #ccc;"></iframe>',
+        unsafe_allow_html=True,
+    )
+
+    st.download_button(
+        "📥 Baixar Relatório MC Preços Unitários (PDF)",
+        data=pdf_bytes,
+        file_name="relatorio_mc_precos_unitarios.pdf",
+        mime="application/pdf",
+        key="btn_download_relatorio_mc_pu_pdf",
+    )
+
+
 def render_pagina_relatorios() -> None:
     """Painel 'ESTÁGIO 12 - RELATÓRIOS' (Solicitação Técnica 2026-08-07:
     "MÓDULO DE RELATÓRIOS FINAIS"), botão da 2ª linha do Menu Principal.
     `st.selectbox` pra escolher qual relatório ver — "RELATÓRIO FINAL"
     (12.1, consolidado geral), "RELATÓRIO ITENS CRUZADOS" (12.2, memória
-    de cálculo analítica do produto escolhido) e "RELATÓRIO MC
+    de cálculo analítica do produto escolhido), "RELATÓRIO MC
     QUANTIDADES" (12.3, prova do cálculo Qtde Original × Fator = Qtde
-    Utilizada, vinculado ao 12.2 via LOC, 2026-08-10) — a tela já nasce
-    pronta pra crescer (outros relatórios futuros entram como opção nova
-    no mesmo selectbox, sem precisar de botão de menu extra). Exige
+    Utilizada, vinculado ao 12.2 via LOC) e "RELATÓRIO MC PREÇOS
+    UNITÁRIOS" (12.4, prova do cálculo VU Original ÷ Fator = VU
+    Utilizado, agrupado por ANO/CATEGORIA conforme a origem do PU_
+    SUGERIDO no RN1, 2026-08-10) — a tela já nasce pronta pra crescer
+    (outros relatórios futuros entram como opção nova no mesmo
+    selectbox, sem precisar de botão de menu extra). Exige
     dados_carregados (mesmo padrão das outras páginas)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
@@ -5839,7 +5932,10 @@ def render_pagina_relatorios() -> None:
     st.subheader("Estágio 12 - Relatórios")
     relatorio = st.selectbox(
         "Relatório",
-        ["RELATÓRIO FINAL", "RELATÓRIO ITENS CRUZADOS", "RELATÓRIO MC QUANTIDADES"],
+        [
+            "RELATÓRIO FINAL", "RELATÓRIO ITENS CRUZADOS",
+            "RELATÓRIO MC QUANTIDADES", "RELATÓRIO MC PREÇOS UNITÁRIOS",
+        ],
         key="relatorios_selectbox",
     )
     if relatorio == "RELATÓRIO FINAL":
@@ -5848,3 +5944,5 @@ def render_pagina_relatorios() -> None:
         _render_relatorio_itens_cruzados()
     elif relatorio == "RELATÓRIO MC QUANTIDADES":
         _render_relatorio_mc_quantidades()
+    elif relatorio == "RELATÓRIO MC PREÇOS UNITÁRIOS":
+        _render_relatorio_mc_pu()

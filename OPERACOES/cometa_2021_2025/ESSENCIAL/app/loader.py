@@ -9188,7 +9188,13 @@ def _detalhar_documento_fiscal_por_idunico(idunicos: "set | list", origem: str) 
 _COLUNAS_BASE_RELATORIOS_PRODUTO_12 = [
     "CATEGORIA", "ANO", "DATA", "DC", "LOC", "DOCUMENTO_ORIGEM", "NUMERO", "CFOP", "TIPO", "OBS",
     "DESCR_ORIGINAL", "UP_ORIGINAL", "QTDE_ORIGINAL", "FATOR", "UP_UTILIZ", "QTDE_UTILIZ",
+    "VU_ORIGINAL", "VU_UTILIZADO",
 ]
+# VU_ORIGINAL/VU_UTILIZADO (2026-08-10, Estágio 12.4 — RELATÓRIO MC PREÇOS
+# UNITÁRIOS) acrescentados aqui pelo mesmo motivo de DESCR_ORIGINAL/UP_
+# ORIGINAL/etc. no 12.3 — nascem no mesmo pipeline (consultar_atributos_
+# estoque_por_idunico()/aplicar_tratamento_fm_detalhado()), só não eram
+# expostos ainda.
 # Schema COMUM aos Estágios 12.2 (Itens Cruzados) e 12.3 (Memória de Cálculo
 # das Quantidades, 2026-08-10) — os dois relatórios compartilham a MESMA base
 # item a item (mesmas 4 categorias, mesmo LOC), só exibindo subconjuntos/
@@ -9259,6 +9265,8 @@ def _montar_categoria_documento_relatorios_12(
         "FATOR": pd.to_numeric(detalhado["fm_utilizado"], errors="coerce").fillna(1.0),
         "UP_UTILIZ": detalhado["unid_prod_utiliz"].fillna(""),
         "QTDE_UTILIZ": pd.to_numeric(detalhado["quant_utiliz"], errors="coerce").fillna(0.0),
+        "VU_ORIGINAL": pd.to_numeric(detalhado["vl_unit_prod"], errors="coerce").fillna(0.0),
+        "VU_UTILIZADO": pd.to_numeric(detalhado["vu_utilizado"], errors="coerce").fillna(0.0),
     })[colunas_vazias]
 
 
@@ -9323,6 +9331,8 @@ def _montar_categorias_estoque_relatorios_12(escolhido: dict) -> pd.DataFrame:
         "FATOR": pd.to_numeric(detalhado["fm_utilizado"], errors="coerce").fillna(1.0),
         "UP_UTILIZ": detalhado["unid_prod_utiliz"].fillna(""),
         "QTDE_UTILIZ": pd.to_numeric(detalhado["quant_utiliz"], errors="coerce").fillna(0.0),
+        "VU_ORIGINAL": pd.to_numeric(detalhado["vl_unit_prod"], errors="coerce").fillna(0.0),
+        "VU_UTILIZADO": pd.to_numeric(detalhado["vu_utilizado"], errors="coerce").fillna(0.0),
     })
 
     final = base_comum.copy()
@@ -9388,6 +9398,8 @@ def _montar_base_relatorios_produto_12(escolhido: dict) -> pd.DataFrame:
     resultado["QTDE_ORIGINAL"] = pd.to_numeric(resultado["QTDE_ORIGINAL"], errors="coerce").fillna(0.0)
     resultado["FATOR"] = pd.to_numeric(resultado["FATOR"], errors="coerce").fillna(1.0)
     resultado["QTDE_UTILIZ"] = pd.to_numeric(resultado["QTDE_UTILIZ"], errors="coerce").fillna(0.0)
+    resultado["VU_ORIGINAL"] = pd.to_numeric(resultado["VU_ORIGINAL"], errors="coerce").fillna(0.0)
+    resultado["VU_UTILIZADO"] = pd.to_numeric(resultado["VU_UTILIZADO"], errors="coerce").fillna(0.0)
 
     periodo = obter_periodo_auditoria()
     if periodo:
@@ -9483,6 +9495,124 @@ def gerar_dados_relatorio_mc_quantidades(escolhido: dict) -> pd.DataFrame:
     if base.empty:
         return pd.DataFrame(columns=_COLUNAS_RELATORIO_MC_QUANTIDADES)
     return base[_COLUNAS_RELATORIO_MC_QUANTIDADES]
+
+
+_COLUNAS_RELATORIO_MC_PU = [
+    "CATEGORIA", "ANO", "DOCUMENTO_ORIGEM", "TIPO", "DESCR_ORIGINAL", "UP_ORIGINAL",
+    "QTDE_ORIGINAL", "VU_ORIGINAL", "OBS", "FATOR", "QTDE_UTILIZ", "VU_UTILIZADO",
+]
+# Rótulo de "MEMÓRIA DE CÁLCULO" do 12.4 usa "ENTRADAS"/"SAÍDAS" (igual às
+# categorias do 12.2/12.3), NÃO "COMPRAS"/"VENDAS" como o CONDICAO_PU cru
+# de gerar_cruzamento_final_produto() — achado ao ler o PDF de referência
+# do usuário (GRUPO2_MC_PU.pdf): "PU MÉDIO ENTRADAS SEM AGREGAÇÃO"/"PU
+# MÉDIO SAÍDAS SEM AGREGAÇÃO", não "...COMPRAS.../...VENDAS...". Os 2
+# cenários com desconto/agregação de 30% não aparecem no PDF de
+# referência (nenhum ano do produto de teste caiu nesses 2 casos) — rótulo
+# extrapolado pelo MESMO padrão de troca de palavra (COMPRAS->ENTRADAS,
+# VENDAS->SAÍDAS), consistente com os 2 casos que o PDF de fato mostra.
+_ROTULO_MEMORIA_CALCULO_PU = {
+    "PU MÉDIO COMPRAS SEM AGREGAÇÃO": "PU MÉDIO ENTRADAS SEM AGREGAÇÃO",
+    "PU MÉDIO VENDAS COM DESCONTO DE 30%": "PU MÉDIO SAÍDAS COM DESCONTO DE 30%",
+    "PU MÉDIO VENDAS SEM AGREGAÇÃO": "PU MÉDIO SAÍDAS SEM AGREGAÇÃO",
+    "PU MÉDIO COMPRAS + AGREGAÇÃO DE 30%": "PU MÉDIO ENTRADAS + AGREGAÇÃO DE 30%",
+}
+
+
+def _resumo_pu_por_ano(escolhido: dict) -> pd.DataFrame:
+    """Estágio 12.4 — resumo ANO a ANO da origem do PU_SUGERIDO (Estágio
+    10.2/RN1, `gerar_cruzamento_final_produto()`), reaproveitado (não
+    recalculado) pra garantir que o "PU MÉDIO + AGREGAÇÃO" do Relatório
+    MC Preços Unitários seja EXATAMENTE o mesmo valor usado no Relatório
+    Final (12.1) — mesma fonte única de verdade, ver docstring de
+    `gerar_dados_relatorio_mc_pu()`.
+
+    Filtra a ANOS com `INFRACAO_FINAL != ""` — mesmo filtro de
+    `gerar_dados_relatorio_final()` ("quando td=tc, não há repercussão
+    tributária" — sem infração não há preço a valorar). PU_SUGERIDO
+    NUNCA vem de Estoque (só de `MEDIA_PU_C`/`MEDIA_PU_V` — ver os 4
+    cenários documentados em `_calcular_campos_derivados_cruzamento_
+    final()`), então CATEGORIA aqui é sempre "1-ENTRADAS" ou
+    "2-SAÍDAS" — nunca Estoque Inicial/Final (validado contra o PDF de
+    referência do usuário, que também nunca mostra essas 2 categorias).
+
+    Devolve DataFrame com ANO/CATEGORIA/PU_MEDIO (`MEDIA_PU_C` ou
+    `MEDIA_PU_V`, conforme a origem vencedora — o preço médio BRUTO,
+    antes do desconto/agregação de 30%)/PU_MEDIO_AGREGACAO
+    (`PU_SUGERIDO` — valor final, já com o ajuste quando aplicável)/
+    MEMORIA_CALCULO (rótulo textual, ver `_ROTULO_MEMORIA_CALCULO_PU`).
+    Vazio se o produto não tiver nenhum ano com repercussão tributária."""
+    colunas = ["ANO", "CATEGORIA", "PU_MEDIO", "PU_MEDIO_AGREGACAO", "MEMORIA_CALCULO"]
+    cruzamento_final = gerar_cruzamento_final_produto(escolhido)
+    if cruzamento_final.empty:
+        return pd.DataFrame(columns=colunas)
+    cruzamento_final = cruzamento_final[cruzamento_final["INFRACAO_FINAL"] != ""]
+    if cruzamento_final.empty:
+        return pd.DataFrame(columns=colunas)
+
+    linhas = []
+    for _, linha in cruzamento_final.iterrows():
+        condicao = linha["CONDICAO_PU"]
+        if condicao.startswith("PU MÉDIO COMPRAS"):
+            categoria, pu_medio = _CATEGORIA_ENTRADAS, linha["MEDIA_PU_C"]
+        elif condicao.startswith("PU MÉDIO VENDAS"):
+            categoria, pu_medio = _CATEGORIA_SAIDAS, linha["MEDIA_PU_V"]
+        else:
+            continue
+        linhas.append({
+            "ANO": str(linha["ANO"]), "CATEGORIA": categoria,
+            "PU_MEDIO": float(pu_medio) if pd.notna(pu_medio) else 0.0,
+            "PU_MEDIO_AGREGACAO": float(linha["PU_SUGERIDO"]) if pd.notna(linha["PU_SUGERIDO"]) else 0.0,
+            "MEMORIA_CALCULO": _ROTULO_MEMORIA_CALCULO_PU.get(condicao, condicao),
+        })
+    return pd.DataFrame(linhas, columns=colunas)
+
+
+def gerar_dados_relatorio_mc_pu(escolhido: dict) -> pd.DataFrame:
+    """Estágio 12.4 — monta os dados do "RELATÓRIO MC PREÇOS UNITÁRIOS"
+    (Solicitação Técnica 2026-08-10: "MEMÓRIA DE CÁLCULO DE PREÇOS
+    UNITÁRIOS") — prova aritmética, item a item, do preço unitário usado
+    na valoração da infração: `VU_ORIGINAL ÷ FATOR = VU_UTILIZADO` (ou
+    `OVERRIDE ÷ FATOR`, quando o auditor "cravou" um preço-base no
+    Sumário de Unidades — já embutido em `vu_utilizado`, ver `aplicar_
+    tratamento_fm_detalhado()`).
+
+    DIFERENTE do 12.2/12.3 (que mostram TODOS os itens confirmados nas 4
+    categorias): aqui só entram os itens do ANO×CATEGORIA que efetivamente
+    ALIMENTOU o `PU_SUGERIDO` daquele ano no Estágio 10.2/RN1 — ex.: se
+    2021 tem `CONDICAO_PU="PU MÉDIO VENDAS SEM AGREGAÇÃO"`, só os itens de
+    SAÍDAS de 2021 aparecem (Entradas/Estoque daquele ano ficam de fora,
+    mesmo que existam) — validado contra o PDF de referência do usuário
+    (GRUPO2_MC_PU.pdf): nenhum ano mostra mais de 1 categoria, e Estoque
+    nunca aparece (PU_SUGERIDO nunca deriva de estoque). Por isso NÃO
+    reaproveita a saída de `_montar_base_relatorios_produto_12()`
+    diretamente (que traria as 4 categorias inteiras) — filtra pelo
+    ANO×CATEGORIA vencedor de cada ano, usando `_resumo_pu_por_ano()`
+    (que só encapsula leitura de `gerar_cruzamento_final_produto()`, sem
+    recalcular PU_SUGERIDO).
+
+    LOC (2026-08-10, decisão do usuário): este relatório NÃO tem coluna
+    LOC — segue o PDF de referência, que identifica a linha pela própria
+    Chave de Acesso (`DOCUMENTO_ORIGEM`). Regra R07: CATEGORIA/ANO/
+    DOCUMENTO_ORIGEM/TIPO/DESCR_ORIGINAL/UP_ORIGINAL/OBS sempre string.
+    Devolve DataFrame vazio (colunas de `_COLUNAS_RELATORIO_MC_PU`) se o
+    produto não tiver nenhum ano com repercussão tributária (mesmo
+    critério de `gerar_dados_relatorio_final()`)."""
+    resumo = _resumo_pu_por_ano(escolhido)
+    if resumo.empty:
+        return pd.DataFrame(columns=_COLUNAS_RELATORIO_MC_PU)
+    base = _montar_base_relatorios_produto_12(escolhido)
+    if base.empty:
+        return pd.DataFrame(columns=_COLUNAS_RELATORIO_MC_PU)
+
+    blocos = []
+    for _, linha_resumo in resumo.iterrows():
+        bloco = base[(base["CATEGORIA"] == linha_resumo["CATEGORIA"]) & (base["ANO"] == linha_resumo["ANO"])]
+        if not bloco.empty:
+            blocos.append(bloco)
+    if not blocos:
+        return pd.DataFrame(columns=_COLUNAS_RELATORIO_MC_PU)
+    resultado = pd.concat(blocos, ignore_index=True)
+    return resultado[_COLUNAS_RELATORIO_MC_PU]
 
 
 def exportar_relatorio_itens_cruzados_pdf(df: pd.DataFrame, escolhido: dict) -> bytes:
@@ -9761,6 +9891,190 @@ def exportar_relatorio_mc_quantidades_pdf(df: pd.DataFrame, escolhido: dict) -> 
     elementos.append(Spacer(1, 6 * mm))
     elementos.append(Paragraph(
         "<b>NOTA AO CONTRIBUINTE:</b> DICIONÁRIO DE LEGENDAS ENCONTRA-SE NO PDF 'GUIA RELATÓRIOS'",
+        estilo_normal,
+    ))
+
+    doc.build(elementos)
+    return buffer.getvalue()
+
+
+def exportar_relatorio_mc_pu_pdf(df: pd.DataFrame, escolhido: dict) -> bytes:
+    """Estágio 12.4 — gera o PDF do "RELATÓRIO MC PREÇOS UNITÁRIOS"
+    ("MEMÓRIA DE CÁLCULO PREÇO UNITÁRIO") replicando o layout de
+    referência do usuário (SEFAZ-PB — GRUPO2_MC_PU.pdf): mesmo cabeçalho
+    institucional e caixa "ITEM CRUZADO"/"UNIDADE DO PRODUTO" dos demais
+    relatórios do Estágio 12.
+
+    Estrutura ANINHADA ANO > CATEGORIA (diferente do banner único
+    CATEGORIA do 12.2/12.3) — pra cada linha de `_resumo_pu_por_ano()`
+    (na ordem em que vem, já ascendente por ANO):
+    - Legenda "ANO <ano>" / "CATEGORIA <categoria>" (texto, não linha de
+      tabela — o PDF de referência mostra isso como rótulo acima da
+      tabela, não como banner colorido full-width).
+    - Tabela dos itens daquele (ANO, CATEGORIA) — `df` já filtrado por
+      `gerar_dados_relatorio_mc_pu()` pra conter só os itens da
+      categoria que alimentou o PU_SUGERIDO daquele ano.
+    - Caixa "PU MÉDIO" / "MEMÓRIA DE CÁLCULO: <rótulo>" / "PU MÉDIO +
+      AGREGAÇÃO" — os 2 valores vêm de `_resumo_pu_por_ano()`
+      (MEDIA_PU_C/MEDIA_PU_V e PU_SUGERIDO de `gerar_cruzamento_final_
+      produto()`, Estágio 10.2/RN1 — MESMA fonte do Relatório Final,
+      nunca recalculado aqui).
+
+    Colunas da tabela de itens (mesma ordem do PDF de referência):
+    Chave de Acesso (`DOCUMENTO_ORIGEM` — sem coluna LOC, decisão do
+    usuário), Tipo, Descrição Original, UP Original, Qtde Original, VU
+    Original, OBS, FM, Qtde de Itens, VU Produto — prova o cálculo VU
+    ORIGINAL ÷ FM = VU PRODUTO linha a linha. FM em branco quando o item
+    não foi tratado, mesmo padrão do 12.2/12.3. Valores monetários
+    sempre formatados em padrão BR (`_formatar_numero_br()`), sem
+    prefixo "R$" — mesmo formato do PDF de referência.
+
+    `df`/`escolhido` = saída de `gerar_dados_relatorio_mc_pu()` +
+    produto escolhido. Import de `reportlab` DENTRO da função, mesmo
+    raciocínio de `exportar_relatorio_pdf()`. Devolve os bytes do PDF
+    (A4 retrato), prontos pra `st.download_button()`."""
+    import io
+
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    def _br(v) -> str:
+        return _formatar_numero_br(float(v)) if pd.notna(v) else "0,00"
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=10 * mm, bottomMargin=10 * mm,
+    )
+    estilos = getSampleStyleSheet()
+    estilo_titulo = ParagraphStyle("titulo_mc_pu", parent=estilos["Heading2"], alignment=TA_CENTER)
+    estilo_normal = ParagraphStyle("normal_mc_pu", parent=estilos["Normal"], fontSize=8, leading=10)
+    estilo_celula = ParagraphStyle("celula_mc_pu", parent=estilos["Normal"], fontSize=6.5, leading=8)
+    estilo_cabecalho_tabela = ParagraphStyle(
+        "cabecalho_tabela_mc_pu", parent=estilos["Normal"], fontSize=6.5, leading=8,
+        fontName="Helvetica-Bold", alignment=TA_CENTER,
+    )
+    estilo_rotulo_grupo = ParagraphStyle(
+        "rotulo_grupo_mc_pu", parent=estilos["Normal"], fontSize=9, leading=12,
+    )
+    estilo_resumo_rotulo = ParagraphStyle(
+        "resumo_rotulo_mc_pu", parent=estilos["Normal"], fontSize=8, leading=10,
+        fontName="Helvetica-Bold", alignment=TA_RIGHT,
+    )
+    estilo_resumo_texto = ParagraphStyle(
+        "resumo_texto_mc_pu", parent=estilos["Normal"], fontSize=8, leading=10,
+    )
+    estilo_resumo_valor = ParagraphStyle(
+        "resumo_valor_mc_pu", parent=estilos["Normal"], fontSize=9, leading=11,
+        fontName="Helvetica-Bold", alignment=TA_CENTER,
+    )
+
+    elementos = []
+
+    cabecalho = Table(
+        [[
+            Paragraph(
+                "<b>GOVERNO DA PARAÍBA</b><br/><b>SECRETARIA DE ESTADO DA FAZENDA</b><br/>"
+                "<b>GERÊNCIA EXECUTIVA DE COMBATE À FRAUDE FISCAL</b>",
+                estilo_normal,
+            ),
+            Paragraph("<b>MEMÓRIA DE CÁLCULO<br/>PREÇO UNITÁRIO</b>", estilo_titulo),
+            Paragraph(
+                f"<b>ITEM CRUZADO:</b> {descricao_efetiva_escolhido(escolhido)}<br/>"
+                f"<b>UNIDADE DO PRODUTO:</b> {unidade_efetiva_escolhido(escolhido)}",
+                estilo_normal,
+            ),
+        ]],
+        colWidths=[70 * mm, 45 * mm, 65 * mm],
+    )
+    cabecalho.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#D9E2F3")),
+    ]))
+    elementos.append(cabecalho)
+    elementos.append(Spacer(1, 4 * mm))
+
+    cabecalho_tabela = [
+        Paragraph(t, estilo_cabecalho_tabela) for t in (
+            "Chave de Acesso", "Tipo", "DESCRIÇÃO<br/>ORIGINAL", "UP<br/>ORIGINAL",
+            "QTDE<br/>ORIGINAL", "VU<br/>ORIGINAL", "OBS", "FM", "QTDE DE<br/>ITENS", "VU<br/>PRODUTO",
+        )
+    ]
+    larguras_colunas = [52 * mm, 10 * mm, 34 * mm, 12 * mm, 14 * mm, 14 * mm, 8 * mm, 10 * mm, 14 * mm, 14 * mm]
+
+    resumo = _resumo_pu_por_ano(escolhido)
+    df_indexado = df.reset_index(drop=True)
+    for _, linha_resumo in resumo.reset_index(drop=True).iterrows():
+        ano, categoria = linha_resumo["ANO"], linha_resumo["CATEGORIA"]
+
+        rotulo_grupo = Table(
+            [[Paragraph(f"<b>ANO</b>", estilo_rotulo_grupo), Paragraph(f"<b>{ano}</b>", estilo_titulo)]],
+            colWidths=[26 * mm, 40 * mm],
+        )
+        rotulo_grupo.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F2F2F2"))]))
+        elementos.append(rotulo_grupo)
+        rotulo_categoria = Table(
+            [[Paragraph("<b>CATEGORIA</b>", estilo_rotulo_grupo), Paragraph(f"<b>{categoria}</b>", estilo_normal)]],
+            colWidths=[26 * mm, 40 * mm],
+        )
+        rotulo_categoria.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F2F2F2"))]))
+        elementos.append(rotulo_categoria)
+        elementos.append(Spacer(1, 2 * mm))
+
+        bloco_itens = df_indexado[(df_indexado["CATEGORIA"] == categoria) & (df_indexado["ANO"] == ano)]
+        linhas_tabela = [cabecalho_tabela]
+        for _, linha in bloco_itens.iterrows():
+            fm_exibido = _br(linha["FATOR"]) if linha["OBS"] == "T" else ""
+            linhas_tabela.append([
+                Paragraph(linha["DOCUMENTO_ORIGEM"], estilo_celula), linha["TIPO"],
+                Paragraph(linha["DESCR_ORIGINAL"], estilo_celula), linha["UP_ORIGINAL"],
+                _br(linha["QTDE_ORIGINAL"]), _br(linha["VU_ORIGINAL"]), linha["OBS"], fm_exibido,
+                _br(linha["QTDE_UTILIZ"]), _br(linha["VU_UTILIZADO"]),
+            ])
+        tabela_itens = Table(linhas_tabela, colWidths=larguras_colunas, repeatRows=1)
+        tabela_itens.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D9E2F3")),
+            ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+        ]))
+        elementos.append(tabela_itens)
+        elementos.append(Spacer(1, 2 * mm))
+
+        tabela_resumo = Table(
+            [
+                ["", "", Paragraph("PU MÉDIO", estilo_resumo_rotulo),
+                 Paragraph(_br(linha_resumo["PU_MEDIO"]), estilo_resumo_valor)],
+                [Paragraph("MEMÓRIA DE CÁLCULO", estilo_resumo_rotulo),
+                 Paragraph(linha_resumo["MEMORIA_CALCULO"], estilo_resumo_texto),
+                 Paragraph("PU MÉDIO + AGREGAÇÃO", estilo_resumo_rotulo),
+                 Paragraph(_br(linha_resumo["PU_MEDIO_AGREGACAO"]), estilo_resumo_valor)],
+            ],
+            colWidths=[35 * mm, 65 * mm, 45 * mm, 25 * mm],
+        )
+        tabela_resumo.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("BOX", (1, 0), (1, 1), 0.4, colors.grey),
+            ("BOX", (3, 0), (3, 1), 0.4, colors.grey),
+            ("BACKGROUND", (3, 0), (3, 1), colors.HexColor("#F2F2F2")),
+        ]))
+        elementos.append(tabela_resumo)
+        elementos.append(Spacer(1, 6 * mm))
+
+    elementos.append(Paragraph(
+        "<b>FINALIDADE DO RELATÓRIO:</b> RETORNAR MEMÓRIA DE CÁLCULO DO PREÇO UNITÁRIO MÉDIO "
+        "(VU MÉDIO $) DO 'RELATÓRIO FINAL' REFERENCIADO PELA NOMENCLATURA DO ITEM CRUZADO",
+        estilo_normal,
+    ))
+    elementos.append(Spacer(1, 2 * mm))
+    elementos.append(Paragraph(
+        "<b>OBS:</b> 'PU MÉDIO + AGREGAÇÃO' CORRESPONDE AO PREÇO UNITÁRIO (VU $) CONSTANTE NO "
+        "'RELATÓRIO FINAL'.",
         estilo_normal,
     ))
 
