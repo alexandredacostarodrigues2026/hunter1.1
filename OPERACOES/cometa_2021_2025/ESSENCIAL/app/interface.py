@@ -5723,24 +5723,128 @@ def _render_relatorio_itens_cruzados() -> None:
     )
 
 
+_COLUNAS_EXIBICAO_RELATORIO_MC_QUANTIDADES = [
+    "CATEGORIA", "LOC", "DOCUMENTO_ORIGEM", "ANO", "TIPO", "DESCR_ORIGINAL", "UP_ORIGINAL",
+    "QTDE_ORIGINAL", "OBS", "FATOR", "UP_UTILIZ", "QTDE_UTILIZ",
+]
+_ROTULOS_COLUNAS_RELATORIO_MC_QUANTIDADES = {
+    "CATEGORIA": "Categoria", "LOC": "LOC", "DOCUMENTO_ORIGEM": "Documento de Origem",
+    "ANO": "Ano", "TIPO": "Tipo",
+    "DESCR_ORIGINAL": "Descrição Original", "UP_ORIGINAL": "Unidade Original",
+    "QTDE_ORIGINAL": "Qtde Original", "OBS": "Obs", "FATOR": "Fator",
+    "UP_UTILIZ": "Unidade Utilizada", "QTDE_UTILIZ": "Qtde Utilizada",
+}
+_COLUNAS_NUMERICAS_RELATORIO_MC_QUANTIDADES = ("QTDE_ORIGINAL", "FATOR", "QTDE_UTILIZ")
+
+
+def _render_relatorio_mc_quantidades() -> None:
+    """"RELATÓRIO MC QUANTIDADES" (Estágio 12.3, Solicitação Técnica
+    2026-08-10: "MEMÓRIA DE CÁLCULO DAS QUANTIDADES") — prova, item a
+    item, do cálculo `QTDE ORIGINAL × FATOR = QTDE UTILIZADA`, vinculado
+    ao 12.2 pelo MESMO LOC (`loader.gerar_dados_relatorio_mc_
+    quantidades()` reaproveita a base compartilhada de `gerar_dados_
+    relatorio_itens_cruzados()` — LOC idêntico por construção, ver
+    docstring de `loader._montar_base_relatorios_produto_12()`). Mesmo
+    produto atualmente escolhido pra cruzamento do 12.2 (Estágio 9/10/
+    10.2).
+
+    Grade em `st.data_editor` (pedido explícito da Solicitação Técnica,
+    diferente do `st.dataframe` do 12.1/12.2) — TODAS as colunas
+    desabilitadas (`disabled=True`): é uma prova formal de cálculo, não
+    uma tela de edição; o widget "editor" é só o pedido de aparência,
+    sem risco de alteração acidental do dado. Coluna "Categoria" (2026-
+    08-10, pedido do usuário: "separar os tipos: entradas, saídas,
+    estoque inicial e estoque final") logo no início da grade — a linha
+    já vem ordenada por categoria (mesma base do 12.2), a coluna só torna
+    o agrupamento visível em tela; no PDF o agrupamento aparece como
+    banner "CATEGORIA X" (ver `loader.exportar_relatorio_mc_quantidades_
+    pdf()`). PDF gerado automaticamente e embutido via `<iframe>` base64,
+    mesmo padrão do 12.1/12.2."""
+    escolhido = loader.consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        st.info(
+            'Nenhum produto escolhido pra cruzamento ainda — em "📋 10: PRODUTOS ALVOS SALVOS", '
+            'marque "Escolher p/ Cruzamento" pra um produto e confirme.'
+        )
+        return
+    st.markdown(
+        f"**Item Cruzado:** {loader.descricao_efetiva_escolhido(escolhido)} — "
+        f"**Unidade do Produto:** {loader.unidade_efetiva_escolhido(escolhido)}"
+    )
+
+    dados = loader.gerar_dados_relatorio_mc_quantidades(escolhido)
+    if dados.empty:
+        st.info(
+            "Nenhum item confirmado na Rubrica pra este produto ainda (Entradas/Saídas/Estoque) — "
+            'confirme itens em "⚖️ 10: PRODUTOS ALVOS SALVOS" primeiro, ou os anos confirmados '
+            "estão fora do Período de Auditoria configurado."
+        )
+        return
+
+    st.markdown(f"**{len(dados):,} item(ns)**.".replace(",", "."))
+
+    exibicao = dados[_COLUNAS_EXIBICAO_RELATORIO_MC_QUANTIDADES].rename(
+        columns=_ROTULOS_COLUNAS_RELATORIO_MC_QUANTIDADES,
+    )
+    for col in _COLUNAS_NUMERICAS_RELATORIO_MC_QUANTIDADES:
+        rotulo = _ROTULOS_COLUNAS_RELATORIO_MC_QUANTIDADES[col]
+        exibicao[rotulo] = exibicao[rotulo].apply(_formatar_moeda_br)
+    with st.container(key="relatorio_mc_quantidades_tabela"):
+        st.markdown(
+            "<style>.st-key-relatorio_mc_quantidades_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 10px; }</style>",
+            unsafe_allow_html=True,
+        )
+        st.data_editor(exibicao, use_container_width=True, hide_index=True, disabled=True)
+
+    st.divider()
+    st.markdown("### 👁️ Visualização do Relatório")
+    try:
+        pdf_bytes = loader.exportar_relatorio_mc_quantidades_pdf(dados, escolhido)
+    except Exception as exc:
+        st.error(f"Erro ao gerar PDF: {exc}")
+        return
+
+    pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+    st.markdown(
+        f'<iframe src="data:application/pdf;base64,{pdf_base64}" '
+        'width="100%" height="900" style="border: 1px solid #ccc;"></iframe>',
+        unsafe_allow_html=True,
+    )
+
+    st.download_button(
+        "📥 Baixar Relatório MC Quantidades (PDF)",
+        data=pdf_bytes,
+        file_name="relatorio_mc_quantidades.pdf",
+        mime="application/pdf",
+        key="btn_download_relatorio_mc_quantidades_pdf",
+    )
+
+
 def render_pagina_relatorios() -> None:
     """Painel 'ESTÁGIO 12 - RELATÓRIOS' (Solicitação Técnica 2026-08-07:
     "MÓDULO DE RELATÓRIOS FINAIS"), botão da 2ª linha do Menu Principal.
     `st.selectbox` pra escolher qual relatório ver — "RELATÓRIO FINAL"
-    (12.1, consolidado geral) e "RELATÓRIO ITENS CRUZADOS" (12.2,
-    memória de cálculo analítica do produto escolhido, 2026-08-10) — a
-    tela já nasce pronta pra crescer (outros relatórios futuros entram
-    como opção nova no mesmo selectbox, sem precisar de botão de menu
-    extra). Exige dados_carregados (mesmo padrão das outras páginas)."""
+    (12.1, consolidado geral), "RELATÓRIO ITENS CRUZADOS" (12.2, memória
+    de cálculo analítica do produto escolhido) e "RELATÓRIO MC
+    QUANTIDADES" (12.3, prova do cálculo Qtde Original × Fator = Qtde
+    Utilizada, vinculado ao 12.2 via LOC, 2026-08-10) — a tela já nasce
+    pronta pra crescer (outros relatórios futuros entram como opção nova
+    no mesmo selectbox, sem precisar de botão de menu extra). Exige
+    dados_carregados (mesmo padrão das outras páginas)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
         return
     st.subheader("Estágio 12 - Relatórios")
     relatorio = st.selectbox(
-        "Relatório", ["RELATÓRIO FINAL", "RELATÓRIO ITENS CRUZADOS"], key="relatorios_selectbox",
+        "Relatório",
+        ["RELATÓRIO FINAL", "RELATÓRIO ITENS CRUZADOS", "RELATÓRIO MC QUANTIDADES"],
+        key="relatorios_selectbox",
     )
     if relatorio == "RELATÓRIO FINAL":
         _render_relatorio_final()
     elif relatorio == "RELATÓRIO ITENS CRUZADOS":
         _render_relatorio_itens_cruzados()
+    elif relatorio == "RELATÓRIO MC QUANTIDADES":
+        _render_relatorio_mc_quantidades()

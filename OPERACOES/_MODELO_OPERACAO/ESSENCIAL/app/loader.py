@@ -9109,7 +9109,7 @@ def _detalhar_documento_fiscal_por_idunico(idunicos: "set | list", origem: str) 
     Cruzados: NÚMERO da nota, CFOP, TIPO (modelo NFe/NFCe) e DC (Data
     Considerada) por `idunico`, pra `estoque_entradas`/`estoque_saidas`
     (`origem` 'entradas'/'saidas' — Estoque não usa esta função, ver
-    `_montar_categorias_estoque_itens_cruzados()`). Esses 4 campos NÃO
+    `_montar_categorias_estoque_relatorios_12()`). Esses 4 campos NÃO
     estão em `consultar_atributos_estoque_por_idunico()` (que já cobre
     CHV_NFE/ANO_ELEITO/preço/quantidade) — join extra, só usado aqui, pra
     não inchar aquela função com colunas que só este relatório precisa.
@@ -9185,22 +9185,51 @@ def _detalhar_documento_fiscal_por_idunico(idunicos: "set | list", origem: str) 
     return df[colunas]
 
 
-def _montar_categoria_documento_itens_cruzados(
+_COLUNAS_BASE_RELATORIOS_PRODUTO_12 = [
+    "CATEGORIA", "ANO", "DATA", "DC", "LOC", "DOCUMENTO_ORIGEM", "NUMERO", "CFOP", "TIPO", "OBS",
+    "DESCR_ORIGINAL", "UP_ORIGINAL", "QTDE_ORIGINAL", "FATOR", "UP_UTILIZ", "QTDE_UTILIZ",
+]
+# Schema COMUM aos Estágios 12.2 (Itens Cruzados) e 12.3 (Memória de Cálculo
+# das Quantidades, 2026-08-10) — os dois relatórios compartilham a MESMA base
+# item a item (mesmas 4 categorias, mesmo LOC), só exibindo subconjuntos/
+# rótulos diferentes de coluna. DESCR_ORIGINAL/UP_ORIGINAL/QTDE_ORIGINAL/
+# FATOR/UP_UTILIZ só interessam ao 12.3, mas nascem aqui (não em função
+# separada) pra GARANTIR que o LOC de um item seja idêntico nos dois
+# relatórios — exigência explícita da Solicitação Técnica do 12.3 ("Deve
+# gerar exatamente os mesmos identificadores sequenciais ... criados para o
+# relatório 12.2"). Calcular o LOC duas vezes (uma função por relatório)
+# seria frágil — qualquer mudança futura na ordenação de um lado desalinha
+# do outro sem aviso; com uma base ÚNICA, a garantia é estrutural.
+
+
+def _montar_categoria_documento_relatorios_12(
     escolhido: dict, origem: str, categoria: str, n_categoria: str,
 ) -> pd.DataFrame:
-    """Estágio 12.2 — monta as linhas de "1-ENTRADAS"/"2-SAÍDAS" (`origem`
-    'entradas'/'saidas', `categoria`/`n_categoria` já resolvidos pelo
-    chamador): reaproveita o MESMO pipeline de `_consolidar_detalhado_
-    por_origem()` (consultar_cruzamento_confirmado_detalhado() +
+    """Estágios 12.2/12.3 — monta as linhas de "1-ENTRADAS"/"2-SAÍDAS"
+    (`origem` 'entradas'/'saidas', `categoria`/`n_categoria` já resolvidos
+    pelo chamador): reaproveita o MESMO pipeline de `_consolidar_
+    detalhado_por_origem()` (consultar_cruzamento_confirmado_detalhado() +
     consultar_atributos_estoque_por_idunico() + aplicar_tratamento_fm_
-    detalhado()) pra obter `quant_utiliz`/`TRATAMENTO` item a item, e
+    detalhado()) pra obter os campos brutos/tratados item a item, e
     acrescenta NUMERO/CFOP/TIPO/DC via `_detalhar_documento_fiscal_por_
-    idunico()`. LOC = `n_categoria + "_" + idunico` (link com a memória de
-    cálculo, ver docstring de `gerar_dados_relatorio_itens_cruzados()`).
-    Devolve DataFrame vazio (colunas de `_COLUNAS_RELATORIO_ITENS_
-    CRUZADOS`) se o produto não tiver nenhum item confirmado nesta
-    origem."""
-    colunas_vazias = _COLUNAS_RELATORIO_ITENS_CRUZADOS
+    idunico()`.
+
+    DESCR_ORIGINAL/UP_ORIGINAL/QTDE_ORIGINAL (2026-08-10, Estágio 12.3) =
+    `desc_xml`/`unid_prod`/`qtde_prod` BRUTOS de `cruzamento_confirmado_
+    detalhado()`/`consultar_atributos_estoque_por_idunico()` — o texto/
+    unidade/quantidade exatos do XML, ANTES de qualquer tratamento de FM
+    (`desc_xml` guarda a descrição do XML pra entradas/saidas mesmo sem
+    tratamento nenhum — é a mesma coluna usada na Rubrica/Estágio 10, não
+    precisa de busca extra). FATOR/UP_UTILIZ = `fm_utilizado`/`unid_prod_
+    utiliz` (aplicar_tratamento_fm_detalhado() — FATOR já vem com o
+    "padrão 1.0 se não tratado" pedido na Solicitação Técnica do 12.3).
+
+    LOC = `n_categoria + "_" + idunico` — placeholder, sempre sobrescrito
+    por `_montar_base_relatorios_produto_12()` depois da ordenação final
+    (ver docstring de lá). Devolve DataFrame vazio (colunas de
+    `_COLUNAS_BASE_RELATORIOS_PRODUTO_12`) se o produto não tiver nenhum
+    item confirmado nesta origem."""
+    colunas_vazias = _COLUNAS_BASE_RELATORIOS_PRODUTO_12
     detalhado, _ = consultar_cruzamento_confirmado_detalhado(
         descr_alvo=escolhido["DESCR_ALVO"], origem=origem, limite=None,
     )
@@ -9222,16 +9251,21 @@ def _montar_categoria_documento_itens_cruzados(
         "DOCUMENTO_ORIGEM": detalhado["CHV_NFE"].fillna(""),
         "NUMERO": detalhado["NUMERO"].fillna(""),
         "CFOP": detalhado["CFOP"].fillna(""),
-        "QTDE_ITENS": pd.to_numeric(detalhado["quant_utiliz"], errors="coerce").fillna(0.0),
         "TIPO": detalhado["TIPO"].fillna(""),
         "OBS": np.where(detalhado["TRATAMENTO"] == "T", "T", ""),
+        "DESCR_ORIGINAL": detalhado["desc_xml"].fillna(""),
+        "UP_ORIGINAL": detalhado["unid_prod"].fillna(""),
+        "QTDE_ORIGINAL": pd.to_numeric(detalhado["qtde_prod"], errors="coerce").fillna(0.0),
+        "FATOR": pd.to_numeric(detalhado["fm_utilizado"], errors="coerce").fillna(1.0),
+        "UP_UTILIZ": detalhado["unid_prod_utiliz"].fillna(""),
+        "QTDE_UTILIZ": pd.to_numeric(detalhado["quant_utiliz"], errors="coerce").fillna(0.0),
     })[colunas_vazias]
 
 
-def _montar_categorias_estoque_itens_cruzados(escolhido: dict) -> pd.DataFrame:
-    """Estágio 12.2 — monta as linhas de "3-ESTOQUE INICIAL"/"4-ESTOQUE
-    FINAL": cada item de Estoque confirmado na Rubrica (`ORIGEM=
-    'estoque'` em cruzamento_confirmado_detalhado) aparece DUAS vezes —
+def _montar_categorias_estoque_relatorios_12(escolhido: dict) -> pd.DataFrame:
+    """Estágios 12.2/12.3 — monta as linhas de "3-ESTOQUE INICIAL"/
+    "4-ESTOQUE FINAL": cada item de Estoque confirmado na Rubrica (`ORIGEM
+    ='estoque'` em cruzamento_confirmado_detalhado) aparece DUAS vezes —
     Regra de Continuidade, a MESMA já implementada em `gerar_cruzamento_
     final_produto()` (QTDE_EI de um ano = QTDE_EF do ano anterior):
     - "4-ESTOQUE FINAL", ANO = ano_ef (ano da declaração/H010 que originou
@@ -9241,10 +9275,10 @@ def _montar_categorias_estoque_itens_cruzados(escolhido: dict) -> pd.DataFrame:
     Validado contra o PDF de referência do usuário: mesmo item físico
     (mesmo `idunico`) aparece com DATA "fev/2021" tanto em Estoque
     Final-2020 quanto em Estoque Inicial-2021, só relabeled por
-    categoria/ano — mesma quantidade (`quant_utiliz`) nas duas linhas.
+    categoria/ano — mesma quantidade nas duas linhas.
     LOC aqui é só um placeholder (baseado em `idunico`) — o valor final,
-    sequencial e legível, é atribuído por `gerar_dados_relatorio_itens_
-    cruzados()` depois da ordenação (ver docstring de lá).
+    sequencial e legível, é atribuído por `_montar_base_relatorios_
+    produto_12()` depois da ordenação (ver docstring de lá).
 
     DOCUMENTO DE ORIGEM/DATA/NÚMERO/CFOP/TIPO seguem o PDF de referência
     literalmente (não a redação mais solta da Solicitação Técnica):
@@ -9252,10 +9286,15 @@ def _montar_categorias_estoque_itens_cruzados(escolhido: dict) -> pd.DataFrame:
     abreviado()` sobre `dt_decl`), NÚMERO="NC", CFOP="NC", TIPO="D" — não
     há chave de acesso/CFOP/modelo fiscal pra um item declarado (Bloco H
     do SPED, sem XML). DC="D" sempre (Declaração do Contribuinte).
+    DESCR_ORIGINAL/UP_ORIGINAL/QTDE_ORIGINAL/FATOR/UP_UTILIZ (Estágio 12.3)
+    vêm de `consultar_atributos_estoque_estoque_por_idunico()`/
+    `aplicar_tratamento_fm_detalhado()`, mesmo raciocínio de `_montar_
+    categoria_documento_relatorios_12()` — a mesma linha bruta/tratada
+    aparece nas duas categorias (3/4), sem diferença entre elas.
 
-    Devolve DataFrame vazio (colunas de `_COLUNAS_RELATORIO_ITENS_
-    CRUZADOS`) se o produto não tiver nenhum item de Estoque confirmado."""
-    colunas_vazias = _COLUNAS_RELATORIO_ITENS_CRUZADOS
+    Devolve DataFrame vazio (colunas de `_COLUNAS_BASE_RELATORIOS_
+    PRODUTO_12`) se o produto não tiver nenhum item de Estoque confirmado."""
+    colunas_vazias = _COLUNAS_BASE_RELATORIOS_PRODUTO_12
     detalhado, _ = consultar_cruzamento_confirmado_detalhado(
         descr_alvo=escolhido["DESCR_ALVO"], origem="estoque", limite=None,
     )
@@ -9276,9 +9315,14 @@ def _montar_categorias_estoque_itens_cruzados(escolhido: dict) -> pd.DataFrame:
         "DOCUMENTO_ORIGEM": "DECLARAÇÃO/LEVANTAMENTO DE " + data_declaracao,
         "NUMERO": "NC",
         "CFOP": "NC",
-        "QTDE_ITENS": pd.to_numeric(detalhado["quant_utiliz"], errors="coerce").fillna(0.0),
         "TIPO": "D",
         "OBS": np.where(detalhado["TRATAMENTO"] == "T", "T", ""),
+        "DESCR_ORIGINAL": detalhado["desc_xml"].fillna(""),
+        "UP_ORIGINAL": detalhado["unid_prod"].fillna(""),
+        "QTDE_ORIGINAL": pd.to_numeric(detalhado["qtde_prod"], errors="coerce").fillna(0.0),
+        "FATOR": pd.to_numeric(detalhado["fm_utilizado"], errors="coerce").fillna(1.0),
+        "UP_UTILIZ": detalhado["unid_prod_utiliz"].fillna(""),
+        "QTDE_UTILIZ": pd.to_numeric(detalhado["quant_utiliz"], errors="coerce").fillna(0.0),
     })
 
     final = base_comum.copy()
@@ -9294,15 +9338,12 @@ def _montar_categorias_estoque_itens_cruzados(escolhido: dict) -> pd.DataFrame:
     return pd.concat([inicial, final], ignore_index=True).drop(columns=["_loc_sufixo"])[colunas_vazias]
 
 
-def gerar_dados_relatorio_itens_cruzados(escolhido: dict) -> pd.DataFrame:
-    """Estágio 12.2 — monta os dados do "RELATÓRIO ITENS CRUZADOS": a
-    memória de cálculo item a item (nota a nota/declaração a declaração)
-    por trás do Relatório Final (12.1), pro PRODUTO ESCOLHIDO (`escolhido`
-    — mesmo produto do Estágio 9/10/10.2, obtido via `consultar_produto_
-    cruzamento_escolhido()`; diferente do 12.1, que é consolidado geral de
-    TODOS os produtos). Junta as 4 categorias (`_montar_categoria_
-    documento_itens_cruzados()` pra Entradas/Saídas, `_montar_categorias_
-    estoque_itens_cruzados()` pra Estoque Inicial/Final) e aplica:
+def _montar_base_relatorios_produto_12(escolhido: dict) -> pd.DataFrame:
+    """Base ÚNICA e COMPARTILHADA dos Estágios 12.2 (RELATÓRIO ITENS
+    CRUZADOS) e 12.3 (RELATÓRIO MC QUANTIDADES, 2026-08-10) — junta as 4
+    categorias (`_montar_categoria_documento_relatorios_12()` pra
+    Entradas/Saídas, `_montar_categorias_estoque_relatorios_12()` pra
+    Estoque Inicial/Final) e aplica:
 
     - Período de Auditoria (Estágio 1/EXTRAÇÃO, mesmo critério de
       `gerar_cruzamento_final_produto()`/`gerar_dados_relatorio_final()`):
@@ -9318,27 +9359,35 @@ def gerar_dados_relatorio_itens_cruzados(escolhido: dict) -> pd.DataFrame:
       DEPOIS da ordenação acima, como `"<nº categoria>_<sequencial>"`
       (ex.: "1_1", "1_2", ... "2_1", "2_2", ...) — sequencial 1-based,
       reiniciado a cada categoria, na MESMA ordem em que a linha aparece
-      no relatório (tela/PDF). Os valores de LOC construídos em
-      `_montar_categoria_documento_itens_cruzados()`/`_montar_categorias_
-      estoque_itens_cruzados()` (baseados em `idunico`) são só
-      placeholders, sempre sobrescritos aqui.
+      no relatório. Os valores de LOC construídos em `_montar_categoria_
+      documento_relatorios_12()`/`_montar_categorias_estoque_relatorios_
+      12()` (baseados em `idunico`) são só placeholders, sempre
+      sobrescritos aqui — como essa é a ÚNICA função que atribui o LOC
+      final, `gerar_dados_relatorio_itens_cruzados()` (12.2) e `gerar_
+      dados_relatorio_mc_quantidades()` (12.3) SEMPRE devolvem o mesmo
+      LOC pro mesmo item, por construção — não por coincidência de
+      lógica duplicada.
 
     Regra R07: CATEGORIA/ANO/DATA/DC/LOC/DOCUMENTO_ORIGEM/NUMERO/CFOP/
-    TIPO/OBS sempre string. Devolve DataFrame vazio (colunas de
-    `_COLUNAS_RELATORIO_ITENS_CRUZADOS`) se o produto não tiver nenhum
-    item confirmado em nenhuma origem, OU se o Período de Auditoria
-    filtrar todos os anos calculados."""
-    entradas = _montar_categoria_documento_itens_cruzados(escolhido, "entradas", _CATEGORIA_ENTRADAS, "1")
-    saidas = _montar_categoria_documento_itens_cruzados(escolhido, "saidas", _CATEGORIA_SAIDAS, "2")
-    estoque = _montar_categorias_estoque_itens_cruzados(escolhido)
+    TIPO/OBS/DESCR_ORIGINAL/UP_ORIGINAL/UP_UTILIZ sempre string. Devolve
+    DataFrame vazio (colunas de `_COLUNAS_BASE_RELATORIOS_PRODUTO_12`) se
+    o produto não tiver nenhum item confirmado em nenhuma origem, OU se o
+    Período de Auditoria filtrar todos os anos calculados."""
+    entradas = _montar_categoria_documento_relatorios_12(escolhido, "entradas", _CATEGORIA_ENTRADAS, "1")
+    saidas = _montar_categoria_documento_relatorios_12(escolhido, "saidas", _CATEGORIA_SAIDAS, "2")
+    estoque = _montar_categorias_estoque_relatorios_12(escolhido)
     resultado = pd.concat([entradas, saidas, estoque], ignore_index=True)
     if resultado.empty:
-        return pd.DataFrame(columns=_COLUNAS_RELATORIO_ITENS_CRUZADOS)
+        return pd.DataFrame(columns=_COLUNAS_BASE_RELATORIOS_PRODUTO_12)
 
     resultado = _forcar_colunas_string(
-        resultado, ["CATEGORIA", "ANO", "DATA", "DC", "LOC", "DOCUMENTO_ORIGEM", "NUMERO", "CFOP", "TIPO", "OBS"],
+        resultado,
+        ["CATEGORIA", "ANO", "DATA", "DC", "LOC", "DOCUMENTO_ORIGEM", "NUMERO", "CFOP", "TIPO", "OBS",
+         "DESCR_ORIGINAL", "UP_ORIGINAL", "UP_UTILIZ"],
     )
-    resultado["QTDE_ITENS"] = pd.to_numeric(resultado["QTDE_ITENS"], errors="coerce").fillna(0.0)
+    resultado["QTDE_ORIGINAL"] = pd.to_numeric(resultado["QTDE_ORIGINAL"], errors="coerce").fillna(0.0)
+    resultado["FATOR"] = pd.to_numeric(resultado["FATOR"], errors="coerce").fillna(1.0)
+    resultado["QTDE_UTILIZ"] = pd.to_numeric(resultado["QTDE_UTILIZ"], errors="coerce").fillna(0.0)
 
     periodo = obter_periodo_auditoria()
     if periodo:
@@ -9346,7 +9395,7 @@ def gerar_dados_relatorio_itens_cruzados(escolhido: dict) -> pd.DataFrame:
         ano_num_filtro = pd.to_numeric(resultado["ANO"], errors="coerce")
         resultado = resultado[ano_num_filtro.between(ano_ini_periodo, ano_fim_periodo)]
         if resultado.empty:
-            return pd.DataFrame(columns=_COLUNAS_RELATORIO_ITENS_CRUZADOS)
+            return pd.DataFrame(columns=_COLUNAS_BASE_RELATORIOS_PRODUTO_12)
 
     cat_num = resultado["CATEGORIA"].map(_ORDEM_CATEGORIAS_ITENS_CRUZADOS)
     ano_num = pd.to_numeric(resultado["ANO"], errors="coerce")
@@ -9358,7 +9407,82 @@ def gerar_dados_relatorio_itens_cruzados(escolhido: dict) -> pd.DataFrame:
     )
     sequencial_por_categoria = resultado.groupby("CATEGORIA").cumcount() + 1
     resultado["LOC"] = resultado["_cat_num"].astype(int).astype(str) + "_" + sequencial_por_categoria.astype(str)
-    return resultado.drop(columns=["_cat_num", "_ano_num", "_data_ord"])[_COLUNAS_RELATORIO_ITENS_CRUZADOS]
+    return resultado.drop(columns=["_cat_num", "_ano_num", "_data_ord"])[_COLUNAS_BASE_RELATORIOS_PRODUTO_12]
+
+
+def gerar_dados_relatorio_itens_cruzados(escolhido: dict) -> pd.DataFrame:
+    """Estágio 12.2 — monta os dados do "RELATÓRIO ITENS CRUZADOS": a
+    memória de cálculo item a item (nota a nota/declaração a declaração)
+    por trás do Relatório Final (12.1), pro PRODUTO ESCOLHIDO (`escolhido`
+    — mesmo produto do Estágio 9/10/10.2, obtido via `consultar_produto_
+    cruzamento_escolhido()`; diferente do 12.1, que é consolidado geral de
+    TODOS os produtos). Recorte de `_montar_base_relatorios_produto_12()`
+    (ver docstring de lá pra Período de Auditoria/ordenação/LOC) —
+    `QTDE_UTILIZ` da base vira `QTDE_ITENS` aqui (mesmo campo, rótulo
+    específico deste relatório).
+
+    Regra R07: CATEGORIA/ANO/DATA/DC/LOC/DOCUMENTO_ORIGEM/NUMERO/CFOP/
+    TIPO/OBS sempre string. Devolve DataFrame vazio (colunas de
+    `_COLUNAS_RELATORIO_ITENS_CRUZADOS`) se o produto não tiver nenhum
+    item confirmado em nenhuma origem, OU se o Período de Auditoria
+    filtrar todos os anos calculados."""
+    base = _montar_base_relatorios_produto_12(escolhido)
+    if base.empty:
+        return pd.DataFrame(columns=_COLUNAS_RELATORIO_ITENS_CRUZADOS)
+    return base.rename(columns={"QTDE_UTILIZ": "QTDE_ITENS"})[_COLUNAS_RELATORIO_ITENS_CRUZADOS]
+
+
+_COLUNAS_RELATORIO_MC_QUANTIDADES = [
+    "CATEGORIA", "LOC", "DOCUMENTO_ORIGEM", "ANO", "TIPO", "DESCR_ORIGINAL", "UP_ORIGINAL",
+    "QTDE_ORIGINAL", "OBS", "FATOR", "UP_UTILIZ", "QTDE_UTILIZ",
+]
+# CATEGORIA incluída (2026-08-10, pedido do usuário: "separar os tipos:
+# entradas, saídas, estoque inicial e estoque final") — não existia na 1ª
+# versão do 12.3 (só linha a linha, sem agrupamento visível); usada tanto
+# pro agrupamento em tela quanto pro banner "CATEGORIA X" no PDF (mesmo
+# recurso já usado no 12.2, ver exportar_relatorio_mc_quantidades_pdf()).
+
+
+def gerar_dados_relatorio_mc_quantidades(escolhido: dict) -> pd.DataFrame:
+    """Estágio 12.3 — monta os dados do "RELATÓRIO MC QUANTIDADES"
+    (Solicitação Técnica 2026-08-10: "MEMÓRIA DE CÁLCULO DAS
+    QUANTIDADES") — prova matemática, item a item, de como o sistema
+    chegou nas quantidades "utilizadas" em auditoria: `QTDE_ORIGINAL ×
+    FATOR = QTDE_UTILIZ`. Recorte de `_montar_base_relatorios_produto_
+    12()` — MESMA base do 12.2 (RELATÓRIO ITENS CRUZADOS), por isso o LOC
+    de um item é IDÊNTICO nos dois relatórios (link de rastreabilidade
+    exigido pela Solicitação Técnica), sem precisar recalcular ordenação/
+    sequencial aqui.
+
+    Campos específicos deste relatório (não usados pelo 12.2):
+    - DESCR_ORIGINAL: descrição bruta do documento de origem (`desc_xml`
+      da Rubrica — XML pra entradas/saídas, declaração do Bloco H pra
+      estoque), ANTES de qualquer tratamento — ex.: "SKOL LATA 350ML SH
+      C/12 NPAL" (embalagem fechada), não a descrição efetiva do produto
+      alvo.
+    - UP_ORIGINAL/QTDE_ORIGINAL: unidade/quantidade brutas do documento
+      (`unid_prod`/`qtde_prod`) — ex.: "cx12"/2 (2 caixas de 12).
+    - FATOR: Fator Multiplicador aplicado (`fm_utilizado`) — 1.0 quando o
+      item não passou por tratamento de FM (padrão pedido na Solicitação
+      Técnica).
+    - UP_UTILIZ/QTDE_UTILIZ: unidade/quantidade EFETIVAS depois do
+      tratamento (`unid_prod_utiliz`/`quant_utiliz`) — ex.: "un"/24 (2×12).
+    - CATEGORIA (2026-08-10, pedido do usuário: "separar os tipos:
+      entradas, saídas, estoque inicial e estoque final") — mesmas 4
+      categorias do 12.2 (`_CATEGORIA_ENTRADAS`/`_CATEGORIA_SAIDAS`/
+      `_CATEGORIA_ESTOQUE_INICIAL`/`_CATEGORIA_ESTOQUE_FINAL`), usada pro
+      agrupamento em tela e pro banner "CATEGORIA X" no PDF (ver
+      `exportar_relatorio_mc_quantidades_pdf()`).
+
+    Regra R07: CATEGORIA/LOC/DOCUMENTO_ORIGEM/ANO/TIPO/DESCR_ORIGINAL/
+    UP_ORIGINAL/OBS/UP_UTILIZ sempre string. Devolve DataFrame vazio (colunas de
+    `_COLUNAS_RELATORIO_MC_QUANTIDADES`) se o produto não tiver nenhum
+    item confirmado em nenhuma origem, OU se o Período de Auditoria
+    filtrar todos os anos calculados."""
+    base = _montar_base_relatorios_produto_12(escolhido)
+    if base.empty:
+        return pd.DataFrame(columns=_COLUNAS_RELATORIO_MC_QUANTIDADES)
+    return base[_COLUNAS_RELATORIO_MC_QUANTIDADES]
 
 
 def exportar_relatorio_itens_cruzados_pdf(df: pd.DataFrame, escolhido: dict) -> bytes:
@@ -9482,6 +9606,146 @@ def exportar_relatorio_itens_cruzados_pdf(df: pd.DataFrame, escolhido: dict) -> 
         _linha_destaque(
             "QTDE TOTAL DE PRODUTOS POR CATEGORIA", _br(bloco_categoria["QTDE_ITENS"].sum()), fundo=colors.HexColor("#BFBFBF"),
         )
+
+    tabela_principal = Table(linhas_tabela, colWidths=larguras_colunas, repeatRows=1)
+    tabela_principal.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D9E2F3")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+        *estilos_linha,
+    ]))
+    elementos.append(tabela_principal)
+    elementos.append(Spacer(1, 6 * mm))
+    elementos.append(Paragraph(
+        "<b>NOTA AO CONTRIBUINTE:</b> DICIONÁRIO DE LEGENDAS ENCONTRA-SE NO PDF 'GUIA RELATÓRIOS'",
+        estilo_normal,
+    ))
+
+    doc.build(elementos)
+    return buffer.getvalue()
+
+
+def exportar_relatorio_mc_quantidades_pdf(df: pd.DataFrame, escolhido: dict) -> bytes:
+    """Estágio 12.3 — gera o PDF do "RELATÓRIO MC QUANTIDADES" ("MEMÓRIA
+    DE CÁLCULO DAS QUANTIDADES") replicando o layout de referência do
+    usuário (SEFAZ-PB — GRUPO2_MC_QTDE.pdf): mesmo cabeçalho institucional
+    e caixa "ITEM CRUZADO"/"UNIDADE DO PRODUTO" de `exportar_relatorio_
+    itens_cruzados_pdf()`. Agrupado por CATEGORIA (2026-08-10, pedido do
+    usuário: "separar os tipos: entradas, saídas, estoque inicial e
+    estoque final") — banner "CATEGORIA X" antes de cada bloco, MESMO
+    recurso visual (SPAN full-width, fundo azul sólido, texto branco) já
+    usado em `exportar_relatorio_itens_cruzados_pdf()` (12.2); SEM
+    subtotais por mês/ano/categoria (diferente do 12.2 — a Solicitação
+    Técnica do 12.3 só pediu separação por tipo, não subtotal), na ordem
+    em que `df` já vem (`gerar_dados_relatorio_mc_quantidades()`, que
+    reaproveita a MESMA ordenação/LOC de `gerar_dados_relatorio_itens_
+    cruzados()`).
+
+    Colunas (mesma ordem do PDF de referência): LOC, DOCUMENTO DE ORIGEM,
+    ANO, TIPO, DESCRIÇÃO ORIGINAL, UP ORIGINAL, QTDE ORIGINAL, OBS, FM,
+    QTDE ITENS — prova o cálculo QTDE ORIGINAL × FM = QTDE ITENS
+    (QTDE_UTILIZ) linha a linha. FM fica em branco quando o item não foi
+    tratado (`OBS != "T"`, mesmo critério de `TRATAMENTO`) — mesmo padrão
+    visual do PDF de referência (não polui toda linha untreated com
+    "1,00"); QTDE_ORIGINAL/QTDE_UTILIZ sempre formatadas em padrão BR
+    (`_formatar_numero_br()`), mesmo critério numérico já usado em
+    TODOS os relatórios do Estágio 12 (12.1/12.2).
+
+    `df` = saída de `gerar_dados_relatorio_mc_quantidades()` — usada como
+    veio, sem reordenar. Import de `reportlab` DENTRO da função, mesmo
+    raciocínio de `exportar_relatorio_pdf()`. Devolve os bytes do PDF (A4
+    retrato), prontos pra `st.download_button()`."""
+    import io
+
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    def _br(v) -> str:
+        return _formatar_numero_br(float(v)) if pd.notna(v) else "0,00"
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=10 * mm, rightMargin=10 * mm, topMargin=10 * mm, bottomMargin=10 * mm,
+    )
+    estilos = getSampleStyleSheet()
+    estilo_titulo = ParagraphStyle("titulo_mc_qtde", parent=estilos["Heading2"], alignment=TA_CENTER)
+    estilo_normal = ParagraphStyle("normal_mc_qtde", parent=estilos["Normal"], fontSize=8, leading=10)
+    estilo_celula = ParagraphStyle("celula_mc_qtde", parent=estilos["Normal"], fontSize=6.5, leading=8)
+    estilo_cabecalho_tabela = ParagraphStyle(
+        "cabecalho_tabela_mc_qtde", parent=estilos["Normal"], fontSize=6.5, leading=8,
+        fontName="Helvetica-Bold", alignment=TA_CENTER,
+    )
+    estilo_categoria = ParagraphStyle(
+        "categoria_mc_qtde", parent=estilos["Normal"], fontSize=10, leading=13, textColor=colors.white,
+    )
+
+    elementos = []
+
+    cabecalho = Table(
+        [[
+            Paragraph(
+                "<b>GOVERNO DA PARAÍBA</b><br/><b>SECRETARIA DE ESTADO DA FAZENDA</b><br/>"
+                "<b>GERÊNCIA EXECUTIVA DE COMBATE À FRAUDE FISCAL</b>",
+                estilo_normal,
+            ),
+            Paragraph("<b>MEMÓRIA DE CÁLCULO<br/>DAS QUANTIDADES</b>", estilo_titulo),
+            Paragraph(
+                f"<b>ITEM CRUZADO:</b> {descricao_efetiva_escolhido(escolhido)}<br/>"
+                f"<b>UNIDADE DO PRODUTO:</b> {unidade_efetiva_escolhido(escolhido)}",
+                estilo_normal,
+            ),
+        ]],
+        colWidths=[70 * mm, 45 * mm, 65 * mm],
+    )
+    cabecalho.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#D9E2F3")),
+    ]))
+    elementos.append(cabecalho)
+    elementos.append(Spacer(1, 4 * mm))
+
+    cabecalho_tabela = [
+        Paragraph(t, estilo_cabecalho_tabela) for t in (
+            "LOC", "DOCUMENTO DE<br/>ORIGEM", "ANO", "TIPO", "DESCRIÇÃO<br/>ORIGINAL",
+            "UP<br/>ORIGINAL", "QTDE<br/>ORIGINAL", "OBS", "FM", "QTDE<br/>ITENS",
+        )
+    ]
+    # Larguras com folga pras 2 linhas do cabeçalho (quebra manual via <br/>
+    # acima) — sem isso, Paragraph quebra no meio da palavra em colunas
+    # estreitas ("OR/IGINA/L"), ilegível (achado real, 2026-08-10).
+    larguras_colunas = [14 * mm, 46 * mm, 10 * mm, 10 * mm, 34 * mm, 18 * mm, 16 * mm, 8 * mm, 10 * mm, 16 * mm]
+    linhas_tabela = [cabecalho_tabela]
+    estilos_linha = []
+    df_indexado = df.reset_index(drop=True)
+    for categoria in sorted(df_indexado["CATEGORIA"].unique(), key=lambda c: _ORDEM_CATEGORIAS_ITENS_CRUZADOS.get(c, 99)):
+        pos_categoria = len(linhas_tabela)
+        # SPAN só desenha o conteúdo da célula TOP-LEFT do intervalo
+        # mesclado — o texto entra na posição 0 (achado real do 12.2, ver
+        # exportar_relatorio_itens_cruzados_pdf()).
+        linhas_tabela.append([Paragraph(f"<b>CATEGORIA {categoria}</b>", estilo_categoria),
+                               "", "", "", "", "", "", "", "", ""])
+        estilos_linha.append(("SPAN", (0, pos_categoria), (-1, pos_categoria)))
+        estilos_linha.append(("BACKGROUND", (0, pos_categoria), (-1, pos_categoria), colors.HexColor("#4472C4")))
+        estilos_linha.append(("TOPPADDING", (0, pos_categoria), (-1, pos_categoria), 4))
+        estilos_linha.append(("BOTTOMPADDING", (0, pos_categoria), (-1, pos_categoria), 4))
+
+        for _, linha in df_indexado[df_indexado["CATEGORIA"] == categoria].iterrows():
+            fm_exibido = _br(linha["FATOR"]) if linha["OBS"] == "T" else ""
+            linhas_tabela.append([
+                Paragraph(linha["LOC"], estilo_celula),
+                Paragraph(linha["DOCUMENTO_ORIGEM"], estilo_celula),
+                linha["ANO"], linha["TIPO"],
+                Paragraph(linha["DESCR_ORIGINAL"], estilo_celula), linha["UP_ORIGINAL"],
+                _br(linha["QTDE_ORIGINAL"]), linha["OBS"], fm_exibido, _br(linha["QTDE_UTILIZ"]),
+            ])
 
     tabela_principal = Table(linhas_tabela, colWidths=larguras_colunas, repeatRows=1)
     tabela_principal.setStyle(TableStyle([
