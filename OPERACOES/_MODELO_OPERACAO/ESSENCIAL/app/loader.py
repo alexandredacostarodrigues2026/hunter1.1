@@ -154,6 +154,64 @@ def obter_periodo_auditoria() -> "dict | None":
         return None
 
 
+# ── Estágio 1 — Equipe de Auditoria (rodapé de assinatura do Relatório
+# Final) ─────────────────────────────────────────────────────────────────
+# Cadastro de até 4 auditores (ORDEM 1-4) — gravado uma única vez por
+# operação (equipe_auditoria, sempre 4 linhas, CREATE OR REPLACE substitui
+# o cadastro anterior). Alimenta automaticamente o bloco de assinatura do
+# Relatório Final (Estágio 12.1, exportar_relatorio_pdf()), eliminando a
+# edição manual do PDF depois de gerado.
+
+def salvar_equipe_auditoria(df_equipe: pd.DataFrame) -> None:
+    """Grava a equipe de auditoria (Estágio 1) em `equipe_auditoria` no
+    DuckDB da operação — sempre exatamente 4 linhas (`CREATE OR REPLACE`
+    substitui o cadastro anterior; linhas faltantes são completadas com
+    string vazia). Regra Operacional R07: ORDEM/nome/matrícula sempre
+    string."""
+    nomes = [str(v) if pd.notna(v) else "" for v in df_equipe.get("NOME_AUDITOR", pd.Series(dtype=object))]
+    matriculas = [str(v) if pd.notna(v) else "" for v in df_equipe.get("MATRICULA", pd.Series(dtype=object))]
+    nomes = (nomes + [""] * 4)[:4]
+    matriculas = (matriculas + [""] * 4)[:4]
+    df = pd.DataFrame({
+        "ORDEM": [str(i) for i in range(1, 5)],
+        "NOME_AUDITOR": nomes,
+        "MATRICULA": matriculas,
+    })
+    _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with duckdb.connect(str(_BANCO_PATH)) as con:
+        con.register("_df_equipe_auditoria", df)
+        con.execute("CREATE OR REPLACE TABLE equipe_auditoria AS SELECT * FROM _df_equipe_auditoria")
+        con.unregister("_df_equipe_auditoria")
+
+
+def obter_equipe_auditoria() -> pd.DataFrame:
+    """Lê a equipe de auditoria já gravada (`equipe_auditoria`) — devolve
+    sempre um DataFrame de 4 linhas (`ORDEM`, `NOME_AUDITOR`, `MATRICULA`),
+    vazias se ainda não houver cadastro (tabela/banco ainda não existem) ou
+    em caso de erro de leitura. Nunca devolve `None`."""
+    vazio = pd.DataFrame({
+        "ORDEM": [str(i) for i in range(1, 5)],
+        "NOME_AUDITOR": ["", "", "", ""],
+        "MATRICULA": ["", "", "", ""],
+    })
+    if not _BANCO_PATH.exists():
+        return vazio
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "equipe_auditoria" not in tabelas:
+                return vazio
+            df = con.execute(
+                "SELECT ORDEM, NOME_AUDITOR, MATRICULA FROM equipe_auditoria ORDER BY ORDEM"
+            ).fetchdf()
+        if df.empty:
+            return vazio
+        return df.astype(str)
+    except Exception:
+        logger.exception("Erro ao ler equipe_auditoria em %s", _BANCO_PATH)
+        return vazio
+
+
 _TABELAS_XML_COBERTURA = (
     "nfe_entradas", "nfe_saidas", "nfe_analise_et", "nfe_analise_ep",
     "nfe_situacao_et", "nfe_situacao_ep",
@@ -212,6 +270,97 @@ def verificar_cobertura_periodo() -> dict:
         "anos_sped_necessarios": anos_sped_necessarios,
         "anos_sped_faltando": [a for a in anos_sped_necessarios if a not in anos_sped_presentes],
     }
+
+
+_CATEGORIAS_COBERTURA_GRANULAR = ("et", "ep", "declaracao", "estoque")
+
+
+def verificar_cobertura_granular() -> dict:
+    """Estágio 1 — Alerta de Carga GRANULAR (2026-08-11, Solicitação
+    Técnica "MONITORAMENTO DE CARGA E EQUIPE DE AUDITORIA"): mesma ideia
+    de `verificar_cobertura_periodo()` (presença por ano, não bloqueia
+    nada, só alerta), mas separada em 4 categorias independentes em vez
+    de 2 blocos ("XML" agregado, "SPED" agregado):
+    - **et**/**ep**: mesma união das 6 tabelas de `_TABELAS_XML_
+      COBERTURA`, agora filtrada por `PASTA_ORIGEM` ('ET'/'EP' — coluna já
+      gravada por `_classificar_itens_nfe()`, presente em TODAS as 6
+      tabelas mesmo nas que só têm 1 origem possível, ex.: nfe_analise_et
+      só tem PASTA_ORIGEM='ET' — confirmado contra o banco real da
+      geraldo). Anos necessários: `ano_inicial-1..ano_final` (mesmo
+      intervalo de "XML" em `verificar_cobertura_periodo()`).
+    - **declaracao**: `sped_itens` (C100+C170), ano via
+      `SUBSTR(COMPETENCIA, 1, 4)` — MESMA checagem que
+      `verificar_cobertura_periodo()` já fazia sob o rótulo "SPED".
+    - **estoque**: NOVA — `sped_estoque` (H010/Bloco H), ano via
+      `SUBSTR(DT_INV, 5, 4)` (DT_INV é DDMMAAAA, campo 02 do H005 herdado
+      por cada H010, ver `_parse_estoque_h005_h010()`; validado contra o
+      banco real da geraldo — bate com os anos de inventário reais).
+      Necessário porque a checagem "SPED" agregada de antes só olhava
+      `sped_itens` — uma declaração SEM H010 nenhum (só C100/C170) passava
+      despercebida.
+    Anos necessários de declaracao/estoque: `ano_inicial..ano_final+1`
+    (mesmo intervalo de "SPED" em `verificar_cobertura_periodo()`).
+
+    Devolve `{"aplicavel": False}` sem Período de Auditoria configurado.
+    Caso contrário, `{"aplicavel": True, "ano_inicial", "ano_final",
+    "et": {"necessarios": [...], "faltando": [...]}, "ep": {...},
+    "declaracao": {...}, "estoque": {...}}` — cada bloco com listas de
+    `int` (mesmo tipo de `verificar_cobertura_periodo()`, não Regra R07
+    aqui porque são anos INTERNOS de cálculo, não exibidos crus — quem
+    exibe formata como string, ver `interface._render_alerta_cobertura_
+    granular()`)."""
+    periodo = obter_periodo_auditoria()
+    if not periodo:
+        return {"aplicavel": False}
+
+    ano_ini = int(periodo["ano_inicial"])
+    ano_fim = int(periodo["ano_final"])
+    anos_xml_necessarios = list(range(ano_ini - 1, ano_fim + 1))
+    anos_sped_necessarios = list(range(ano_ini, ano_fim + 2))
+
+    anos_presentes = {c: set() for c in _CATEGORIAS_COBERTURA_GRANULAR}
+    if _BANCO_PATH.exists():
+        try:
+            with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+                tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+                tabelas_xml = [t for t in _TABELAS_XML_COBERTURA if t in tabelas]
+                if tabelas_xml:
+                    uniao = " UNION ALL ".join(
+                        f"SELECT CAST('20' || SUBSTR(fatonfe_infprot_chnfe, 3, 2) AS INTEGER) AS ANO, "
+                        f"PASTA_ORIGEM FROM {t}"
+                        for t in tabelas_xml
+                    )
+                    linhas = con.execute(f"SELECT DISTINCT ANO, PASTA_ORIGEM FROM ({uniao})").fetchall()
+                    for ano, pasta in linhas:
+                        if pasta == "ET":
+                            anos_presentes["et"].add(ano)
+                        elif pasta == "EP":
+                            anos_presentes["ep"].add(ano)
+                if "sped_itens" in tabelas:
+                    linhas = con.execute(
+                        "SELECT DISTINCT CAST(SUBSTR(COMPETENCIA, 1, 4) AS INTEGER) AS ANO FROM sped_itens"
+                    ).fetchall()
+                    anos_presentes["declaracao"] = {r[0] for r in linhas}
+                if "sped_estoque" in tabelas:
+                    linhas = con.execute(
+                        "SELECT DISTINCT CAST(SUBSTR(DT_INV, 5, 4) AS INTEGER) AS ANO FROM sped_estoque"
+                    ).fetchall()
+                    anos_presentes["estoque"] = {r[0] for r in linhas}
+        except Exception:
+            logger.exception("Erro ao verificar cobertura granular em %s", _BANCO_PATH)
+
+    resultado = {"aplicavel": True, "ano_inicial": ano_ini, "ano_final": ano_fim}
+    for categoria in ("et", "ep"):
+        resultado[categoria] = {
+            "necessarios": anos_xml_necessarios,
+            "faltando": [a for a in anos_xml_necessarios if a not in anos_presentes[categoria]],
+        }
+    for categoria in ("declaracao", "estoque"):
+        resultado[categoria] = {
+            "necessarios": anos_sped_necessarios,
+            "faltando": [a for a in anos_sped_necessarios if a not in anos_presentes[categoria]],
+        }
+    return resultado
 
 
 def anos_declaracao_disponiveis() -> set:
@@ -9021,8 +9170,13 @@ def exportar_relatorio_pdf(df: pd.DataFrame) -> bytes:
     elementos.append(tabela_resumo)
     elementos.append(Spacer(1, 8 * mm))
 
+    equipe = obter_equipe_auditoria()
+    linhas_assinatura = [["AUDITORES", "MATRÍCULA"]] + [
+        [str(linha["NOME_AUDITOR"]), str(linha["MATRICULA"])]
+        for _, linha in equipe.iterrows()
+    ]
     tabela_assinatura = Table(
-        [["AUDITORES", "MATRÍCULA"], ["", ""], ["", ""]],
+        linhas_assinatura,
         colWidths=[140 * mm, 60 * mm],
     )
     tabela_assinatura.setStyle(TableStyle([

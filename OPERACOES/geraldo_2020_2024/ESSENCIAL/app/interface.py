@@ -83,6 +83,36 @@ def render_configuracao_periodo() -> None:
             st.rerun()
 
 
+def render_equipe_auditoria() -> None:
+    """Estágio 1 — Equipe de Fiscalização: cadastro de até 4 auditores
+    (nome + matrícula), persistido em `equipe_auditoria`
+    (`loader.salvar_equipe_auditoria()`/`obter_equipe_auditoria()`).
+    Alimenta automaticamente o rodapé de assinatura do Relatório Final
+    (Estágio 12.1), eliminando a edição manual do PDF depois de gerado."""
+    st.markdown("**Equipe de Fiscalização**")
+    equipe = loader.obter_equipe_auditoria()
+    df_edicao = pd.DataFrame({
+        "Nome do Auditor": equipe["NOME_AUDITOR"].tolist(),
+        "Matrícula": equipe["MATRICULA"].tolist(),
+    })
+    df_editado = st.data_editor(
+        df_edicao,
+        num_rows="fixed",
+        hide_index=True,
+        use_container_width=True,
+        key="data_editor_equipe_auditoria",
+    )
+
+    if st.button("👥 Confirmar Equipe de Auditoria", key="btn_confirmar_equipe_auditoria"):
+        df_salvar = pd.DataFrame({
+            "NOME_AUDITOR": df_editado["Nome do Auditor"].tolist(),
+            "MATRICULA": df_editado["Matrícula"].tolist(),
+        })
+        loader.salvar_equipe_auditoria(df_salvar)
+        st.success("✅ Equipe de Auditoria gravada.")
+        st.rerun()
+
+
 def render_entidade_auditada() -> None:
     """Mostra os dados da entidade auditada. Só é chamada por main.py quando
     st.session_state['dados_carregados'] é True."""
@@ -110,20 +140,51 @@ def render_entidade_auditada() -> None:
         st.caption("Avisos: " + "; ".join(info["erros"]))
 
 
-def _barra_progresso(titulo: str, n_passos: int, fn_persistir) -> bool:
-    """Exibe título + barra de progresso para uma fase de carga.
+def _barra_progresso(titulo: str, n_passos: int, fn_persistir, categorias: "dict | None" = None) -> bool:
+    """Exibe título + barra de progresso agregada para uma fase de carga.
     fn_persistir(callback) deve chamar callback(etapa, n) a cada passo.
-    Retorna True em sucesso, False em erro."""
+    Retorna True em sucesso, False em erro.
+
+    `categorias` (2026-08-11, Solicitação Técnica "MONITORAMENTO DE CARGA
+    E EQUIPE DE AUDITORIA" — "barra st.progress dedicada para cada lote
+    de processamento"): dict opcional `{rótulo: [nomes_de_etapa]}` — uma
+    barra EXTRA por categoria, além da agregada de sempre, avançando
+    conforme as etapas daquela categoria completam. Categoria POR
+    CATEGORIA (ET/EP/Declaração/Estoque — granularidade que já existe via
+    o nome de cada tabela persistida, ver `render_carga_operacao()`), não
+    por ANO — `persistir_nfe()`/`persistir_sped()` processam cada tabela
+    inteira de uma vez (não em lotes por ano); quebrar de verdade por ano
+    exigiria reescrever o parser interno, decisão explícita do usuário de
+    não fazer isso agora (risco alto numa área crítica já validada). O
+    detalhamento por ANO fica no painel de cobertura pós-carga (ver
+    `_render_alerta_cobertura_granular()`/`loader.verificar_cobertura_
+    granular()`). Uma etapa pode aparecer em mais de 1 categoria (ex.:
+    `nfe_entradas`/`nfe_saidas` misturam ET+EP — contam pras duas)."""
     st.markdown(f"**{titulo}**")
     barra  = st.progress(0.0, text="Aguardando...")
     status = st.empty()
     idx    = [0]
+
+    barras_categoria = {}
+    contadores_categoria = {}
+    if categorias:
+        for rotulo, etapas in categorias.items():
+            barras_categoria[rotulo] = st.progress(0.0, text=f"{rotulo}: 0/{len(etapas)}")
+            contadores_categoria[rotulo] = 0
 
     def _cb(etapa: str, n: int) -> None:
         idx[0] += 1
         frac = idx[0] / n_passos
         barra.progress(frac, text=f"{etapa}: {n:,} registros".replace(",", "."))
         status.caption(f"Passo {idx[0]}/{n_passos} — {etapa} ({n:,} registros)".replace(",", "."))
+        if categorias:
+            for rotulo, etapas in categorias.items():
+                if etapa in etapas:
+                    contadores_categoria[rotulo] += 1
+                    frac_cat = contadores_categoria[rotulo] / len(etapas)
+                    barras_categoria[rotulo].progress(
+                        frac_cat, text=f"{rotulo}: {contadores_categoria[rotulo]}/{len(etapas)}",
+                    )
         time.sleep(_DELAY)
 
     res = fn_persistir(_cb)
@@ -167,6 +228,64 @@ def _render_alerta_cobertura_periodo() -> None:
         f"⚠️ Alerta de Carga — faltam arquivos para o Período de Auditoria "
         f"({cobertura['ano_inicial']} a {cobertura['ano_final']}): " + " · ".join(partes)
     )
+
+
+_ROTULOS_COBERTURA_GRANULAR = {
+    "et": "ET (Emissão de Terceiros)",
+    "ep": "EP (Emissão Própria)",
+    "declaracao": "Declaração (C100/C170)",
+    "estoque": "Estoque (H010)",
+}
+_MENSAGENS_FALTANTE_COBERTURA_GRANULAR = {
+    "et": "ET (Emissão de Terceiros) de {anos} não localizado(a/os) na pasta ET.",
+    "ep": "EP (Emissão Própria) de {anos} não localizado(a/os) na pasta EP.",
+    "declaracao": "Declaração (C100/C170) de {anos} não localizada nas declarações (SPED).",
+    "estoque": "Estoque (H010) de {anos} não localizado nas declarações (SPED).",
+}
+
+
+def _render_alerta_cobertura_granular() -> None:
+    """Alerta de Carga GRANULAR (Estágio 1, 2026-08-11, Solicitação
+    Técnica "MONITORAMENTO DE CARGA E EQUIPE DE AUDITORIA") — confere
+    separadamente ET/EP/Declaração(C100/C170)/Estoque(H010) contra o
+    Período de Auditoria (`loader.verificar_cobertura_granular()`).
+    SUBSTITUI `_render_alerta_cobertura_periodo()` (mantida no código,
+    só não é mais chamada por `render_carga_operacao()`) — o alerta
+    agregado anterior só via "XML"/"SPED" como 2 blocos e não pegava,
+    por exemplo, uma Declaração com C100/C170 mas SEM nenhum H010
+    (Estoque) daquele ano — achado real ao testar contra o banco da
+    geraldo (Declaração 2025 presente, Estoque 2025 ausente — o alerta
+    antigo não via essa lacuna).
+
+    Uma barra `st.progress` de "completude" (anos presentes/anos
+    necessários, não uma barra de carregamento) por categoria, mais
+    `st.warning` específico por ano faltando naquela categoria — mesma
+    redação do exemplo da Solicitação Técnica ("⚠️ Atenção: Estoque de
+    2022 não localizado nas declarações."). Silencioso se nenhum período
+    estiver configurado ainda (nada a checar)."""
+    cobertura = loader.verificar_cobertura_granular()
+    if not cobertura.get("aplicavel"):
+        return
+
+    st.markdown("**Cobertura por Categoria**")
+    algo_faltando = False
+    for categoria, rotulo in _ROTULOS_COBERTURA_GRANULAR.items():
+        bloco = cobertura[categoria]
+        necessarios, faltando = bloco["necessarios"], bloco["faltando"]
+        total = len(necessarios)
+        presentes = total - len(faltando)
+        frac = presentes / total if total else 1.0
+        st.progress(frac, text=f"{rotulo}: {presentes}/{total} ano(s)")
+        if faltando:
+            algo_faltando = True
+            anos_str = ", ".join(str(a) for a in faltando)
+            st.warning("⚠️ Atenção: " + _MENSAGENS_FALTANTE_COBERTURA_GRANULAR[categoria].format(anos=anos_str))
+
+    if not algo_faltando:
+        st.caption(
+            f"✅ Cobertura completa para o Período de Auditoria "
+            f"({cobertura['ano_inicial']} a {cobertura['ano_final']})."
+        )
 
 
 def _lista_anos_pt(anos: list) -> str:
@@ -249,7 +368,7 @@ def render_carga_operacao() -> None:
 
     if ja_carregado and sem_pendentes:
         st.success("✅ Dados carregados.")
-        _render_alerta_cobertura_periodo()
+        _render_alerta_cobertura_granular()
         clicou = st.button(
             "Carregar novamente",
             key="btn_recarregar",
@@ -285,10 +404,33 @@ def render_carga_operacao() -> None:
         fase_sped = "**2. SPED (declaração)**"
 
     # ── Barra 2: NF-e ─────────────────────────────────────────────────────────
-    ok_nfe = _barra_progresso(fase_nfe, n_passos=9, fn_persistir=loader.persistir_nfe)
+    # Categorias (2026-08-11) — ET/EP específicas: nfe_analise_*/nfe_situacao_*
+    # (só existem numa origem, ver _classificar_itens_nfe()) e nfe_bc2 (só ET,
+    # "Base Comparativa 2 — itens de Emissão de Terceiros"). nfe_entradas/
+    # nfe_saidas/xml_entradas_real/xml_saidas_real MISTURAM ET+EP — contam
+    # pras duas barras (não dá pra separar sem reprocessar por PASTA_ORIGEM,
+    # fora de escopo aqui).
+    categorias_nfe = {
+        "ET": [
+            "nfe_analise_et", "nfe_situacao_et", "nfe_bc2",
+            "nfe_entradas", "nfe_saidas", "xml_entradas_real", "xml_saidas_real",
+        ],
+        "EP": [
+            "nfe_analise_ep", "nfe_situacao_ep",
+            "nfe_entradas", "nfe_saidas", "xml_entradas_real", "xml_saidas_real",
+        ],
+    }
+    ok_nfe = _barra_progresso(fase_nfe, n_passos=9, fn_persistir=loader.persistir_nfe, categorias=categorias_nfe)
 
     # ── Barra 3: SPED ─────────────────────────────────────────────────────────
-    ok_sped = _barra_progresso(fase_sped, n_passos=4, fn_persistir=loader.persistir_sped)
+    # sped_produtos (0200)/sped_unidades (0190) são cadastros AUXILIARES da
+    # Declaração (enriquecem os itens de C170) — contam como "Declaração",
+    # não "Estoque". sped_estoque (H010) é exclusivo de "Estoque".
+    categorias_sped = {
+        "Declaração": ["sped_itens", "sped_produtos", "sped_unidades"],
+        "Estoque": ["sped_estoque"],
+    }
+    ok_sped = _barra_progresso(fase_sped, n_passos=4, fn_persistir=loader.persistir_sped, categorias=categorias_sped)
 
     if ok_nfe and ok_sped:
         st.session_state["dados_carregados"] = True
@@ -2543,12 +2685,14 @@ def _botao_voltar_menu() -> None:
 
 def render_pagina_extracao() -> None:
     """Painel 'Extração' (Estágio 6): configuração de Período de Auditoria,
-    Carga de XML/SPED (com os alertas de cobertura e de Ancoragem de
-    Estoque já embutidos em render_carga_operacao()) e Entidade Auditada —
-    mesmo conteúdo que antes ficava direto em main.py, só agrupado atrás do
-    botão "EXTRAÇÃO" do menu principal."""
+    Equipe de Fiscalização, Carga de XML/SPED (com os alertas de cobertura
+    e de Ancoragem de Estoque já embutidos em render_carga_operacao()) e
+    Entidade Auditada — mesmo conteúdo que antes ficava direto em main.py,
+    só agrupado atrás do botão "EXTRAÇÃO" do menu principal."""
     _botao_voltar_menu()
     render_configuracao_periodo()
+    st.divider()
+    render_equipe_auditoria()
     st.divider()
     render_carga_operacao()
     if st.session_state.get("dados_carregados"):
