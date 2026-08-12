@@ -290,16 +290,22 @@ def verificar_cobertura_granular() -> dict:
       intervalo de "XML" em `verificar_cobertura_periodo()`).
     - **declaracao**: `sped_itens` (C100+C170), ano via
       `SUBSTR(COMPETENCIA, 1, 4)` — MESMA checagem que
-      `verificar_cobertura_periodo()` já fazia sob o rótulo "SPED".
+      `verificar_cobertura_periodo()` já fazia sob o rótulo "SPED". Anos
+      necessários: `ano_inicial..ano_final+1` (mesmo intervalo de "SPED"
+      em `verificar_cobertura_periodo()` — a declaração do fechamento de
+      inventário do último ano do período costuma ser entregue já dentro
+      da competência do ano seguinte).
     - **estoque**: NOVA — `sped_estoque` (H010/Bloco H), ano via
       `SUBSTR(DT_INV, 5, 4)` (DT_INV é DDMMAAAA, campo 02 do H005 herdado
       por cada H010, ver `_parse_estoque_h005_h010()`; validado contra o
       banco real da geraldo — bate com os anos de inventário reais).
       Necessário porque a checagem "SPED" agregada de antes só olhava
       `sped_itens` — uma declaração SEM H010 nenhum (só C100/C170) passava
-      despercebida.
-    Anos necessários de declaracao/estoque: `ano_inicial..ano_final+1`
-    (mesmo intervalo de "SPED" em `verificar_cobertura_periodo()`).
+      despercebida. Anos necessários: `ano_inicial..ano_final` (SEM o +1
+      da declaração — 2026-08-12, correção pedida pelo usuário: DT_INV já
+      é a data real do inventário, não a competência de entrega, então o
+      Estoque Final do último ano do período já cai dentro do próprio
+      `ano_final`, sem precisar do ano seguinte).
 
     Devolve `{"aplicavel": False}` sem Período de Auditoria configurado.
     Caso contrário, `{"aplicavel": True, "ano_inicial", "ano_final",
@@ -317,6 +323,7 @@ def verificar_cobertura_granular() -> dict:
     ano_fim = int(periodo["ano_final"])
     anos_xml_necessarios = list(range(ano_ini - 1, ano_fim + 1))
     anos_sped_necessarios = list(range(ano_ini, ano_fim + 2))
+    anos_estoque_necessarios = list(range(ano_ini, ano_fim + 1))
 
     anos_presentes = {c: set() for c in _CATEGORIAS_COBERTURA_GRANULAR}
     if _BANCO_PATH.exists():
@@ -355,11 +362,14 @@ def verificar_cobertura_granular() -> dict:
             "necessarios": anos_xml_necessarios,
             "faltando": [a for a in anos_xml_necessarios if a not in anos_presentes[categoria]],
         }
-    for categoria in ("declaracao", "estoque"):
-        resultado[categoria] = {
-            "necessarios": anos_sped_necessarios,
-            "faltando": [a for a in anos_sped_necessarios if a not in anos_presentes[categoria]],
-        }
+    resultado["declaracao"] = {
+        "necessarios": anos_sped_necessarios,
+        "faltando": [a for a in anos_sped_necessarios if a not in anos_presentes["declaracao"]],
+    }
+    resultado["estoque"] = {
+        "necessarios": anos_estoque_necessarios,
+        "faltando": [a for a in anos_estoque_necessarios if a not in anos_presentes["estoque"]],
+    }
     return resultado
 
 

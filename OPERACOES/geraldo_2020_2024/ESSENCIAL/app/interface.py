@@ -745,22 +745,38 @@ def render_bc3() -> None:
         )
         taxa_match = (total_casados / total_itens * 100) if total_itens else 0.0
 
-        (col1, col2, col3, col4, col5, col6, col7, col8,
-         col9, col10, col11, col12, col13, col14) = st.columns(14)
-        col1.metric("Matches D1", f"{totais['D1']:,}".replace(",", "."))
-        col2.metric("Matches D2", f"{totais['D2']:,}".replace(",", "."))
-        col3.metric("Matches A1", f"{totais['A1']:,}".replace(",", "."))
-        col4.metric("Matches A2", f"{totais['A2']:,}".replace(",", "."))
-        col5.metric("Matches A3", f"{totais['A3']:,}".replace(",", "."))
-        col6.metric("Matches A4", f"{totais['A4']:,}".replace(",", "."))
-        col7.metric("Matches A5", f"{totais['A5']:,}".replace(",", "."))
-        col8.metric("Matches D3", f"{totais['D3']:,}".replace(",", "."))
-        col9.metric("Matches D4", f"{totais['D4']:,}".replace(",", "."))
-        col10.metric("Matches D5", f"{totais['D5']:,}".replace(",", "."))
-        col11.metric("Matches D6", f"{totais['D6']:,}".replace(",", "."))
-        col12.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
-        col13.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
-        col14.metric("Taxa de Match", f"{taxa_match:.1f}%".replace(".", ","))
+        # Fonte reduzida + 2 linhas de 7 (2026-08-12, pedido do usuário) —
+        # 14 KPIs numa linha só estouravam o rótulo ("Matches D1..." virava
+        # "Matches...") mesmo com fonte menor; dividido em 2 linhas (Direto
+        # D1/D2 + Aprendizado A1-A5 | Direto D3-D6 + ND/NM/Taxa) dá mais
+        # largura por coluna. CSS escopado só a este container via
+        # st.container(key=...), mesmo padrão já usado nas tabelas de alta
+        # densidade do resto do app.
+        st.markdown(
+            "<style>"
+            ".st-key-bc3_kpis [data-testid='stMetricValue'] { font-size: 1.1rem; }"
+            ".st-key-bc3_kpis [data-testid='stMetricLabel'] { font-size: 0.75rem; }"
+            "</style>",
+            unsafe_allow_html=True,
+        )
+        with st.container(key="bc3_kpis"):
+            col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+            col1.metric("Matches D1", f"{totais['D1']:,}".replace(",", "."))
+            col2.metric("Matches D2", f"{totais['D2']:,}".replace(",", "."))
+            col3.metric("Matches A1", f"{totais['A1']:,}".replace(",", "."))
+            col4.metric("Matches A2", f"{totais['A2']:,}".replace(",", "."))
+            col5.metric("Matches A3", f"{totais['A3']:,}".replace(",", "."))
+            col6.metric("Matches A4", f"{totais['A4']:,}".replace(",", "."))
+            col7.metric("Matches A5", f"{totais['A5']:,}".replace(",", "."))
+
+            col8, col9, col10, col11, col12, col13, col14 = st.columns(7)
+            col8.metric("Matches D3", f"{totais['D3']:,}".replace(",", "."))
+            col9.metric("Matches D4", f"{totais['D4']:,}".replace(",", "."))
+            col10.metric("Matches D5", f"{totais['D5']:,}".replace(",", "."))
+            col11.metric("Matches D6", f"{totais['D6']:,}".replace(",", "."))
+            col12.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
+            col13.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
+            col14.metric("Taxa de Match", f"{taxa_match:.1f}%".replace(".", ","))
         st.success("✅ Matching (BC3) pronto.")
 
         with st.expander("Visualizar resultado do Matching (BC3)"):
