@@ -2139,6 +2139,51 @@ def render_consolidado_origens_733() -> None:
             },
         )
 
+    # 3 tabelas lado a lado por Origem (2026-08-12, pedido do usuário) —
+    # agregado só por Descrição (soma todos os anos/unidades dentro do
+    # filtro já aplicado acima em `filtrado`, mesmos 3 filtros do print:
+    # Descrição/Ano/Origem), com linha de TOTAL. Valor Total do Estoque
+    # fica em branco (`sum(min_count=1)` devolve NaN quando o grupo inteiro
+    # é nulo, em vez de 0,00 — mesmo motivo já documentado na tabela
+    # principal: Bloco H não tem valor nessa granularidade).
+    st.markdown("**Totais por Origem (Entradas / Saídas / Estoque)**")
+    col_ent, col_sai, col_est = st.columns(3)
+    for col, titulo, origem_valor in (
+        (col_ent, "Entradas", "entrada"),
+        (col_sai, "Saídas", "saida"),
+        (col_est, "Estoque", "estoque"),
+    ):
+        sub = filtrado[filtrado["ORIGEM"] == origem_valor]
+        with col:
+            st.markdown(f"**{titulo}**")
+            if sub.empty:
+                st.caption("Nenhum item.")
+                continue
+            agrupado = (
+                sub.groupby("DESCR_PROD", as_index=False)[["QTDE", "VALOR_TOTAL"]]
+                .sum(min_count=1)
+                .sort_values("DESCR_PROD")
+            )
+            linha_total = pd.DataFrame([{
+                "DESCR_PROD": "TOTAL",
+                "QTDE": agrupado["QTDE"].sum(min_count=1),
+                "VALOR_TOTAL": agrupado["VALOR_TOTAL"].sum(min_count=1),
+            }])
+            exibicao = pd.concat([agrupado, linha_total], ignore_index=True)
+            for _col in ("QTDE", "VALOR_TOTAL"):
+                exibicao[_col] = exibicao[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
+            exibicao = exibicao.rename(
+                columns={"DESCR_PROD": "Descrição", "QTDE": "Qtde", "VALOR_TOTAL": "Valor Total"}
+            )
+            chave = f"estagio733_tabela_{origem_valor}"
+            with st.container(key=chave):
+                st.markdown(
+                    f"<style>.st-key-{chave} [data-testid='stDataFrame'] "
+                    "* { font-size: 11px; }</style>",
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(exibicao, use_container_width=True, hide_index=True)
+
     if st.button("🎯 Cravar Alvos Selecionados (7.3.3)", key="btn_cravar_alvos_733"):
         marcados = editado[_COLUNA_CHECKBOX_CONSOLIDADO_733].reindex(editor_base.index).fillna(False)
         selecionados = editor_base.loc[marcados.to_numpy()]
