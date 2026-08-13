@@ -2085,14 +2085,24 @@ def render_consolidado_origens_733() -> None:
     Total das tabelas de detalhe deixaram de ser texto BR pré-formatado e
     passaram a usar `column_config.NumberColumn(format="%.2f")`, mesmo
     motivo já documentado no editor principal (ordenação por clique no
-    cabeçalho é por STRING quando a coluna é texto)."""
+    cabeçalho é por STRING quando a coluna é texto).
+
+    Refinamento 2026-08-13, 3ª rodada (usuário questionou a alegação
+    repetida de que "o Bloco H não tem valor"): CONFIRMADO como falso pra
+    granularidade bruta do H010 (`VL_ITEM`/`VL_UNIT` 100% preenchidos) —
+    o que não tinha valor era só a tabela consolidada do Estágio 5
+    (`estoque_anual_consolidado`), que passou a carregar VALOR_INICIAL/
+    VALOR_FINAL (ver loader.montar_estoque_anual_consolidado()). Valor
+    Total do Estoque, aqui e no Detalhamento por Origem, deixou de ser
+    NULL/branco e passou a mostrar o valor declarado real (VL_ITEM do
+    inventário de fechamento do ano)."""
     st.markdown("**🔍 7.3.3: Seleção Consolidada (Estoque/XML)**")
     st.caption(
         "Une Entradas, Saídas (excluindo autoemissão) e Estoque (Bloco H, só anos já fechados) "
         "numa única tabela — Qtde/Valor Total agregados por Ano+Descrição+Unidade+Origem. Ajuda a "
         "encontrar itens com volume físico ou estoque suspeito que não aparecem no 7.2/7.3 por "
-        "falta de divergência financeira. Valor Total do Estoque fica em branco — o Bloco H não "
-        "tem valor nessa granularidade (só Entradas/Saídas têm, via XML). Cód. Produto mostra "
+        "falta de divergência financeira. Valor Total do Estoque é o valor declarado (VL_ITEM) do "
+        "inventário de fechamento do ano (Bloco H). Cód. Produto mostra "
         "'nc' quando nenhuma origem tinha código vinculado. Alvo cravado aqui não passa pela "
         "régua de divergência do 7.2/7.3 (fica marcado na Observação)."
     )

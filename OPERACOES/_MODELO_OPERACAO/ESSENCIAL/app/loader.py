@@ -2354,6 +2354,7 @@ def load_declaracao_estoque() -> "tuple[pd.DataFrame, dict]":
 _COLUNAS_ESTOQUE_ANUAL = [
     "ANO_REFERENCIA", "COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO",
     "UNIDADE", "QUANTIDADE_INICIAL", "QUANTIDADE_FINAL",
+    "VALOR_INICIAL", "VALOR_FINAL",
 ]
 
 
@@ -2381,7 +2382,26 @@ def montar_estoque_anual_consolidado() -> pd.DataFrame:
     fonte de outra aplicação do usuário), quase 100% dos pares (COD_ITEM,
     ANO) divergiam; deslocar ANO_REFERENCIA em +1 ano fazia 31.954/31.955
     baterem exatamente na base da geraldo — confirmação inequívoca do
-    desvio, não ruído de arredondamento."""
+    desvio, não ruído de arredondamento.
+
+    VALOR_INICIAL/VALOR_FINAL (2026-08-13): schema estendido depois que o
+    usuário questionou a afirmação repetida em vários textos do app de que
+    "o Bloco H não tem valor" — checagem contra o banco real (sped_estoque)
+    mostrou que `VL_ITEM`/`VL_UNIT` do H010 estão 100% preenchidos
+    (ex.: QTD=16, VL_UNIT=3,33, VL_ITEM=53,28 — VL_ITEM = QTD×VL_UNIT). O
+    que de fato não tinha valor era esta tabela consolidada (Estágio 5),
+    que só carregava QUANTIDADE_INICIAL/FINAL. Em vez de reimplementar a
+    mesma continuidade cronológica pra VALOR, reaproveita
+    `_valores_estoque_hunter()` — já existente, já usada por
+    `gerar_cruzamento_valor()` (Estágio 7.2/RN1), com `.groupby().sum()`
+    por (ANO, COD_ITEM) que já trata corretamente declarações duplicadas
+    no mesmo ano (achado real geraldo 2020: 10 itens com 2 declarações,
+    31/01 e 31/12 — o merge bruto de QUANTIDADE acima NÃO agrupa por esse
+    motivo, então preferimos a função já validada em vez de duplicar a
+    lógica com um bug potencial de chave repetida). VALOR_INICIAL/FINAL
+    ficam NaN quando não há valor de estoque_hunter pro par (ANO,
+    COD_ITEM) — mesmo tratamento de ausência que QUANTIDADE_INICIAL/FINAL
+    já tinham. Regra R07: numéricos de verdade, não string."""
     df_est, _ = load_declaracao_estoque()
     if df_est.empty or "DT_INV" not in df_est.columns:
         return pd.DataFrame(columns=_COLUNAS_ESTOQUE_ANUAL)
@@ -2413,6 +2433,17 @@ def montar_estoque_anual_consolidado() -> pd.DataFrame:
     )
     consolidado["UNIDADE"] = consolidado["UNIDADE_EI"].fillna(consolidado["UNIDADE_EF"])
     consolidado = consolidado.drop(columns=["UNIDADE_EI", "UNIDADE_EF"])
+
+    valores = _valores_estoque_hunter().rename(
+        columns={"ANO": "ANO_REFERENCIA", "COD_ITEM": "COD_ITEM_DECLARACAO"}
+    )
+    if valores.empty:
+        consolidado["VALOR_INICIAL"] = pd.NA
+        consolidado["VALOR_FINAL"] = pd.NA
+    else:
+        consolidado = consolidado.merge(
+            valores, on=["ANO_REFERENCIA", "COD_ITEM_DECLARACAO"], how="left",
+        )
 
     df_produtos, _ = load_declaracao_produtos()
     if not df_produtos.empty and {"COD_ITEM", "DESCR_ITEM"} <= set(df_produtos.columns):
@@ -4336,16 +4367,25 @@ def _valores_estoque_hunter() -> pd.DataFrame:
     declaração contribui pro EF do ano de `DT_INV` e, ao mesmo tempo, pro
     EI do ano seguinte — mesma regra de continuidade de `montar_estoque_
     anual_consolidado()` (Estágio 5), aqui aplicada a VALOR em vez de
-    QUANTIDADE. `VL_ITEM` não existe em `estoque_anual_consolidado` (só
-    QUANTIDADE_INICIAL/FINAL) — lido direto do SPED cru (`load_
-    declaracao_estoque()`). Função paralela, decisão explícita do usuário
-    de não estender o schema do Estágio 5 pra isso. `COD_ITEM` não
-    normalizado (mesma convenção de `montar_produto_alvo()` — igualdade
-    exata com o `COD_ITEM_DECLARACAO` cru, sem stripping de zeros).
-    Soma VL_ITEM por (ANO, COD_ITEM) — declarações duplicadas (achado
-    real de 2026-07-17/18, ex.: geraldo `DT_INV=31/01/2020`) se somam
-    entre si; caso raro, mitigado na prática pelo filtro de Período de
-    Auditoria em `gerar_cruzamento_valor()`."""
+    QUANTIDADE. Lido direto do SPED cru (`load_declaracao_estoque()`).
+    `COD_ITEM` não normalizado (mesma convenção de `montar_produto_alvo()`
+    — igualdade exata com o `COD_ITEM_DECLARACAO` cru, sem stripping de
+    zeros). Soma VL_ITEM por (ANO, COD_ITEM) — declarações duplicadas
+    (achado real de 2026-07-17/18, ex.: geraldo `DT_INV=31/01/2020`) se
+    somam entre si; caso raro, mitigado na prática pelo filtro de Período
+    de Auditoria em `gerar_cruzamento_valor()`.
+
+    Reaproveitada por `montar_estoque_anual_consolidado()` (2026-08-13):
+    até então essa função era "paralela" por decisão explícita do usuário
+    de não estender o schema do Estágio 5 (`estoque_anual_consolidado`)
+    pra incluir valor — decisão revertida depois que o usuário questionou
+    a alegação repetida em vários textos do app de que "o Bloco H não tem
+    valor" (checagem real: `VL_ITEM` do H010 está 100% preenchido). Em vez
+    de duplicar a lógica de continuidade cronológica em dois lugares, o
+    Estágio 5 passou a chamar esta função e fazer merge do resultado —
+    esta função continua a única fonte de VALOR_INICIAL/FINAL do app,
+    usada tanto por `gerar_cruzamento_valor()` (Estágio 7.2) quanto por
+    `montar_estoque_anual_consolidado()` (Estágio 5)."""
     df_est, _ = load_declaracao_estoque()
     if df_est.empty or "DT_INV" not in df_est.columns:
         return pd.DataFrame(columns=["ANO", "COD_ITEM", "VALOR_INICIAL", "VALOR_FINAL"])
@@ -5763,7 +5803,7 @@ SELECT ANO_REFERENCIA AS ANO, DESCR_ITEM_DECLARACAO AS DESCR_PROD,
        ) AS COD_ITEM,
        UNIDADE AS UNID_PROD,
        SUM(TRY_CAST(QUANTIDADE_FINAL AS DOUBLE)) AS QTDE,
-       CAST(NULL AS DOUBLE) AS VALOR_TOTAL, 'estoque' AS ORIGEM
+       SUM(TRY_CAST(VALOR_FINAL AS DOUBLE)) AS VALOR_TOTAL, 'estoque' AS ORIGEM
 FROM estoque_anual_consolidado
 WHERE QUANTIDADE_FINAL IS NOT NULL
 GROUP BY ANO_REFERENCIA, DESCR_ITEM_DECLARACAO, UNIDADE
@@ -5802,14 +5842,12 @@ def gerar_consolidado_origens_733() -> dict:
       ano_item()`: quando a auditada é EMITENTE, o próprio código do XML
       dela já É a declaração, sem precisar de Matching).
     - Estoque: `ANO_REFERENCIA`, `DESCR_ITEM_DECLARACAO`, `UNIDADE`,
-      `QUANTIDADE_FINAL`, `COD_ITEM_DECLARACAO`; `VALOR_TOTAL` sempre
-      NULL — `VL_ITEM` não existe em `estoque_anual_consolidado`
-      (Estágio 5 nunca estendeu o schema pra isso, decisão documentada em
-      `_valores_estoque_hunter()`); confirmado com o usuário
-      (AskUserQuestion, 2026-08-03) deixar em branco em vez de
-      reconciliar com o SPED cru (granularidade não bate 1:1 com
-      `QUANTIDADE_FINAL` por linha — aquele é agregado por ANO+COD_ITEM,
-      dividido em VALOR_INICIAL/VALOR_FINAL).
+      `QUANTIDADE_FINAL`, `COD_ITEM_DECLARACAO`; `VALOR_TOTAL` =
+      `SUM(VALOR_FINAL)` (2026-08-13 — antes ficava sempre NULL; usuário
+      questionou a alegação de que "o Bloco H não tem valor" e checagem
+      real confirmou `VL_ITEM`/`VL_UNIT` 100% preenchidos no H010;
+      `estoque_anual_consolidado` passou a carregar `VALOR_INICIAL`/
+      `VALOR_FINAL`, ver `montar_estoque_anual_consolidado()`).
 
     `COD_ITEM` agregado via `STRING_AGG(DISTINCT ..., ', ')` dentro de
     cada grupo (ANO, DESCR_PROD, UNID_PROD, ORIGEM) — mesmo raciocínio de
