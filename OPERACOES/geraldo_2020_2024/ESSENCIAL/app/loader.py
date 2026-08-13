@@ -2358,6 +2358,39 @@ _COLUNAS_ESTOQUE_ANUAL = [
 ]
 
 
+def _estoque_declaracoes_mais_recentes_por_ano(df_est: pd.DataFrame) -> pd.DataFrame:
+    """Deduplica H010 por (COD_ITEM, ano de DT_INV), mantendo só a
+    declaração mais recente quando o mesmo item tem mais de uma dentro do
+    MESMO ano — achado real geraldo 2020 (9 itens): uma retificadora do
+    período 2020-01 (SPED de fevereiro/2020) trouxe uma declaração extra
+    com DT_INV=31/01/2020, além do fechamento normal de DT_INV=31/12/2020
+    (esse, entregue dentro do SPED do período seguinte, 2021-02 — prática
+    comum). Duas declarações no mesmo ano são duas FOTOS do MESMO estoque
+    físico em datas diferentes, não duas quantidades/valores a somar —
+    somar fabricaria estoque fantasma (ex.: item com 6 unidades em ambas
+    as datas viraria 12 se somado). Decisão do usuário via
+    AskUserQuestion (2026-08-13, depois de investigar o ARQUIVO_ORIGEM
+    dos 2 arquivos e confirmar que são competências/datas distintas, não
+    duplicidade de arquivo): usar sempre a declaração de DT_INV mais
+    recente dentro do ano como o fechamento oficial, descartando a(s)
+    anterior(es). Substituiu um `.groupby().sum()` que existia antes só em
+    `_valores_estoque_hunter()` (tratava as duas declarações como
+    aditivas — mesmo bug, só que pra VALOR; corrigido junto).
+
+    Comparação por DATA REAL (`pd.to_datetime`), não por string — DDMMAAAA
+    não ordena cronologicamente por comparação textual (ex.: "15062020"
+    > "01122020" como string, mas 1/dez/2020 é depois de 15/jun/2020).
+
+    Espera `df_est` já filtrado pra `DT_INV` com 8 dígitos válidos (ver
+    chamadores). Usada por `montar_estoque_anual_consolidado()`
+    (QUANTIDADE) e `_valores_estoque_hunter()` (VALOR) — MESMA regra pras
+    duas métricas, já que vêm da mesma declaração física."""
+    ano_inv_str = df_est["DT_INV"].str[4:8]
+    data_inv = pd.to_datetime(df_est["DT_INV"], format="%d%m%Y", errors="coerce")
+    idx_mais_recentes = data_inv.groupby([df_est["COD_ITEM"], ano_inv_str]).idxmax()
+    return df_est.loc[idx_mais_recentes.to_numpy()].reset_index(drop=True)
+
+
 def montar_estoque_anual_consolidado() -> pd.DataFrame:
     """Estágio 5: consolida o inventário declarado (H005+H010, ver
     load_declaracao_estoque()) numa linha por item x ano. Regra de
@@ -2393,15 +2426,19 @@ def montar_estoque_anual_consolidado() -> pd.DataFrame:
     que só carregava QUANTIDADE_INICIAL/FINAL. Em vez de reimplementar a
     mesma continuidade cronológica pra VALOR, reaproveita
     `_valores_estoque_hunter()` — já existente, já usada por
-    `gerar_cruzamento_valor()` (Estágio 7.2/RN1), com `.groupby().sum()`
-    por (ANO, COD_ITEM) que já trata corretamente declarações duplicadas
-    no mesmo ano (achado real geraldo 2020: 10 itens com 2 declarações,
-    31/01 e 31/12 — o merge bruto de QUANTIDADE acima NÃO agrupa por esse
-    motivo, então preferimos a função já validada em vez de duplicar a
-    lógica com um bug potencial de chave repetida). VALOR_INICIAL/FINAL
+    `gerar_cruzamento_valor()` (Estágio 7.2/RN1). VALOR_INICIAL/FINAL
     ficam NaN quando não há valor de estoque_hunter pro par (ANO,
     COD_ITEM) — mesmo tratamento de ausência que QUANTIDADE_INICIAL/FINAL
-    já tinham. Regra R07: numéricos de verdade, não string."""
+    já tinham. Regra R07: numéricos de verdade, não string.
+
+    Deduplicação por declaração mais recente (2026-08-13, mesma sessão):
+    ver `_estoque_declaracoes_mais_recentes_por_ano()` — quando o mesmo
+    item tem mais de uma declaração de inventário no mesmo ano, mantém só
+    a de DT_INV mais recente antes de montar EI/EF, em vez de deixar a
+    chave (ANO_REFERENCIA, COD_ITEM_DECLARACAO) colidir no merge abaixo
+    (o que geraria linhas duplicadas, dobrando QUANTIDADE_INICIAL/FINAL
+    pra esses itens — bug real encontrado na geraldo, corrigido antes de
+    qualquer publicação)."""
     df_est, _ = load_declaracao_estoque()
     if df_est.empty or "DT_INV" not in df_est.columns:
         return pd.DataFrame(columns=_COLUNAS_ESTOQUE_ANUAL)
@@ -2411,6 +2448,7 @@ def montar_estoque_anual_consolidado() -> pd.DataFrame:
     df = df[ano_valido].copy()
     if df.empty:
         return pd.DataFrame(columns=_COLUNAS_ESTOQUE_ANUAL)
+    df = _estoque_declaracoes_mais_recentes_por_ano(df)
 
     ano_inv = df["DT_INV"].str[4:8].astype(int)  # DDMMAAAA -> AAAA
     qtd_num = _numero_decimal_br(df["QTD"])
@@ -4370,10 +4408,7 @@ def _valores_estoque_hunter() -> pd.DataFrame:
     QUANTIDADE. Lido direto do SPED cru (`load_declaracao_estoque()`).
     `COD_ITEM` não normalizado (mesma convenção de `montar_produto_alvo()`
     — igualdade exata com o `COD_ITEM_DECLARACAO` cru, sem stripping de
-    zeros). Soma VL_ITEM por (ANO, COD_ITEM) — declarações duplicadas
-    (achado real de 2026-07-17/18, ex.: geraldo `DT_INV=31/01/2020`) se
-    somam entre si; caso raro, mitigado na prática pelo filtro de Período
-    de Auditoria em `gerar_cruzamento_valor()`.
+    zeros).
 
     Reaproveitada por `montar_estoque_anual_consolidado()` (2026-08-13):
     até então essa função era "paralela" por decisão explícita do usuário
@@ -4385,26 +4420,36 @@ def _valores_estoque_hunter() -> pd.DataFrame:
     Estágio 5 passou a chamar esta função e fazer merge do resultado —
     esta função continua a única fonte de VALOR_INICIAL/FINAL do app,
     usada tanto por `gerar_cruzamento_valor()` (Estágio 7.2) quanto por
-    `montar_estoque_anual_consolidado()` (Estágio 5)."""
+    `montar_estoque_anual_consolidado()` (Estágio 5).
+
+    Declarações duplicadas no mesmo ano — CORRIGIDO 2026-08-13 (mesma
+    sessão que adicionou o schema): até então esta função SOMAVA VL_ITEM
+    quando o mesmo item tinha 2 declarações no mesmo ano (achado de
+    2026-07-17/18, ex.: geraldo `DT_INV=31/01/2020`), tratando como se
+    fossem valores aditivos — só que investigando o ARQUIVO_ORIGEM dos 2
+    arquivos (2026-08-13), ficou claro que são duas FOTOS do MESMO estoque
+    físico em datas diferentes (uma retificadora do período 2020-01, outra
+    o fechamento normal de 31/12/2020), não duas quantidades a somar —
+    somar fabricava estoque fantasma (dobrava VALOR_FINAL de ~9 itens em
+    2020). Corrigido via `_estoque_declaracoes_mais_recentes_por_ano()`,
+    que mantém só a declaração de DT_INV mais recente por (COD_ITEM, ano)
+    — decisão confirmada com o usuário via AskUserQuestion. Esse mesmo bug
+    já afetava `gerar_cruzamento_valor()` (Estágio 7.2/RN1) EM PRODUÇÃO
+    pra esses ~9 itens em 2020 antes desta correção."""
     df_est, _ = load_declaracao_estoque()
     if df_est.empty or "DT_INV" not in df_est.columns:
         return pd.DataFrame(columns=["ANO", "COD_ITEM", "VALOR_INICIAL", "VALOR_FINAL"])
     df = df_est[df_est["DT_INV"].str.fullmatch(r"\d{8}")].copy()
     if df.empty:
         return pd.DataFrame(columns=["ANO", "COD_ITEM", "VALOR_INICIAL", "VALOR_FINAL"])
+    df = _estoque_declaracoes_mais_recentes_por_ano(df)
 
     ano_inv = df["DT_INV"].str[4:8].astype(int)
     valor = _numero_decimal_br(df["VL_ITEM"])
     cod_item = df["COD_ITEM"].astype(str)
 
-    base_ei = (
-        pd.DataFrame({"ANO": (ano_inv + 1).astype(str), "COD_ITEM": cod_item, "VALOR_INICIAL": valor})
-        .groupby(["ANO", "COD_ITEM"], as_index=False)["VALOR_INICIAL"].sum()
-    )
-    base_ef = (
-        pd.DataFrame({"ANO": ano_inv.astype(str), "COD_ITEM": cod_item, "VALOR_FINAL": valor})
-        .groupby(["ANO", "COD_ITEM"], as_index=False)["VALOR_FINAL"].sum()
-    )
+    base_ei = pd.DataFrame({"ANO": (ano_inv + 1).astype(str), "COD_ITEM": cod_item, "VALOR_INICIAL": valor})
+    base_ef = pd.DataFrame({"ANO": ano_inv.astype(str), "COD_ITEM": cod_item, "VALOR_FINAL": valor})
     return base_ei.merge(base_ef, on=["ANO", "COD_ITEM"], how="outer")
 
 
