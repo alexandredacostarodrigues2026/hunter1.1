@@ -1,5 +1,6 @@
 """Componentes de interface (painéis, tabs, cards) do Hunter 1.1."""
 import base64
+import re
 import sys
 import time
 from datetime import datetime
@@ -1193,6 +1194,19 @@ def _formatar_moeda_br(v: float) -> str:
     return f"{v:,.2f}".translate(_TRANS_MILHAR_BR)
 
 
+def _padrao_busca_curinga(texto: str) -> str:
+    """Converte um termo de "Buscar por Descrição" em regex segura pro
+    `.str.contains()` do pandas (2026-08-12, achado real: usuário digitou
+    "*bol*jutucut*" esperando curinga estilo Qlik/SQL LIKE — o texto ia
+    direto pro `.str.contains(regex=True)` por padrão, e "*" sozinho não é
+    regex válida, estourava `pyarrow.lib.ArrowInvalid: no argument for
+    repetition operator`). "*" vira curinga (equivalente a ".*"); todo o
+    resto do texto é escapado literalmente (`re.escape`), então parênteses/
+    colchetes/pontos em descrições de produto buscados não quebram mais a
+    regex nem casam sem querer."""
+    return ".*".join(re.escape(parte) for parte in texto.split("*"))
+
+
 def _badge_st(escolhido: dict) -> str:
     """Rótulo curto "ST" (Substituição Tributária) pra anexar onde o
     produto alvo é identificado no Estágio 10 — Solicitação Técnica
@@ -1277,7 +1291,9 @@ def render_cruzamento_valor() -> None:
             filtrado = df_preview[df_preview["ANO"].isin(anos_selecionados)]
             if busca_descricao.strip():
                 filtrado = filtrado[
-                    filtrado["DESCR_ALVO"].str.contains(busca_descricao.strip(), case=False, na=False)
+                    filtrado["DESCR_ALVO"].str.contains(
+                        _padrao_busca_curinga(busca_descricao.strip()), case=False, na=False,
+                    )
                 ]
 
             st.markdown(f"**{len(filtrado):,} linha(s)** após filtro.".replace(",", "."))
@@ -1368,7 +1384,9 @@ def render_cruzamento_produto() -> None:
             filtrado = df_preview
             if busca_descricao.strip():
                 filtrado = filtrado[
-                    filtrado["DESCR_ALVO"].str.contains(busca_descricao.strip(), case=False, na=False)
+                    filtrado["DESCR_ALVO"].str.contains(
+                        _padrao_busca_curinga(busca_descricao.strip()), case=False, na=False,
+                    )
                 ]
 
             st.markdown(f"**{len(filtrado):,} produto(s)** após filtro.".replace(",", "."))
@@ -1522,7 +1540,9 @@ def render_rn1_fisica() -> None:
             filtrado = df_preview[df_preview["ANO"].isin(anos_selecionados)]
             if busca_descricao.strip():
                 filtrado = filtrado[
-                    filtrado["DESCR_ALVO"].str.contains(busca_descricao.strip(), case=False, na=False)
+                    filtrado["DESCR_ALVO"].str.contains(
+                        _padrao_busca_curinga(busca_descricao.strip()), case=False, na=False,
+                    )
                 ]
 
             st.markdown(f"**{len(filtrado):,} linha(s)** após filtro.".replace(",", "."))
@@ -1628,7 +1648,9 @@ def render_rn1_produto() -> None:
             filtrado = df_preview
             if busca_descricao.strip():
                 filtrado = filtrado[
-                    filtrado["DESCR_ALVO"].str.contains(busca_descricao.strip(), case=False, na=False)
+                    filtrado["DESCR_ALVO"].str.contains(
+                        _padrao_busca_curinga(busca_descricao.strip()), case=False, na=False,
+                    )
                 ]
 
             st.markdown(f"**{len(filtrado):,} produto(s)** após filtro.".replace(",", "."))
@@ -1978,7 +2000,9 @@ def render_rn1_simulada_30() -> None:
             filtrado = df_preview
             if busca_descricao.strip():
                 filtrado = filtrado[
-                    filtrado["DESCR_ALVO"].str.contains(busca_descricao.strip(), case=False, na=False)
+                    filtrado["DESCR_ALVO"].str.contains(
+                        _padrao_busca_curinga(busca_descricao.strip()), case=False, na=False,
+                    )
                 ]
 
             st.markdown(f"**{len(filtrado):,} produto(s)** após filtro.".replace(",", "."))
@@ -2040,7 +2064,17 @@ def render_consolidado_origens_733() -> None:
     por clique no cabeçalho da coluna (recurso nativo do
     st.data_editor/glide-data-grid) ordenar só as 200 já carregadas, não
     o total filtrado. Removido o cap — todo `filtrado` vai pro editor,
-    já que o grid é virtualizado (só renderiza as linhas visíveis)."""
+    já que o grid é virtualizado (só renderiza as linhas visíveis).
+
+    Refinamento 2026-08-13 (Solicitação Técnica — auditoria integrada):
+    fonte unificada em 10px na tabela principal e nas 3 tabelas de
+    Detalhamento por Origem; Detalhamento só aparece com termo de busca
+    preenchido (senão repetiria a tabela principal sem agregar valor);
+    Detalhamento ignora o selectbox de Origem de propósito — mostra
+    sempre Entradas/Saídas/Estoque juntos pro termo buscado, pra achar
+    omissão (comprou mas não vendeu, ou vice-versa) sem trocar o filtro
+    repetidamente; ganhou 2 st.metric (Soma Quantidade/Soma Valor Total)
+    por origem, calculados com `.sum()` puro (nulo vira 0.0)."""
     st.markdown("**🔍 7.3.3: Seleção Consolidada (Estoque/XML)**")
     st.caption(
         "Une Entradas, Saídas (excluindo autoemissão) e Estoque (Bloco H, só anos já fechados) "
@@ -2091,13 +2125,24 @@ def render_consolidado_origens_733() -> None:
         "Origem", ["Todas"] + origens_disponiveis, key="filtro_origem_733",
     )
 
-    filtrado = df_preview
+    # `filtrado_base` (busca+ano, sem Origem) alimenta o Detalhamento por
+    # Origem abaixo — 2026-08-13, pedido do usuário: o selectbox de Origem
+    # não deve limitar as 3 tabelas de detalhe (senão pesquisar um item com
+    # Origem="entrada" selecionada esconderia Saídas/Estoque desse mesmo
+    # item, o oposto do objetivo de ver as 3 frentes simultaneamente).
+    # `filtrado` (busca+ano+origem) continua alimentando só a tabela
+    # principal de seleção, que respeita os 3 filtros normalmente.
+    filtrado_base = df_preview
     if busca_descricao.strip():
-        filtrado = filtrado[
-            filtrado["DESCR_PROD"].str.contains(busca_descricao.strip(), case=False, na=False)
+        filtrado_base = filtrado_base[
+            filtrado_base["DESCR_PROD"].str.contains(
+                _padrao_busca_curinga(busca_descricao.strip()), case=False, na=False,
+            )
         ]
     if ano_selecionado != "Todos":
-        filtrado = filtrado[filtrado["ANO"] == ano_selecionado]
+        filtrado_base = filtrado_base[filtrado_base["ANO"] == ano_selecionado]
+
+    filtrado = filtrado_base
     if origem_selecionada != "Todas":
         filtrado = filtrado[filtrado["ORIGEM"] == origem_selecionada]
 
@@ -2115,7 +2160,7 @@ def render_consolidado_origens_733() -> None:
     with st.container(key="estagio733_editor_consolidado"):
         st.markdown(
             "<style>.st-key-estagio733_editor_consolidado [data-testid='stDataFrame'] "
-            "* { font-size: 12px; }</style>",
+            "* { font-size: 10px; }</style>",
             unsafe_allow_html=True,
         )
         editado = st.data_editor(
@@ -2139,50 +2184,67 @@ def render_consolidado_origens_733() -> None:
             },
         )
 
-    # 3 tabelas lado a lado por Origem (2026-08-12, pedido do usuário) —
-    # agregado só por Descrição (soma todos os anos/unidades dentro do
-    # filtro já aplicado acima em `filtrado`, mesmos 3 filtros do print:
-    # Descrição/Ano/Origem), com linha de TOTAL. Valor Total do Estoque
-    # fica em branco (`sum(min_count=1)` devolve NaN quando o grupo inteiro
-    # é nulo, em vez de 0,00 — mesmo motivo já documentado na tabela
-    # principal: Bloco H não tem valor nessa granularidade).
-    st.markdown("**Totais por Origem (Entradas / Saídas / Estoque)**")
-    col_ent, col_sai, col_est = st.columns(3)
-    for col, titulo, origem_valor in (
-        (col_ent, "Entradas", "entrada"),
-        (col_sai, "Saídas", "saida"),
-        (col_est, "Estoque", "estoque"),
-    ):
-        sub = filtrado[filtrado["ORIGEM"] == origem_valor]
-        with col:
-            st.markdown(f"**{titulo}**")
-            if sub.empty:
-                st.caption("Nenhum item.")
-                continue
-            agrupado = (
-                sub.groupby("DESCR_PROD", as_index=False)[["QTDE", "VALOR_TOTAL"]]
-                .sum(min_count=1)
-                .sort_values("DESCR_PROD")
-            )
-            linha_total = pd.DataFrame([{
-                "DESCR_PROD": "TOTAL",
-                "QTDE": agrupado["QTDE"].sum(min_count=1),
-                "VALOR_TOTAL": agrupado["VALOR_TOTAL"].sum(min_count=1),
-            }])
-            exibicao = pd.concat([agrupado, linha_total], ignore_index=True)
-            for _col in ("QTDE", "VALOR_TOTAL"):
-                exibicao[_col] = exibicao[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
-            exibicao = exibicao.rename(
-                columns={"DESCR_PROD": "Descrição", "QTDE": "Qtde", "VALOR_TOTAL": "Valor Total"}
-            )
-            chave = f"estagio733_tabela_{origem_valor}"
-            with st.container(key=chave):
-                st.markdown(
-                    f"<style>.st-key-{chave} [data-testid='stDataFrame'] "
-                    "* { font-size: 11px; }</style>",
-                    unsafe_allow_html=True,
+    # Detalhamento por Origem (2026-08-12, tabelas lado a lado; refinado
+    # 2026-08-13 — Solicitação Técnica): só renderiza quando há termo de
+    # busca por descrição (senão a seção fica igual à tabela principal e
+    # não agrega valor pra quem só está navegando/filtrando por Ano). Usa
+    # `filtrado_base` (busca+ano, SEM o filtro de Origem) de propósito —
+    # o objetivo declarado é o auditor ver as 3 frentes (Entradas/Saídas/
+    # Estoque) do item buscado simultaneamente, mesmo com um valor
+    # específico selecionado no selectbox de Origem (que só vale pra
+    # tabela principal de seleção). Cada coluna aqui é sempre a origem
+    # fixa do loop (`origem_valor`), não a do selectbox. Agregado só por
+    # Descrição, com linha de TOTAL. Valor Total do Estoque fica em
+    # branco na tabela (`sum(min_count=1)` devolve NaN quando o grupo
+    # inteiro é nulo, em vez de 0,00 — Bloco H não tem valor nessa
+    # granularidade), mas os KPIs de Soma Quantidade/Valor Total abaixo
+    # usam `.sum()` puro (skipna, devolve 0.0 pra grupo vazio/todo nulo),
+    # tratando nulo como 0.0 conforme pedido.
+    if busca_descricao.strip():
+        st.markdown("**Detalhamento por Origem (Entradas / Saídas / Estoque)**")
+        st.caption(
+            "Ignora o filtro de Origem acima — mostra sempre as 3 origens pro termo "
+            "buscado, pra comparar se o item comprado também foi vendido ou consta em estoque."
+        )
+        col_ent, col_sai, col_est = st.columns(3)
+        for col, titulo, origem_valor in (
+            (col_ent, "Entradas", "entrada"),
+            (col_sai, "Saídas", "saida"),
+            (col_est, "Estoque", "estoque"),
+        ):
+            sub = filtrado_base[filtrado_base["ORIGEM"] == origem_valor]
+            with col:
+                st.markdown(f"**{titulo}**")
+                col_kpi1, col_kpi2 = st.columns(2)
+                col_kpi1.metric("Soma Quantidade", _formatar_moeda_br(sub["QTDE"].sum()))
+                col_kpi2.metric("Soma Valor Total", _formatar_moeda_br(sub["VALOR_TOTAL"].sum()))
+                if sub.empty:
+                    st.caption("Nenhum item.")
+                    continue
+                agrupado = (
+                    sub.groupby("DESCR_PROD", as_index=False)[["QTDE", "VALOR_TOTAL"]]
+                    .sum(min_count=1)
+                    .sort_values("DESCR_PROD")
                 )
-                st.dataframe(exibicao, use_container_width=True, hide_index=True)
+                linha_total = pd.DataFrame([{
+                    "DESCR_PROD": "TOTAL",
+                    "QTDE": agrupado["QTDE"].sum(min_count=1),
+                    "VALOR_TOTAL": agrupado["VALOR_TOTAL"].sum(min_count=1),
+                }])
+                exibicao = pd.concat([agrupado, linha_total], ignore_index=True)
+                for _col in ("QTDE", "VALOR_TOTAL"):
+                    exibicao[_col] = exibicao[_col].apply(lambda v: _formatar_moeda_br(v) if pd.notna(v) else "")
+                exibicao = exibicao.rename(
+                    columns={"DESCR_PROD": "Descrição", "QTDE": "Qtde", "VALOR_TOTAL": "Valor Total"}
+                )
+                chave = f"estagio733_tabela_{origem_valor}"
+                with st.container(key=chave):
+                    st.markdown(
+                        f"<style>.st-key-{chave} [data-testid='stDataFrame'] "
+                        "* { font-size: 10px; }</style>",
+                        unsafe_allow_html=True,
+                    )
+                    st.dataframe(exibicao, use_container_width=True, hide_index=True)
 
     if st.button("🎯 Cravar Alvos Selecionados (7.3.3)", key="btn_cravar_alvos_733"):
         marcados = editado[_COLUNA_CHECKBOX_CONSOLIDADO_733].reindex(editor_base.index).fillna(False)
@@ -5694,7 +5756,9 @@ def render_consolidado_cruzamento_11() -> None:
 
     filtrado = consolidado[consolidado["ANO"].isin(anos_filtro) & consolidado["INFRACAO_FINAL"].isin(infracao_filtro)]
     if busca.strip():
-        filtrado = filtrado[filtrado["DESCR_PROD"].str.contains(busca.strip(), case=False, na=False)]
+        filtrado = filtrado[
+            filtrado["DESCR_PROD"].str.contains(_padrao_busca_curinga(busca.strip()), case=False, na=False)
+        ]
 
     st.markdown(
         f"**{len(filtrado):,} linha(s)** de {len(consolidado):,} no total.".replace(",", "."),
