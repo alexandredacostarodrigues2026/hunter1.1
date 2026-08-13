@@ -2358,24 +2358,53 @@ _COLUNAS_ESTOQUE_ANUAL = [
 ]
 
 
+def _timestamp_submissao_sped(arquivo_origem: pd.Series) -> pd.Series:
+    """Extrai o timestamp de transmissão embutido no nome do arquivo SPED
+    — penúltimo campo antes do sequencial final, formato DDMMAAAAHHMMSS
+    (ex. "...-202001-28022020091051-014-28022020093555.txt" →
+    28/02/2020 09:10:51). Testado contra os 7 arquivos reais da geraldo,
+    0 falhas de parse. Usado como critério de recência REAL de entrega —
+    diferente do período/competência (AAAAMM) que também está no nome do
+    arquivo, que reflete o que foi declarado, não quando foi de fato
+    transmitido (achado real: um arquivo do período 2020-02 (retificadora)
+    foi transmitido em 28/04/2021, mais de um ano depois — o período
+    sozinho não seria confiável pra ordenar por recência de entrega).
+    NaT (nome fora do padrão) vira `pd.Timestamp.min` — pior caso possível,
+    nunca vence um desempate contra um timestamp real."""
+    extraido = arquivo_origem.str.extract(r"-(\d{14})-\d+-\d{14}\.txt$")[0]
+    ts = pd.to_datetime(extraido, format="%d%m%Y%H%M%S", errors="coerce")
+    return ts.fillna(pd.Timestamp.min)
+
+
 def _estoque_declaracoes_mais_recentes_por_ano(df_est: pd.DataFrame) -> pd.DataFrame:
-    """Deduplica H010 por (COD_ITEM, ano de DT_INV), mantendo só a
-    declaração mais recente quando o mesmo item tem mais de uma dentro do
-    MESMO ano — achado real geraldo 2020 (9 itens): uma retificadora do
-    período 2020-01 (SPED de fevereiro/2020) trouxe uma declaração extra
-    com DT_INV=31/01/2020, além do fechamento normal de DT_INV=31/12/2020
-    (esse, entregue dentro do SPED do período seguinte, 2021-02 — prática
-    comum). Duas declarações no mesmo ano são duas FOTOS do MESMO estoque
-    físico em datas diferentes, não duas quantidades/valores a somar —
-    somar fabricaria estoque fantasma (ex.: item com 6 unidades em ambas
-    as datas viraria 12 se somado). Decisão do usuário via
-    AskUserQuestion (2026-08-13, depois de investigar o ARQUIVO_ORIGEM
-    dos 2 arquivos e confirmar que são competências/datas distintas, não
-    duplicidade de arquivo): usar sempre a declaração de DT_INV mais
-    recente dentro do ano como o fechamento oficial, descartando a(s)
-    anterior(es). Substituiu um `.groupby().sum()` que existia antes só em
-    `_valores_estoque_hunter()` (tratava as duas declarações como
-    aditivas — mesmo bug, só que pra VALOR; corrigido junto).
+    """Deduplica H010 por (COD_ITEM, ano de DT_INV), mantendo só UMA
+    declaração por item×ano quando existe mais de uma. Regra em 2
+    critérios, confirmada com o usuário (2026-08-13, AskUserQuestion +
+    esclarecimento posterior "não é a declaração de 31/12, é a mais
+    recente que TRAZ o dado do estoque final em 31/12"):
+
+    1. CRITÉRIO PRIMÁRIO — data do inventário (DT_INV) mais recente
+       dentro do ano: achado real geraldo 2020 (9 itens) — uma
+       retificadora do período 2020-01 trouxe DT_INV=31/01/2020 além do
+       fechamento normal DT_INV=31/12/2020 (entregue no SPED do período
+       seguinte, 2021-02 — prática comum). São duas FOTOS do MESMO
+       estoque físico em datas diferentes dentro do ano — não duas
+       quantidades/valores a somar (somar fabricaria estoque fantasma,
+       ex.: item com 6 unidades em ambas as datas viraria 12). O usuário
+       confirmou que o encerramento anual é sempre 31/12 — a data mais
+       recente dentro do ano naturalmente converge pra isso quando
+       31/12 está presente.
+    2. CRITÉRIO DE DESEMPATE — timestamp de transmissão do SPED
+       (`_timestamp_submissao_sped()`) mais recente, usado SÓ quando duas
+       linhas têm a MESMA DT_INV (ex.: uma retificadora de abril/ano+1
+       corrigindo os valores de uma declaração de fevereiro/ano+1 que
+       relata o MESMO fechamento de 31/12) — nesse caso o arquivo entregue
+       por último prevalece, não a data do inventário em si (que empataria
+       entre as duas). Não observado nos dados reais da geraldo hoje (0
+       colisões de (COD_ITEM, DT_INV) entre arquivos diferentes), mas é a
+       regra correta pra quando acontecer — sem esse desempate, `idxmax()`
+       sozinho pegaria a primeira ocorrência em ordem arbitrária de
+       processamento de arquivo, não necessariamente a mais recente.
 
     Comparação por DATA REAL (`pd.to_datetime`), não por string — DDMMAAAA
     não ordena cronologicamente por comparação textual (ex.: "15062020"
@@ -2385,10 +2414,13 @@ def _estoque_declaracoes_mais_recentes_por_ano(df_est: pd.DataFrame) -> pd.DataF
     chamadores). Usada por `montar_estoque_anual_consolidado()`
     (QUANTIDADE) e `_valores_estoque_hunter()` (VALOR) — MESMA regra pras
     duas métricas, já que vêm da mesma declaração física."""
-    ano_inv_str = df_est["DT_INV"].str[4:8]
-    data_inv = pd.to_datetime(df_est["DT_INV"], format="%d%m%Y", errors="coerce")
-    idx_mais_recentes = data_inv.groupby([df_est["COD_ITEM"], ano_inv_str]).idxmax()
-    return df_est.loc[idx_mais_recentes.to_numpy()].reset_index(drop=True)
+    df = df_est.copy()
+    df["_ANO_INV"] = df["DT_INV"].str[4:8]
+    df["_DATA_INV"] = pd.to_datetime(df["DT_INV"], format="%d%m%Y", errors="coerce")
+    df["_SUBMISSAO"] = _timestamp_submissao_sped(df["ARQUIVO_ORIGEM"])
+    df = df.sort_values(["_DATA_INV", "_SUBMISSAO"])
+    df = df.groupby(["COD_ITEM", "_ANO_INV"]).tail(1)
+    return df.drop(columns=["_ANO_INV", "_DATA_INV", "_SUBMISSAO"]).reset_index(drop=True)
 
 
 def montar_estoque_anual_consolidado() -> pd.DataFrame:
