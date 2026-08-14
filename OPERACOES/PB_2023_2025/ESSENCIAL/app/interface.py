@@ -1196,15 +1196,62 @@ def _formatar_moeda_br(v: float) -> str:
 
 def _padrao_busca_curinga(texto: str) -> str:
     """Converte um termo de "Buscar por Descrição" em regex segura pro
-    `.str.contains()` do pandas (2026-08-12, achado real: usuário digitou
-    "*bol*jutucut*" esperando curinga estilo Qlik/SQL LIKE — o texto ia
-    direto pro `.str.contains(regex=True)` por padrão, e "*" sozinho não é
-    regex válida, estourava `pyarrow.lib.ArrowInvalid: no argument for
-    repetition operator`). "*" vira curinga (equivalente a ".*"); todo o
-    resto do texto é escapado literalmente (`re.escape`), então parênteses/
-    colchetes/pontos em descrições de produto buscados não quebram mais a
-    regex nem casam sem querer."""
-    return ".*".join(re.escape(parte) for parte in texto.split("*"))
+    `.str.contains()` do pandas. Origem (2026-08-12, achado real):
+    usuário digitou "*bol*jutucut*" esperando curinga estilo Qlik/SQL
+    LIKE — o texto ia direto pro `.str.contains(regex=True)` por padrão,
+    e "*" sozinho não é regex válida, estourava `pyarrow.lib.
+    ArrowInvalid: no argument for repetition operator`.
+
+    Refinado 2026-08-14 (Solicitação Técnica — âncoras + interseção),
+    confirmado com o usuário via AskUserQuestion. Regras, em ordem:
+
+    1. **Sem nenhum "*"**: mantém o comportamento original — substring
+       simples ("contém"), sem âncora nenhuma. Decisão explícita do
+       usuário: aplicar ^/$ sempre (mesmo sem "*") quebraria toda busca
+       de uma palavra solta já em uso nas 7 telas que chamam esta função
+       — "mac" continua achando qualquer descrição que CONTENHA "mac".
+    2. **Âncora de início**: se o texto NÃO começa com "*", prefixa "^"
+       — só casa quem COMEÇA com o 1º fragmento (ex.: "mac*" → "^mac.*",
+       exclui "ENGRAXATE PARA CERVEJA" de uma busca por "CERVEJA*"... — 1º
+       fragmento "*" à direita ainda deixa livre o que vem depois).
+    3. **Âncora de fim**: se o texto NÃO termina com "*", sufixa "$" — só
+       casa quem TERMINA com o último fragmento (ex.: "*mac" → ".*mac$").
+    4. **Contém global**: lado que TEM "*" na borda vira ".*" solto (sem
+       âncora) naquele lado (ex.: "*mac*" → ".*mac.*", igual à busca
+       antiga).
+    5. **Interseção (qualquer ordem)**: só quando o texto COMEÇA com "*"
+       E tem mais de um fragmento não-vazio — em vez de exigir a ordem
+       linear dos fragmentos (ex.: "mor.*mac" exige "mor" antes de
+       "mac"), monta um Positive Lookahead por fragmento, validando a
+       presença de todos em qualquer posição/ordem (ex.: "*mor*mac*" →
+       "^(?=.*mor)(?=.*mac).*$" — acha "PICOLE DE MORANGO" e "MORANGO
+       PICOLE" com o mesmo termo de busca). Fragmentos vazios (bordas ou
+       "**" consecutivo) são ignorados, nunca geram lookahead vazio.
+       Texto começando com "*" mas com só 1 fragmento cai na regra 4
+       (contém global simples), não na interseção — não há "ordem" pra
+       ignorar com um termo só.
+
+    Todo fragmento é escapado com `re.escape()` antes de entrar na
+    regex — parênteses/colchetes/pontos em descrições de produto
+    buscados não quebram a regex nem casam sem querer."""
+    if "*" not in texto:
+        return re.escape(texto)
+
+    comeca_asterisco = texto.startswith("*")
+    termina_asterisco = texto.endswith("*")
+    fragmentos = [parte for parte in texto.split("*") if parte]
+
+    if not fragmentos:
+        return ".*"
+
+    if comeca_asterisco and len(fragmentos) > 1:
+        lookaheads = "".join(f"(?=.*{re.escape(fragmento)})" for fragmento in fragmentos)
+        return f"^{lookaheads}.*$"
+
+    meio = ".*".join(re.escape(fragmento) for fragmento in fragmentos)
+    prefixo = ".*" if comeca_asterisco else "^"
+    sufixo = ".*" if termina_asterisco else "$"
+    return f"{prefixo}{meio}{sufixo}"
 
 
 def _badge_st(escolhido: dict) -> str:
@@ -2139,6 +2186,10 @@ def render_consolidado_origens_733() -> None:
 
     col_busca, col_ano, col_origem = st.columns(3)
     busca_descricao = col_busca.text_input("Buscar por Descrição", key="filtro_descricao_733")
+    col_busca.caption(
+        r"Dica: use '\*' como curinga. Ex.: 'mac\*' (inicia com mac), '\*mac' (termina com mac), "
+        r"'\*mac\*' (contém mac), '\*mor\*mac\*' (contém mor e mac, em qualquer ordem)."
+    )
     anos_disponiveis = sorted(df_preview["ANO"].dropna().unique().tolist())
     ano_selecionado = col_ano.selectbox("Ano", ["Todos"] + anos_disponiveis, key="filtro_ano_733")
     origens_disponiveis = sorted(df_preview["ORIGEM"].dropna().unique().tolist())
