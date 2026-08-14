@@ -339,7 +339,7 @@ def render_carga_operacao() -> None:
       2. NF-e           — nfe_entradas + nfe_saidas + nfe_analise_et/ep + nfe_situacao_et/ep
                            + xml_entradas_real/xml_saidas_real no DuckDB
       3. SPED           — sped_itens + sped_produtos + sped_unidades + sped_estoque no DuckDB
-      4. Matching (BC3) — loader.persistir_bc3(), 2026-08-15, Solicitação
+      4. Matching (BC3) — loader.persistir_bc3(), 2026-08-14, Solicitação
                            Técnica "PAINEL 1 — PROCEDIMENTOS INICIAIS":
                            dispara automaticamente sempre que a carga (1ª
                            vez ou "Carregar novamente") termina com sucesso,
@@ -454,7 +454,7 @@ def render_carga_operacao() -> None:
 
     if ok_nfe and ok_sped:
         st.session_state["dados_carregados"] = True
-        # ── Fase final: Matching (BC3) automático (2026-08-15, Solicitação
+        # ── Fase final: Matching (BC3) automático (2026-08-14, Solicitação
         # Técnica "PAINEL 1 — PROCEDIMENTOS INICIAIS") — antes só rodava via
         # botão manual em "🧩 MATCHING (BC3)"; agora dispara aqui, na MESMA
         # carga, pro auditor já ver a taxa de match sem precisar navegar pra
@@ -2930,16 +2930,24 @@ def _botao_voltar_menu() -> None:
 
 
 def _render_resultado_matching_inicial() -> None:
-    """Painel de KPIs do Matching (BC3) dentro de "🛠️ 1: PROCEDIMENTOS
-    INICIAIS" (Solicitação Técnica 2026-08-15) — mesmo formato visual de
-    render_bc3() (Estágio 2: 2 linhas de 7 st.metric, CSS escopado pra
-    fonte reduzida), mas com PORCENTAGEM sobre o total real da BC2
-    (loader.consultar_total_bc2()) embutida em cada métrica via
-    `delta_color="off"` (mostra o valor cinza, sem seta verde/vermelha —
-    aqui é só um percentual, não uma variação). loader.consultar_totais_
-    bc3() continua devolvendo só contagens brutas, sem alteração — não
-    quebra render_bc3(), que já consome essa função hoje; o cálculo de %
-    fica só aqui, local à nova tela.
+    """KPI único do Matching (BC3) dentro de "🛠️ 1: PROCEDIMENTOS
+    INICIAIS" (Solicitação Técnica 2026-08-14 — simplificação do painel
+    anterior, que mostrava as 14 métricas D1-D6/A1-A5/ND/NM): mostra só
+    a Taxa de Match, como `st.metric` + `st.progress()` (barra visual do
+    percentual), com legenda explicando o que a taxa representa. O
+    detalhamento por tipo continua disponível, sem nenhuma mudança, no
+    painel manual "🧩 MATCHING (BC3)" (Estágio 2/render_bc3()) — esta
+    tela é só o resumo rápido de "a base está com boa cobertura de
+    código?", não o diagnóstico fino por tipo de match.
+
+    Significado da Taxa de Match (pedido explícito do usuário pra
+    deixar explícito na tela): é a taxa de INCLUSÃO DE CÓDIGO DE PRODUTO
+    no dado do fornecedor — a BC2 é o XML de Entradas de Terceiros
+    (emitido pelo fornecedor, chega SEM o código de produto da
+    auditada); o Matching (BC3) tenta INCLUIR esse código, casando cada
+    item da BC2 contra a Declaração da auditada (BC1). A Taxa de Match é
+    o percentual da BC2 que conseguiu esse código incluído/vinculado —
+    o complemento (100% − taxa) é ND (não declarado) + NM (sem match).
 
     Só renderiza se bc3_ja_gerada() — cobre tanto o fluxo automático
     (render_carga_operacao() já gerou a BC3 na mesma carga) quanto o caso
@@ -2960,51 +2968,21 @@ def _render_resultado_matching_inicial() -> None:
     )
     taxa_match = (total_casados / total_bc2 * 100) if total_bc2 else 0.0
 
-    def _valor(tipo: str) -> str:
-        return f"{totais[tipo]:,}".replace(",", ".")
-
-    def _pct(tipo: str) -> str:
-        if not total_bc2:
-            return "0,0% da BC2"
-        return f"{(totais[tipo] / total_bc2 * 100):.1f}% da BC2".replace(".", ",")
-
-    st.markdown(
-        "<style>"
-        ".st-key-procedimentos_iniciais_kpis [data-testid='stMetricValue'] { font-size: 1.1rem; }"
-        ".st-key-procedimentos_iniciais_kpis [data-testid='stMetricLabel'] { font-size: 0.75rem; }"
-        ".st-key-procedimentos_iniciais_kpis [data-testid='stMetricDelta'] { font-size: 0.7rem; }"
-        "</style>",
-        unsafe_allow_html=True,
-    )
-    with st.container(key="procedimentos_iniciais_kpis"):
-        col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
-        col1.metric("Matches D1", _valor("D1"), _pct("D1"), delta_color="off")
-        col2.metric("Matches D2", _valor("D2"), _pct("D2"), delta_color="off")
-        col3.metric("Matches A1", _valor("A1"), _pct("A1"), delta_color="off")
-        col4.metric("Matches A2", _valor("A2"), _pct("A2"), delta_color="off")
-        col5.metric("Matches A3", _valor("A3"), _pct("A3"), delta_color="off")
-        col6.metric("Matches A4", _valor("A4"), _pct("A4"), delta_color="off")
-        col7.metric("Matches A5", _valor("A5"), _pct("A5"), delta_color="off")
-
-        col8, col9, col10, col11, col12, col13, col14 = st.columns(7)
-        col8.metric("Matches D3", _valor("D3"), _pct("D3"), delta_color="off")
-        col9.metric("Matches D4", _valor("D4"), _pct("D4"), delta_color="off")
-        col10.metric("Matches D5", _valor("D5"), _pct("D5"), delta_color="off")
-        col11.metric("Matches D6", _valor("D6"), _pct("D6"), delta_color="off")
-        col12.metric("Não Declarado (ND)", _valor("ND"), _pct("ND"), delta_color="off")
-        col13.metric("Sem Match (NM)", _valor("NM"), _pct("NM"), delta_color="off")
-        col14.metric("Taxa de Match", f"{taxa_match:.1f}%".replace(".", ","))
-
+    st.metric("Taxa de Match", f"{taxa_match:.1f}%".replace(".", ","))
+    st.progress(min(taxa_match / 100, 1.0))
     st.caption(
-        f"{total_bc2:,} item(ns) na BC2 (base do Matching) — percentuais calculados sobre esse "
-        "total. Uma taxa alta de \"Não Declarado (ND)\" é sinal imediato de risco de omissão de "
-        'compras. Regerar manualmente em "🧩 MATCHING (BC3)" se precisar.'.replace(",", ".")
+        "Taxa de inclusão de código de produto no dado do fornecedor: a BC2 (XML de Entradas de "
+        "Terceiros) chega do fornecedor SEM o código de produto da auditada — o Matching (BC3) "
+        "tenta incluir esse código casando cada item contra a Declaração da auditada (BC1). A "
+        f"Taxa de Match é o percentual da BC2 ({total_bc2:,} item(ns)) que conseguiu esse código "
+        'incluído. Detalhamento por tipo de match (D1-D6/A1-A5/ND/NM) disponível em '
+        '"🧩 MATCHING (BC3)".'.replace(",", ".")
     )
 
 
 def render_pagina_extracao() -> None:
     """Painel '🛠️ 1: PROCEDIMENTOS INICIAIS' (Solicitação Técnica
-    2026-08-15 "PAINEL 1"; antes chamado só de "Extração", Estágio 6) —
+    2026-08-14 "PAINEL 1"; antes chamado só de "Extração", Estágio 6) —
     ponto de entrada oficial de qualquer nova auditoria: Configuração de
     Período de Auditoria, Equipe de Fiscalização, Carga de XML/SPED (com
     os alertas de cobertura e de Ancoragem de Estoque já embutidos em

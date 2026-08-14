@@ -2207,7 +2207,7 @@ def consultar_total_bc2() -> int:
     """Total de itens da BC2 (`nfe_bc2`, base do Matching — todo item ET
     válido, ver `montar_bc2()`), pro denominador real das porcentagens
     de cada tipo de match no painel "🛠️ 1: PROCEDIMENTOS INICIAIS"
-    (Solicitação Técnica 2026-08-15). Cada item da BC2 vira exatamente
+    (Solicitação Técnica 2026-08-14). Cada item da BC2 vira exatamente
     1 linha na `bc3` (D1-D6/A1-A5/ND/NM, sem sobra nem perda — ver
     `matching.executar_matching()`), então este total também serve como
     conferência: `sum(consultar_totais_bc3().values())` deveria bater
