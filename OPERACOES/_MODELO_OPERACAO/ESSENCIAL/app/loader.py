@@ -6631,30 +6631,97 @@ def consultar_produto_cruzamento_escolhido() -> "dict | None":
             if df.empty:
                 return None
             escolhido = df.iloc[0].to_dict()
-        # Lookup via consultar_grupo_produto_alvo_fiscalizacao() (não SQL
-        # direto) — reaproveita a migração de schema já tratada lá
-        # (tabelas persistidas ANTES desses campos existirem não têm a
-        # coluna de verdade; SQL direto quebraria com "coluna não
-        # encontrada").
-        grupo, _ = consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=False)
-        escolhido["IS_ST"] = False
-        escolhido["DESCR_EDITADA"] = ""
-        escolhido["UNID_ALVO"] = ""
-        escolhido["UNID_EDITADA"] = ""
-        if not grupo.empty:
-            chave_escolhido = _chave_produto_alvo_fiscalizacao(
-                pd.DataFrame([{"COD_ITEM": escolhido.get("COD_ITEM", ""), "DESCR_ALVO": escolhido["DESCR_ALVO"]}]),
-            ).iloc[0]
-            linha = grupo[_chave_produto_alvo_fiscalizacao(grupo) == chave_escolhido]
-            if not linha.empty:
-                for campo in ("IS_ST", "DESCR_EDITADA", "UNID_ALVO", "UNID_EDITADA"):
-                    valor = linha.iloc[0].get(campo)
-                    if pd.notna(valor):
-                        escolhido[campo] = bool(valor) if campo == "IS_ST" else str(valor)
-        return escolhido
+        return _enriquecer_escolhido(escolhido)
     except Exception:
         logger.exception("Erro ao consultar produto_cruzamento_escolhido em %s", _BANCO_PATH)
         return None
+
+
+def _enriquecer_escolhido(escolhido: dict) -> dict:
+    """Adiciona IS_ST/DESCR_EDITADA/UNID_ALVO/UNID_EDITADA a um dict que
+    já tenha DESCR_ALVO/COD_ITEM — extraído de `consultar_produto_
+    cruzamento_escolhido()` (2026-08-14, Solicitação Técnica "SELEÇÃO DE
+    ITEM PARA RELATÓRIOS ANALÍTICOS") pra ser reaproveitado também por
+    `montar_escolhido_local()`, que monta um `escolhido` equivalente pra
+    um produto QUALQUER (não só o escolhido globalmente no Estágio 10).
+    Lookup AO VIVO em `produto_alvo_fiscalizacao` via
+    `_chave_produto_alvo_fiscalizacao()` (COD_ITEM, fallback DESCR_ALVO)
+    — mesmo raciocínio já documentado em `consultar_produto_cruzamento_
+    escolhido()`. Produto não encontrado no grupo (não deveria acontecer
+    em uso normal, mas evita erro) devolve os defaults (False/"")."""
+    grupo, _ = consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=False)
+    escolhido["IS_ST"] = False
+    escolhido["DESCR_EDITADA"] = ""
+    escolhido["UNID_ALVO"] = ""
+    escolhido["UNID_EDITADA"] = ""
+    if not grupo.empty:
+        chave_escolhido = _chave_produto_alvo_fiscalizacao(
+            pd.DataFrame([{"COD_ITEM": escolhido.get("COD_ITEM", ""), "DESCR_ALVO": escolhido["DESCR_ALVO"]}]),
+        ).iloc[0]
+        linha = grupo[_chave_produto_alvo_fiscalizacao(grupo) == chave_escolhido]
+        if not linha.empty:
+            for campo in ("IS_ST", "DESCR_EDITADA", "UNID_ALVO", "UNID_EDITADA"):
+                valor = linha.iloc[0].get(campo)
+                if pd.notna(valor):
+                    escolhido[campo] = bool(valor) if campo == "IS_ST" else str(valor)
+    return escolhido
+
+
+def consultar_produtos_disponiveis_relatorios_12() -> pd.DataFrame:
+    """Estágio 12 — Relatórios Analíticos (12.2 Itens Cruzados/12.3 MC
+    Quantidades/12.4 MC Preços Unitários), Solicitação Técnica
+    2026-08-14 "SELEÇÃO DE ITEM PARA RELATÓRIOS ANALÍTICOS": lista os
+    produtos que já têm pelo menos 1 item confirmado na Rubrica
+    (`cruzamento_confirmado_detalhado`), pra alimentar o seletor local
+    da tela de Relatórios — permite gerar relatório analítico de
+    qualquer produto já trabalhado, independente de qual esteja
+    escolhido GLOBALMENTE pra cruzamento no Estágio 10 (`produto_
+    cruzamento_escolhido`, ver `consultar_produto_cruzamento_
+    escolhido()`; essa tabela não é tocada por este seletor). `SELECT
+    DISTINCT DESCR_ALVO, COD_ITEM`, ordenado por DESCR_ALVO. Regra R07:
+    ambas as colunas sempre string. Devolve DataFrame vazio (mesmas
+    colunas) se a tabela ainda não existir ou não houver confirmação
+    nenhuma."""
+    colunas = ["DESCR_ALVO", "COD_ITEM"]
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas)
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "cruzamento_confirmado_detalhado" not in tabelas:
+                return pd.DataFrame(columns=colunas)
+            df = con.execute(
+                "SELECT DISTINCT DESCR_ALVO, COD_ITEM FROM cruzamento_confirmado_detalhado "
+                "ORDER BY DESCR_ALVO"
+            ).df()
+        return _forcar_colunas_string(df, colunas)
+    except Exception:
+        logger.exception("Erro ao consultar produtos disponíveis (Relatórios 12) em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas)
+
+
+def montar_escolhido_local(descr_alvo: str, cod_item: str) -> dict:
+    """Monta um dict `escolhido` no MESMO formato de `consultar_produto_
+    cruzamento_escolhido()` (DESCR_ALVO/COD_ITEM/TS/IS_ST/DESCR_EDITADA/
+    UNID_ALVO/UNID_EDITADA), mas pra um produto escolhido LOCALMENTE no
+    seletor dos Relatórios Analíticos (Estágio 12.2/12.3/12.4,
+    Solicitação Técnica 2026-08-14) em vez do produto escolhido
+    globalmente no Estágio 10 — não lê nem grava `produto_cruzamento_
+    escolhido`, então escolher aqui não afeta o Estágio 10 e vice-versa.
+    `gerar_dados_relatorio_itens_cruzados()`/`gerar_dados_relatorio_mc_
+    quantidades()`/`gerar_dados_relatorio_mc_pu()` e as respectivas
+    `exportar_relatorio_*_pdf()` já recebiam `escolhido` como parâmetro
+    (não liam a tabela global internamente) — este dict serve como
+    substituto direto, sem precisar mudar a assinatura delas. TS fica
+    vazio (não é uma "escolha persistida", é só o produto atualmente
+    selecionado no combo desta tela). Regra R07: DESCR_ALVO/COD_ITEM
+    sempre string."""
+    escolhido = {
+        "DESCR_ALVO": str(descr_alvo),
+        "COD_ITEM": str(cod_item) if cod_item is not None else "",
+        "TS": "",
+    }
+    return _enriquecer_escolhido(escolhido)
 
 
 def descricao_efetiva_escolhido(escolhido: dict) -> str:

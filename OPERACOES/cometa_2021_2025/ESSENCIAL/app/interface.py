@@ -6009,23 +6009,20 @@ _ROTULOS_COLUNAS_RELATORIO_ITENS_CRUZADOS = {
 }
 
 
-def _render_relatorio_itens_cruzados() -> None:
+def _render_relatorio_itens_cruzados(escolhido: dict) -> None:
     """"RELATÓRIO ITENS CRUZADOS" (Estágio 12.2, Solicitação Técnica
     2026-08-10) — "memória de cálculo" analítica por trás do Relatório
     Final (12.1): 1 linha por item físico (nota a nota/declaração a
-    declaração) do PRODUTO ATUALMENTE ESCOLHIDO pra cruzamento (Estágio
-    9/10/10.2, `loader.consultar_produto_cruzamento_escolhido()`) —
-    diferente do 12.1, que é consolidado geral de todos os produtos.
-    Mesmo padrão de `_render_relatorio_final()`: tabela em tela (10px,
-    somente leitura) + PDF gerado automaticamente e embutido via
-    `<iframe>` base64, com botão de download logo abaixo."""
-    escolhido = loader.consultar_produto_cruzamento_escolhido()
-    if not escolhido:
-        st.info(
-            'Nenhum produto escolhido pra cruzamento ainda — em "📋 10: PRODUTOS ALVOS SALVOS", '
-            'marque "Escolher p/ Cruzamento" pra um produto e confirme.'
-        )
-        return
+    declaração) do produto recebido em `escolhido` — diferente do 12.1,
+    que é consolidado geral de todos os produtos. `escolhido` vem de
+    `_selecionar_produto_relatorio_12()` (Solicitação Técnica
+    2026-08-14: "SELEÇÃO DE ITEM PARA RELATÓRIOS ANALÍTICOS") — não é
+    mais obrigatoriamente o produto escolhido globalmente no Estágio 10,
+    o auditor pode escolher qualquer produto com item confirmado na
+    Rubrica direto nesta tela. Mesmo padrão de `_render_relatorio_
+    final()`: tabela em tela (10px, somente leitura) + PDF gerado
+    automaticamente e embutido via `<iframe>` base64, com botão de
+    download logo abaixo."""
     st.markdown(
         f"**Item Cruzado:** {loader.descricao_efetiva_escolhido(escolhido)} — "
         f"**Unidade do Produto:** {loader.unidade_efetiva_escolhido(escolhido)}"
@@ -6094,7 +6091,7 @@ _ROTULOS_COLUNAS_RELATORIO_MC_QUANTIDADES = {
 _COLUNAS_NUMERICAS_RELATORIO_MC_QUANTIDADES = ("QTDE_ORIGINAL", "FATOR", "QTDE_UTILIZ")
 
 
-def _render_relatorio_mc_quantidades() -> None:
+def _render_relatorio_mc_quantidades(escolhido: dict) -> None:
     """"RELATÓRIO MC QUANTIDADES" (Estágio 12.3, Solicitação Técnica
     2026-08-10: "MEMÓRIA DE CÁLCULO DAS QUANTIDADES") — prova, item a
     item, do cálculo `QTDE ORIGINAL × FATOR = QTDE UTILIZADA`, vinculado
@@ -6102,8 +6099,10 @@ def _render_relatorio_mc_quantidades() -> None:
     quantidades()` reaproveita a base compartilhada de `gerar_dados_
     relatorio_itens_cruzados()` — LOC idêntico por construção, ver
     docstring de `loader._montar_base_relatorios_produto_12()`). Mesmo
-    produto atualmente escolhido pra cruzamento do 12.2 (Estágio 9/10/
-    10.2).
+    `escolhido` recebido por parâmetro do 12.2 (ambos vêm da MESMA
+    chamada a `_selecionar_produto_relatorio_12()`, key de session_state
+    compartilhada entre os 3 relatórios analíticos — trocar de 12.2 pra
+    12.3 não perde a escolha, ver `render_pagina_relatorios()`).
 
     Grade em `st.data_editor` (pedido explícito da Solicitação Técnica,
     diferente do `st.dataframe` do 12.1/12.2) — TODAS as colunas
@@ -6117,13 +6116,6 @@ def _render_relatorio_mc_quantidades() -> None:
     banner "CATEGORIA X" (ver `loader.exportar_relatorio_mc_quantidades_
     pdf()`). PDF gerado automaticamente e embutido via `<iframe>` base64,
     mesmo padrão do 12.1/12.2."""
-    escolhido = loader.consultar_produto_cruzamento_escolhido()
-    if not escolhido:
-        st.info(
-            'Nenhum produto escolhido pra cruzamento ainda — em "📋 10: PRODUTOS ALVOS SALVOS", '
-            'marque "Escolher p/ Cruzamento" pra um produto e confirme.'
-        )
-        return
     st.markdown(
         f"**Item Cruzado:** {loader.descricao_efetiva_escolhido(escolhido)} — "
         f"**Unidade do Produto:** {loader.unidade_efetiva_escolhido(escolhido)}"
@@ -6191,7 +6183,7 @@ _ROTULOS_COLUNAS_RELATORIO_MC_PU = {
 _COLUNAS_NUMERICAS_RELATORIO_MC_PU = ("QTDE_ORIGINAL", "VU_ORIGINAL", "FATOR", "QTDE_UTILIZ", "VU_UTILIZADO")
 
 
-def _render_relatorio_mc_pu() -> None:
+def _render_relatorio_mc_pu(escolhido: dict) -> None:
     """"RELATÓRIO MC PREÇOS UNITÁRIOS" (Estágio 12.4, Solicitação
     Técnica 2026-08-10: "MEMÓRIA DE CÁLCULO DE PREÇOS UNITÁRIOS") —
     prova aritmética, item a item, do preço unitário usado na valoração
@@ -6199,8 +6191,9 @@ def _render_relatorio_mc_pu() -> None:
     12.2/12.3 — só mostra os itens do ANO×CATEGORIA que efetivamente
     alimentou o `PU_SUGERIDO` daquele ano no Estágio 10.2/RN1 (ver
     docstring de `loader.gerar_dados_relatorio_mc_pu()`); nunca mostra
-    Estoque, e cada ano só tem 1 categoria. Mesmo produto atualmente
-    escolhido pra cruzamento do 12.2/12.3.
+    Estoque, e cada ano só tem 1 categoria. Mesmo `escolhido` recebido
+    por parâmetro do 12.2/12.3 (key de session_state compartilhada em
+    `_selecionar_produto_relatorio_12()`).
 
     Grade em `st.data_editor` (pedido explícito da Solicitação Técnica),
     todas as colunas desabilitadas (`disabled=True`) — prova de cálculo,
@@ -6209,13 +6202,6 @@ def _render_relatorio_mc_pu() -> None:
     grade em tela) aparecem também as caixas "PU MÉDIO"/"MEMÓRIA DE
     CÁLCULO"/"PU MÉDIO + AGREGAÇÃO" por (ANO, CATEGORIA), ver `loader.
     exportar_relatorio_mc_pu_pdf()`."""
-    escolhido = loader.consultar_produto_cruzamento_escolhido()
-    if not escolhido:
-        st.info(
-            'Nenhum produto escolhido pra cruzamento ainda — em "📋 10: PRODUTOS ALVOS SALVOS", '
-            'marque "Escolher p/ Cruzamento" pra um produto e confirme.'
-        )
-        return
     st.markdown(
         f"**Item Cruzado:** {loader.descricao_efetiva_escolhido(escolhido)} — "
         f"**Unidade do Produto:** {loader.unidade_efetiva_escolhido(escolhido)}"
@@ -6268,20 +6254,85 @@ def _render_relatorio_mc_pu() -> None:
     )
 
 
+def _selecionar_produto_relatorio_12() -> "dict | None":
+    """Seletor de produto dos 3 Relatórios Analíticos (12.2 Itens
+    Cruzados/12.3 MC Quantidades/12.4 MC Preços Unitários), Solicitação
+    Técnica 2026-08-14 "SELEÇÃO DE ITEM PARA RELATÓRIOS ANALÍTICOS":
+    antes, os 3 usavam obrigatoriamente o produto escolhido GLOBALMENTE
+    pra cruzamento no Estágio 10 (`loader.consultar_produto_cruzamento_
+    escolhido()`); agora o auditor pode escolher qualquer produto que já
+    tenha item confirmado na Rubrica, direto na aba de Relatórios, sem
+    precisar voltar no Estágio 10 pra trocar o produto em cruzamento.
+
+    Lista vem de `loader.consultar_produtos_disponiveis_relatorios_12()`
+    (`DISTINCT DESCR_ALVO, COD_ITEM` de `cruzamento_confirmado_
+    detalhado`) — não da tabela `produto_cruzamento_escolhido`, que
+    continua intocada (escolher aqui não afeta o Estágio 10, e
+    vice-versa). Pré-seleciona o produto escolhido GLOBALMENTE quando
+    ele estiver na lista, preservando o comportamento de hoje como
+    padrão — o auditor só precisa trocar se quiser ver outro produto.
+
+    Key de session_state ÚNICA (`relatorios12_produto_selectbox`)
+    compartilhada pelos 3 relatórios — trocar entre 12.2/12.3/12.4 no
+    selectbox de cima não reseta a escolha de produto (12.2 e 12.3
+    comparam pelo MESMO LOC entre si, ver docstring de `loader._montar_
+    base_relatorios_produto_12()`; trocar de produto no meio da
+    conferência quebraria essa comparação).
+
+    Devolve o dict `escolhido` (via `loader.montar_escolhido_local()`,
+    mesmo formato de `consultar_produto_cruzamento_escolhido()`) ou
+    `None` se não há nenhum produto com item confirmado na Rubrica ainda
+    (mostra `st.info` orientando — mesma mensagem de antes)."""
+    produtos = loader.consultar_produtos_disponiveis_relatorios_12()
+    if produtos.empty:
+        st.info(
+            'Nenhum produto com item confirmado na Rubrica ainda — em "⚖️ 10: PRODUTOS ALVOS '
+            'SALVOS", confirme itens de Entradas/Saídas/Estoque pra pelo menos um produto primeiro.'
+        )
+        return None
+
+    opcoes = list(zip(produtos["DESCR_ALVO"], produtos["COD_ITEM"]))
+    rotulos = [f"{descr} ({cod})" if cod else descr for descr, cod in opcoes]
+
+    indice_padrao = 0
+    global_escolhido = loader.consultar_produto_cruzamento_escolhido()
+    if global_escolhido:
+        chave_global = (global_escolhido.get("DESCR_ALVO", ""), global_escolhido.get("COD_ITEM", ""))
+        if chave_global in opcoes:
+            indice_padrao = opcoes.index(chave_global)
+
+    indice_selecionado = st.selectbox(
+        "🔎 Selecione o produto para o relatório analítico",
+        options=range(len(opcoes)),
+        format_func=lambda i: rotulos[i],
+        index=indice_padrao,
+        key="relatorios12_produto_selectbox",
+    )
+    descr_alvo, cod_item = opcoes[indice_selecionado]
+    return loader.montar_escolhido_local(descr_alvo, cod_item)
+
+
 def render_pagina_relatorios() -> None:
     """Painel 'ESTÁGIO 12 - RELATÓRIOS' (Solicitação Técnica 2026-08-07:
     "MÓDULO DE RELATÓRIOS FINAIS"), botão da 2ª linha do Menu Principal.
     `st.selectbox` pra escolher qual relatório ver — "RELATÓRIO FINAL"
     (12.1, consolidado geral), "RELATÓRIO ITENS CRUZADOS" (12.2, memória
-    de cálculo analítica do produto escolhido), "RELATÓRIO MC
-    QUANTIDADES" (12.3, prova do cálculo Qtde Original × Fator = Qtde
-    Utilizada, vinculado ao 12.2 via LOC) e "RELATÓRIO MC PREÇOS
-    UNITÁRIOS" (12.4, prova do cálculo VU Original ÷ Fator = VU
-    Utilizado, agrupado por ANO/CATEGORIA conforme a origem do PU_
-    SUGERIDO no RN1, 2026-08-10) — a tela já nasce pronta pra crescer
-    (outros relatórios futuros entram como opção nova no mesmo
-    selectbox, sem precisar de botão de menu extra). Exige
-    dados_carregados (mesmo padrão das outras páginas)."""
+    de cálculo analítica de um produto), "RELATÓRIO MC QUANTIDADES"
+    (12.3, prova do cálculo Qtde Original × Fator = Qtde Utilizada,
+    vinculado ao 12.2 via LOC) e "RELATÓRIO MC PREÇOS UNITÁRIOS" (12.4,
+    prova do cálculo VU Original ÷ Fator = VU Utilizado, agrupado por
+    ANO/CATEGORIA conforme a origem do PU_SUGERIDO no RN1, 2026-08-10)
+    — a tela já nasce pronta pra crescer (outros relatórios futuros
+    entram como opção nova no mesmo selectbox, sem precisar de botão de
+    menu extra). Exige dados_carregados (mesmo padrão das outras
+    páginas).
+
+    Seletor de produto (2026-08-14, Solicitação Técnica "SELEÇÃO DE ITEM
+    PARA RELATÓRIOS ANALÍTICOS"): só aparece pros 3 relatórios
+    analíticos (12.2/12.3/12.4), NÃO no 12.1 (Relatório Final continua
+    consolidado geral de todos os produtos, sem seletor individual —
+    pedido explícito da Solicitação Técnica). Ver `_selecionar_produto_
+    relatorio_12()`."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
@@ -6297,9 +6348,15 @@ def render_pagina_relatorios() -> None:
     )
     if relatorio == "RELATÓRIO FINAL":
         _render_relatorio_final()
-    elif relatorio == "RELATÓRIO ITENS CRUZADOS":
-        _render_relatorio_itens_cruzados()
+        return
+
+    escolhido = _selecionar_produto_relatorio_12()
+    if escolhido is None:
+        return
+
+    if relatorio == "RELATÓRIO ITENS CRUZADOS":
+        _render_relatorio_itens_cruzados(escolhido)
     elif relatorio == "RELATÓRIO MC QUANTIDADES":
-        _render_relatorio_mc_quantidades()
+        _render_relatorio_mc_quantidades(escolhido)
     elif relatorio == "RELATÓRIO MC PREÇOS UNITÁRIOS":
-        _render_relatorio_mc_pu()
+        _render_relatorio_mc_pu(escolhido)
