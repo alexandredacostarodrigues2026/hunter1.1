@@ -2203,6 +2203,29 @@ def consultar_nfe_entradas_bc3(limite: "int | None" = 200) -> "tuple[pd.DataFram
         return pd.DataFrame(), 0
 
 
+def consultar_total_bc2() -> int:
+    """Total de itens da BC2 (`nfe_bc2`, base do Matching — todo item ET
+    válido, ver `montar_bc2()`), pro denominador real das porcentagens
+    de cada tipo de match no painel "🛠️ 1: PROCEDIMENTOS INICIAIS"
+    (Solicitação Técnica 2026-08-15). Cada item da BC2 vira exatamente
+    1 linha na `bc3` (D1-D6/A1-A5/ND/NM, sem sobra nem perda — ver
+    `matching.executar_matching()`), então este total também serve como
+    conferência: `sum(consultar_totais_bc3().values())` deveria bater
+    com este número numa base recém-processada. 0 se `nfe_bc2` ainda
+    não existir."""
+    if not _BANCO_PATH.exists():
+        return 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "nfe_bc2" not in tabelas:
+                return 0
+            return con.execute("SELECT COUNT(*) FROM nfe_bc2").fetchone()[0]
+    except Exception:
+        logger.exception("Erro ao consultar total da BC2 em %s", _BANCO_PATH)
+        return 0
+
+
 def consultar_totais_bc3() -> dict:
     """Retorna a contagem de itens da BC3 por tipo de match (D1, D2,
     A1, A2, A3, A4, A5, D3, D4, D5, D6, ND, NM) — numeração renomeada em

@@ -333,14 +333,33 @@ def _render_alerta_ancoragem_estoque() -> None:
 
 
 def render_carga_operacao() -> None:
-    """Prévia + botão de carga: 3 barras de progresso independentes.
+    """Prévia + botão de carga: 3 barras de progresso independentes + o
+    Matching (BC3) automático no final.
       1. XML pendentes  — classificação arquivo a arquivo
       2. NF-e           — nfe_entradas + nfe_saidas + nfe_analise_et/ep + nfe_situacao_et/ep
                            + xml_entradas_real/xml_saidas_real no DuckDB
       3. SPED           — sped_itens + sped_produtos + sped_unidades + sped_estoque no DuckDB
+      4. Matching (BC3) — loader.persistir_bc3(), 2026-08-15, Solicitação
+                           Técnica "PAINEL 1 — PROCEDIMENTOS INICIAIS":
+                           dispara automaticamente sempre que a carga (1ª
+                           vez ou "Carregar novamente") termina com sucesso,
+                           sem exigir navegação manual até "🧩 MATCHING
+                           (BC3)". Erro no Matching não invalida a carga —
+                           `dados_carregados` já foi marcado True antes; o
+                           auditor pode gerar manualmente depois se precisar.
     Quando já carregado e sem pendentes, exibe "Carregar novamente" (KPIs de
-    entradas/saídas reais ficam no painel dedicado, ver render_fluxos_fisicos())."""
+    entradas/saídas reais ficam no painel dedicado, ver render_fluxos_fisicos()).
+    Resultado (KPIs de match) exibido por render_pagina_extracao(), não
+    aqui — ver _render_resultado_matching_inicial()."""
     st.subheader("Carga de XML")
+
+    erro_bc3_automatico = st.session_state.pop("erro_bc3_automatico", None)
+    if erro_bc3_automatico:
+        st.error(
+            f"Erro ao gerar o Matching (BC3) automaticamente após a carga: {erro_bc3_automatico} — "
+            'os dados de NF-e/SPED foram carregados normalmente; gere o Matching manualmente em '
+            '"🧩 MATCHING (BC3)" se precisar.'
+        )
 
     with st.spinner("Verificando pastas..."):
         resumo = loader.pre_visualizar_carga()
@@ -435,6 +454,22 @@ def render_carga_operacao() -> None:
 
     if ok_nfe and ok_sped:
         st.session_state["dados_carregados"] = True
+        # ── Fase final: Matching (BC3) automático (2026-08-15, Solicitação
+        # Técnica "PAINEL 1 — PROCEDIMENTOS INICIAIS") — antes só rodava via
+        # botão manual em "🧩 MATCHING (BC3)"; agora dispara aqui, na MESMA
+        # carga, pro auditor já ver a taxa de match sem precisar navegar pra
+        # outra página. Sem barra granular própria (persistir_bc3() não
+        # expõe progresso interno, só 1 callback no fim — mesmo padrão que
+        # render_bc3() já usa: st.spinner cobrindo a chamada síncrona).
+        fase_bc3 = "**4. Matching (BC2 x BC1)**" if pend["quantidade"] > 0 else "**3. Matching (BC2 x BC1)**"
+        st.markdown(fase_bc3)
+        with st.spinner("Executando o Matching (BC2 x BC1) — pode levar cerca de 1 minuto..."):
+            resultado_bc3 = loader.persistir_bc3()
+        if "erro" in resultado_bc3:
+            st.session_state["erro_bc3_automatico"] = resultado_bc3["erro"]
+        else:
+            st.session_state["bc3_gerada"] = True
+            st.session_state.pop("erro_bc3_automatico", None)
         st.rerun()
 
 
@@ -2799,7 +2834,7 @@ def render_menu_principal() -> None:
         unsafe_allow_html=True,
     )
     col1, col2, col3, col4, col5, col6, col7, col8, col9, col10, col11 = st.columns(11)
-    if col1.button("📥 EXTRAÇÃO", key="btn_menu_extracao", use_container_width=True):
+    if col1.button("🛠️ 1: PROCEDIMENTOS INICIAIS", key="btn_menu_extracao", use_container_width=True):
         st.session_state["pagina_ativa"] = "extracao"
         st.rerun()
     if col2.button("🧩 MATCHING (BC3)", key="btn_menu_matching", use_container_width=True):
@@ -2894,12 +2929,93 @@ def _botao_voltar_menu() -> None:
     st.divider()
 
 
+def _render_resultado_matching_inicial() -> None:
+    """Painel de KPIs do Matching (BC3) dentro de "🛠️ 1: PROCEDIMENTOS
+    INICIAIS" (Solicitação Técnica 2026-08-15) — mesmo formato visual de
+    render_bc3() (Estágio 2: 2 linhas de 7 st.metric, CSS escopado pra
+    fonte reduzida), mas com PORCENTAGEM sobre o total real da BC2
+    (loader.consultar_total_bc2()) embutida em cada métrica via
+    `delta_color="off"` (mostra o valor cinza, sem seta verde/vermelha —
+    aqui é só um percentual, não uma variação). loader.consultar_totais_
+    bc3() continua devolvendo só contagens brutas, sem alteração — não
+    quebra render_bc3(), que já consome essa função hoje; o cálculo de %
+    fica só aqui, local à nova tela.
+
+    Só renderiza se bc3_ja_gerada() — cobre tanto o fluxo automático
+    (render_carga_operacao() já gerou a BC3 na mesma carga) quanto o caso
+    de o auditor ter gerado manualmente antes em "🧩 MATCHING (BC3)" e só
+    depois ter voltado pra esta tela."""
+    if "bc3_gerada" not in st.session_state:
+        st.session_state["bc3_gerada"] = loader.bc3_ja_gerada()
+    if not st.session_state["bc3_gerada"]:
+        return
+
+    st.markdown("### 🧩 Resultado do Matching Inicial (BC3)")
+    totais = loader.consultar_totais_bc3()
+    total_bc2 = loader.consultar_total_bc2()
+    total_casados = (
+        totais["D1"] + totais["D2"] + totais["A1"] + totais["A2"]
+        + totais["A3"] + totais["A4"] + totais["A5"] + totais["D3"]
+        + totais["D4"] + totais["D5"] + totais["D6"]
+    )
+    taxa_match = (total_casados / total_bc2 * 100) if total_bc2 else 0.0
+
+    def _valor(tipo: str) -> str:
+        return f"{totais[tipo]:,}".replace(",", ".")
+
+    def _pct(tipo: str) -> str:
+        if not total_bc2:
+            return "0,0% da BC2"
+        return f"{(totais[tipo] / total_bc2 * 100):.1f}% da BC2".replace(".", ",")
+
+    st.markdown(
+        "<style>"
+        ".st-key-procedimentos_iniciais_kpis [data-testid='stMetricValue'] { font-size: 1.1rem; }"
+        ".st-key-procedimentos_iniciais_kpis [data-testid='stMetricLabel'] { font-size: 0.75rem; }"
+        ".st-key-procedimentos_iniciais_kpis [data-testid='stMetricDelta'] { font-size: 0.7rem; }"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    with st.container(key="procedimentos_iniciais_kpis"):
+        col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+        col1.metric("Matches D1", _valor("D1"), _pct("D1"), delta_color="off")
+        col2.metric("Matches D2", _valor("D2"), _pct("D2"), delta_color="off")
+        col3.metric("Matches A1", _valor("A1"), _pct("A1"), delta_color="off")
+        col4.metric("Matches A2", _valor("A2"), _pct("A2"), delta_color="off")
+        col5.metric("Matches A3", _valor("A3"), _pct("A3"), delta_color="off")
+        col6.metric("Matches A4", _valor("A4"), _pct("A4"), delta_color="off")
+        col7.metric("Matches A5", _valor("A5"), _pct("A5"), delta_color="off")
+
+        col8, col9, col10, col11, col12, col13, col14 = st.columns(7)
+        col8.metric("Matches D3", _valor("D3"), _pct("D3"), delta_color="off")
+        col9.metric("Matches D4", _valor("D4"), _pct("D4"), delta_color="off")
+        col10.metric("Matches D5", _valor("D5"), _pct("D5"), delta_color="off")
+        col11.metric("Matches D6", _valor("D6"), _pct("D6"), delta_color="off")
+        col12.metric("Não Declarado (ND)", _valor("ND"), _pct("ND"), delta_color="off")
+        col13.metric("Sem Match (NM)", _valor("NM"), _pct("NM"), delta_color="off")
+        col14.metric("Taxa de Match", f"{taxa_match:.1f}%".replace(".", ","))
+
+    st.caption(
+        f"{total_bc2:,} item(ns) na BC2 (base do Matching) — percentuais calculados sobre esse "
+        "total. Uma taxa alta de \"Não Declarado (ND)\" é sinal imediato de risco de omissão de "
+        'compras. Regerar manualmente em "🧩 MATCHING (BC3)" se precisar.'.replace(",", ".")
+    )
+
+
 def render_pagina_extracao() -> None:
-    """Painel 'Extração' (Estágio 6): configuração de Período de Auditoria,
-    Equipe de Fiscalização, Carga de XML/SPED (com os alertas de cobertura
-    e de Ancoragem de Estoque já embutidos em render_carga_operacao()) e
-    Entidade Auditada — mesmo conteúdo que antes ficava direto em main.py,
-    só agrupado atrás do botão "EXTRAÇÃO" do menu principal."""
+    """Painel '🛠️ 1: PROCEDIMENTOS INICIAIS' (Solicitação Técnica
+    2026-08-15 "PAINEL 1"; antes chamado só de "Extração", Estágio 6) —
+    ponto de entrada oficial de qualquer nova auditoria: Configuração de
+    Período de Auditoria, Equipe de Fiscalização, Carga de XML/SPED (com
+    os alertas de cobertura e de Ancoragem de Estoque já embutidos em
+    render_carga_operacao()), Entidade Auditada e, por fim, o Resultado
+    do Matching Inicial (BC3) — que agora roda AUTOMATICAMENTE ao final
+    de toda carga bem-sucedida (ver render_carga_operacao()), sem
+    precisar navegar até "🧩 MATCHING (BC3)" e clicar em "Gerar" à parte.
+    O painel de Matching (Estágio 2) continua existindo separado, pro
+    auditor regerar manualmente se precisar (ex.: depois de corrigir
+    algo na BC1/BC2) — esta tela só ganhou a exibição automática, não
+    substituiu a manual."""
     _botao_voltar_menu()
     render_configuracao_periodo()
     st.divider()
@@ -2909,6 +3025,11 @@ def render_pagina_extracao() -> None:
     if st.session_state.get("dados_carregados"):
         st.divider()
         render_entidade_auditada()
+        if "bc3_gerada" not in st.session_state:
+            st.session_state["bc3_gerada"] = loader.bc3_ja_gerada()
+        if st.session_state["bc3_gerada"]:
+            st.divider()
+            _render_resultado_matching_inicial()
 
 
 def render_pagina_matching() -> None:
@@ -2924,7 +3045,7 @@ def render_pagina_matching() -> None:
     dados_carregados."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     render_bc3()
 
@@ -2939,7 +3060,7 @@ def render_pagina_segregados() -> None:
     Fluxos Físicos/Estoque Anual. Exige dados_carregados."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     render_painel_analise()
 
@@ -2968,7 +3089,7 @@ def render_pagina_construcao() -> None:
     primeiro)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     render_fluxos_fisicos()
     st.divider()
@@ -3020,7 +3141,7 @@ def render_pagina_auditoria1() -> None:
     ver loader.auditar_divergencia_estoque()."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
 
     if st.button(
@@ -3073,7 +3194,7 @@ def render_pagina_descricao_relevante() -> None:
     páginas — sem carga, as 3 tabelas fonte não existem)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     render_descricao_relevante()
 
@@ -3089,7 +3210,7 @@ def render_pagina_cruzamento_valor() -> None:
     7.1) já gerada, checado dentro de render_cruzamento_valor()."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     render_cruzamento_valor()
 
@@ -3104,7 +3225,7 @@ def render_pagina_cruzamento_produto() -> None:
     render_cruzamento_produto()."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     render_cruzamento_produto()
 
@@ -3118,7 +3239,7 @@ def render_pagina_rn1_fisica() -> None:
     render_rn1_fisica()."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     render_rn1_fisica()
 
@@ -3132,7 +3253,7 @@ def render_pagina_rn1_produto() -> None:
     render_rn1_produto()."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     render_rn1_produto()
 
@@ -3148,7 +3269,7 @@ def render_pagina_rn1_simulada_30() -> None:
     do usuário) — ver render_pagina_consolidado_733()."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     render_rn1_simulada_30()
 
@@ -3165,7 +3286,7 @@ def render_pagina_consolidado_733() -> None:
     estoque_saidas/estoque_anual_consolidado direto, Estágios 4/5)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     render_consolidado_origens_733()
 
@@ -3496,7 +3617,7 @@ def render_pagina_estagio_8() -> None:
     (Estágio 5) já gerados, checado dentro de render_estagio_8()."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     render_estagio_8()
 
@@ -3959,7 +4080,7 @@ def render_pagina_estagio_9() -> None:
     consolidado) dentro da respectiva render_curadoria_fm_*()."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     aba_entradas, aba_saidas, aba_estoque = st.tabs(["📥 Entradas", "📤 Saídas", "📦 Estoque"])
     with aba_entradas:
@@ -5659,7 +5780,7 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
     st.caption(
         "Consolida os itens confirmados na Rubrica (Entradas/Saídas/Estoque) — já com o "
         "tratamento de Fator Multiplicador aplicado — num resumo por ano, restrito ao Período de "
-        "Auditoria configurado em \"📥 EXTRAÇÃO\". Ajuste o que precisar na grade antes de "
+        "Auditoria configurado em \"🛠️ 1: PROCEDIMENTOS INICIAIS\". Ajuste o que precisar na grade antes de "
         "\"💾 Salvar Cruzamento Final do Produto\"."
     )
     # Chave de cache por PRODUTO (COD_ITEM, fallback DESCR_ALVO — mesmo
@@ -5700,7 +5821,7 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
             st.warning(
                 "Nenhum item confirmado na Rubrica (Entradas/Saídas/Estoque) pra este produto "
                 "dentro do Período de Auditoria configurado — confirme correspondências nas abas "
-                "acima ou revise o período em \"📥 EXTRAÇÃO\"."
+                "acima ou revise o período em \"🛠️ 1: PROCEDIMENTOS INICIAIS\"."
             )
         else:
             st.session_state[chave_grade] = grade
@@ -5761,7 +5882,7 @@ def render_pagina_produtos_alvo_salvos() -> None:
     padrão das outras páginas)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     render_produtos_alvo_salvos()
 
@@ -5892,7 +6013,7 @@ def render_pagina_consolidado_11() -> None:
     dados_carregados (mesmo padrão das outras páginas)."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     render_consolidado_cruzamento_11()
 
@@ -6335,7 +6456,7 @@ def render_pagina_relatorios() -> None:
     relatorio_12()`."""
     _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
-        st.info('Carregue os dados primeiro em "📥 EXTRAÇÃO".')
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
     st.subheader("Estágio 12 - Relatórios")
     relatorio = st.selectbox(
