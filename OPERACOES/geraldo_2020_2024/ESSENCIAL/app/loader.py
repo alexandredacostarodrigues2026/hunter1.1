@@ -2261,12 +2261,22 @@ def persistir_bc3(callback=None) -> dict:
     """Executa o Matching (Etapa 1 — BC2 x BC1, ver matching.py) e persiste
     o resultado na tabela bc3. Import de matching.py feito dentro da função
     (lazy import) para evitar import circular, já que matching.py importa
-    loader.py para ler BC2/BC1."""
+    loader.py para ler BC2/BC1.
+
+    `callback` (2026-08-14, Solicitação Técnica "barra de progresso real
+    pro Matching"): repassado direto pra `matching.executar_matching(
+    callback=callback)` — chamado 1x por nível de match concluído (D1,
+    D2, A1-A5, D3-D6 — 11 chamadas), não mais 1x só no final como antes
+    desta mudança. Contrato `callback(nome_etapa, n)` continua o mesmo
+    usado por `persistir_nfe()`/`persistir_sped()` (compatível com
+    `interface._barra_progresso()`, que já espera `n_passos` chamadas)
+    — só o SIGNIFICADO de cada chamada mudou (nível de matching, não
+    tabela persistida)."""
     import matching  # lazy import — ver docstring
     _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
     resultado = {}
     try:
-        df_bc3, meta = matching.executar_matching()
+        df_bc3, meta = matching.executar_matching(callback=callback)
         with duckdb.connect(str(_BANCO_PATH)) as con:
             if not df_bc3.empty:
                 con.register("_df_bc3", df_bc3)
@@ -2274,8 +2284,6 @@ def persistir_bc3(callback=None) -> dict:
                 con.unregister("_df_bc3")
         resultado["bc3"] = len(df_bc3)
         resultado["meta"] = meta
-        if callback:
-            callback("bc3", resultado["bc3"])
     except Exception as exc:
         logger.exception("Erro ao persistir BC3: %s", exc)
         resultado["erro"] = str(exc)

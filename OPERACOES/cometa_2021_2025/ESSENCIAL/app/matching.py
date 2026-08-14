@@ -1024,7 +1024,7 @@ def _match_d6_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
     return correspondencias
 
 
-def executar_matching() -> "tuple[pd.DataFrame, dict]":
+def executar_matching(callback=None) -> "tuple[pd.DataFrame, dict]":
     """Executa o cruzamento BC2 (XML, ET) x BC1 (SPED) em onze níveis (D1,
     D2, A1-A5, D3, D4, D5, D6) e devolve a BC3: uma linha por item da BC2, com
     DESCR_ITEM_DECLARACAO/COD_ITEM_DECLARACAO/DT_E_S/DT_FIN trazidos do BC1
@@ -1034,7 +1034,23 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     DATA_ELEITA, ver docs/estagios/) seguem exatamente o mesmo tratamento de
     COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO: propagados em _aplicar() para
     D1-D6 e herdados via dicionário de aprendizado para A1-A5 (mesmo padrão
-    do FATOR_MULTIPLICADOR_SUGERIDO, ver REGRAS_MATCHING.md)."""
+    do FATOR_MULTIPLICADOR_SUGERIDO, ver REGRAS_MATCHING.md).
+
+    `callback` (2026-08-14, Solicitação Técnica "barra de progresso real
+    pro Matching", pedido do usuário depois de ver a barra genérica
+    ficar só num spinner): opcional, `callback(nome_etapa, n)` chamado
+    UMA VEZ por nível concluído (D1, D2, A1, A2, A3, A4, A5, D3, D4, D5,
+    D6 — 11 chamadas, sempre nesta ordem), com `n` = quantidade de itens
+    da BC2 que ficaram com aquele MATCH_TIPO até este ponto (não
+    cumulativo entre níveis — é a contagem exata daquele tipo, igual ao
+    que `consultar_totais_bc3()` mostra depois). Pura instrumentação —
+    NENHUMA lógica/ordem/limiar de matching foi alterada; só chamadas de
+    callback intercaladas nos MESMOS pontos onde cada nível já terminava
+    antes desta mudança."""
+    def _reportar(nome_etapa: str) -> None:
+        if callback:
+            callback(nome_etapa, int((df_bc3["MATCH_TIPO"] == nome_etapa).sum()))
+
     df_bc2, meta_bc2 = loader.montar_bc2()
     df_bc1, meta_bc1 = loader.load_declaracao_entradas_terceiros()
 
@@ -1107,22 +1123,29 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
             df_bc3.loc[idxs_bc2, "FATOR_MULTIPLICADOR_SUGERIDO"] = np.round(fator, 4)
 
     _aplicar(match_d1, "D1")
+    _reportar("D1")
     _aplicar(match_d2, "D2")
+    _reportar("D2")
 
     # ── A1: aprendizado histórico sobre o que sobrou como ND/NM ─────────────
     _match_a1(df_bc3)
+    _reportar("A1")
 
     # ── A2: mesmo aprendizado, por descrição exata (não COD_ITEM) ───────────
     _match_a2(df_bc3)
+    _reportar("A2")
 
     # ── A3: mesmo aprendizado do A1, sem exigir o mesmo ano ──────────────────
     _match_a3(df_bc3)
+    _reportar("A3")
 
     # ── A4: mesmo aprendizado do A2, sem exigir o mesmo ano ──────────────────
     _match_a4(df_bc3)
+    _reportar("A4")
 
     # ── A5: mesmo aprendizado do A4, sem exigir o mesmo CNPJ ─────────────────
     _match_a5(df_bc3)
+    _reportar("A5")
 
     # ── D3: consolidacao N-para-1 (linhas "sortido"/agregadas do SPED) ──────
     # Roda antes do D4/D5 de proposito: D5 (so similaridade, 1-para-1) pode
@@ -1136,6 +1159,7 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     df_bc1_disp_d3 = df_bc1.loc[~df_bc1.index.isin(indices_bc1_usados)]
     match_d3 = _match_d3_por_nota(df_bc2_pend_d3, df_bc1_disp_d3, idf_map, idf_padrao)
     _aplicar(match_d3, "D3")
+    _reportar("D3")
     indices_bc1_usados |= {v[0] for v in match_d3.values()}
 
     # ── D4: integridade de nota sobre o que ainda sobrou ND/NM ──────────────
@@ -1159,6 +1183,7 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     chaves_integras_d4 = _integridade_por_nota(df_bc2_pend_d4, df_bc1_disp_d4)
     match_d4 = _match_d4_por_nota(df_bc2_pend_d4, df_bc1_disp_d4, chaves_integras_d4)
     _aplicar(match_d4, "D4")
+    _reportar("D4")
     indices_bc1_usados |= {v[0] for v in match_d4.values()}
 
     # ── D5: ultimo recurso (so similaridade) sobre o que ainda sobrou ───────
@@ -1167,6 +1192,7 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     df_bc1_disp_d5 = df_bc1.loc[~df_bc1.index.isin(indices_bc1_usados)]
     match_d5 = _match_d5_por_nota(df_bc2_pend_d5, df_bc1_disp_d5)
     _aplicar(match_d5, "D5")
+    _reportar("D5")
     indices_bc1_usados |= {v[0] for v in match_d5.values()}
 
     # ── D6: ultimo recurso de tudo (so valor, com desempate por texto) ──────
@@ -1184,6 +1210,7 @@ def executar_matching() -> "tuple[pd.DataFrame, dict]":
     df_bc1_disp_d6 = df_bc1.loc[~df_bc1.index.isin(indices_bc1_usados)]
     match_d6 = _match_d6_por_nota(df_bc2_pend_d6, df_bc1_disp_d6)
     _aplicar(match_d6, "D6")
+    _reportar("D6")
 
     contagem_tipo = df_bc3["MATCH_TIPO"].value_counts().to_dict()
     meta = {

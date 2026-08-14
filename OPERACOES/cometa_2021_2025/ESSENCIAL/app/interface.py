@@ -195,7 +195,11 @@ def _barra_progresso(titulo: str, n_passos: int, fn_persistir, categorias: "dict
         status.error(f"Erro: {res['erro']}")
         return False
 
-    total = sum(v for k, v in res.items() if k != "erro")
+    # Só soma valores numéricos (2026-08-14: persistir_bc3() devolve um
+    # "meta" com dict, não int, junto de "bc3" — sum() ingênuo quebraria
+    # com TypeError int+dict; persistir_nfe()/persistir_sped() não são
+    # afetados, todos os valores deles já eram int).
+    total = sum(v for k, v in res.items() if k != "erro" and isinstance(v, (int, float)))
     barra.progress(1.0, text=f"Concluído — {total:,} registros".replace(",", "."))
     status.empty()
     return True
@@ -333,8 +337,8 @@ def _render_alerta_ancoragem_estoque() -> None:
 
 
 def render_carga_operacao() -> None:
-    """Prévia + botão de carga: 3 barras de progresso independentes + o
-    Matching (BC3) automático no final.
+    """Prévia + botão de carga: 4 barras de progresso independentes, a
+    última sendo o Matching (BC3) automático.
       1. XML pendentes  — classificação arquivo a arquivo
       2. NF-e           — nfe_entradas + nfe_saidas + nfe_analise_et/ep + nfe_situacao_et/ep
                            + xml_entradas_real/xml_saidas_real no DuckDB
@@ -344,21 +348,25 @@ def render_carga_operacao() -> None:
                            dispara automaticamente sempre que a carga (1ª
                            vez ou "Carregar novamente") termina com sucesso,
                            sem exigir navegação manual até "🧩 MATCHING
-                           (BC3)". Erro no Matching não invalida a carga —
+                           (BC3)". Barra REAL (não spinner, pedido explícito
+                           do usuário) — `n_passos=11` = os 11 níveis de
+                           match (D1, D2, A1-A5, D3-D6, ver matching.
+                           executar_matching(callback=...), instrumentado
+                           pra reportar progresso sem mudar nenhuma lógica).
+                           Erro no Matching não invalida a carga —
                            `dados_carregados` já foi marcado True antes; o
                            auditor pode gerar manualmente depois se precisar.
     Quando já carregado e sem pendentes, exibe "Carregar novamente" (KPIs de
     entradas/saídas reais ficam no painel dedicado, ver render_fluxos_fisicos()).
-    Resultado (KPIs de match) exibido por render_pagina_extracao(), não
-    aqui — ver _render_resultado_matching_inicial()."""
+    Resultado (KPI de Taxa de Match) exibido por render_pagina_extracao(),
+    não aqui — ver _render_resultado_matching_inicial()."""
     st.subheader("Carga de XML")
 
-    erro_bc3_automatico = st.session_state.pop("erro_bc3_automatico", None)
-    if erro_bc3_automatico:
+    if st.session_state.pop("erro_bc3_automatico", None):
         st.error(
-            f"Erro ao gerar o Matching (BC3) automaticamente após a carga: {erro_bc3_automatico} — "
-            'os dados de NF-e/SPED foram carregados normalmente; gere o Matching manualmente em '
-            '"🧩 MATCHING (BC3)" se precisar.'
+            "Falha ao gerar o Matching (BC3) automaticamente após a carga (mensagem detalhada "
+            "ficou visível durante o processamento) — os dados de NF-e/SPED foram carregados "
+            'normalmente; gere o Matching manualmente em "🧩 MATCHING (BC3)" se precisar.'
         )
 
     with st.spinner("Verificando pastas..."):
@@ -458,18 +466,23 @@ def render_carga_operacao() -> None:
         # Técnica "PAINEL 1 — PROCEDIMENTOS INICIAIS") — antes só rodava via
         # botão manual em "🧩 MATCHING (BC3)"; agora dispara aqui, na MESMA
         # carga, pro auditor já ver a taxa de match sem precisar navegar pra
-        # outra página. Sem barra granular própria (persistir_bc3() não
-        # expõe progresso interno, só 1 callback no fim — mesmo padrão que
-        # render_bc3() já usa: st.spinner cobrindo a chamada síncrona).
+        # outra página. Barra de progresso REAL (mesmo mecanismo de NF-e/
+        # SPED, `_barra_progresso()`), não mais um spinner — pedido explícito
+        # do usuário depois de ver a barra genérica ficar só num spinner.
+        # `n_passos=11` = os 11 níveis de match (D1, D2, A1-A5, D3-D6, ver
+        # matching.executar_matching()), cada um reportando via callback
+        # quantos itens da BC2 ficaram com aquele MATCH_TIPO — pura
+        # instrumentação em matching.py, nenhuma lógica/ordem/limiar mudou.
         fase_bc3 = "**4. Matching (BC2 x BC1)**" if pend["quantidade"] > 0 else "**3. Matching (BC2 x BC1)**"
-        st.markdown(fase_bc3)
-        with st.spinner("Executando o Matching (BC2 x BC1) — pode levar cerca de 1 minuto..."):
-            resultado_bc3 = loader.persistir_bc3()
-        if "erro" in resultado_bc3:
-            st.session_state["erro_bc3_automatico"] = resultado_bc3["erro"]
-        else:
+        ok_bc3 = _barra_progresso(fase_bc3, n_passos=11, fn_persistir=loader.persistir_bc3)
+        if ok_bc3:
             st.session_state["bc3_gerada"] = True
             st.session_state.pop("erro_bc3_automatico", None)
+        else:
+            st.session_state["erro_bc3_automatico"] = (
+                'Ver mensagem de erro acima. Os dados de NF-e/SPED foram carregados normalmente; '
+                'gere o Matching manualmente em "🧩 MATCHING (BC3)" se precisar.'
+            )
         st.rerun()
 
 
