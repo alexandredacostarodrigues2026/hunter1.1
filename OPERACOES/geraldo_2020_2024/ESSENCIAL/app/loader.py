@@ -6439,6 +6439,56 @@ def consultar_consolidado_origens_733(limite: "int | None" = None) -> "tuple[pd.
         return pd.DataFrame(columns=colunas), 0
 
 
+def unificar_por_produto_733(df: pd.DataFrame) -> pd.DataFrame:
+    """Unifica um recorte de `estagio733_consolidado` — já filtrado por
+    UMA origem (Entradas/Saídas/Estoque) — por (DESCR_PROD, UNID_PROD,
+    ORIGEM), somando QTDE/VALOR_TOTAL de TODOS os anos numa única linha
+    por produto. Pedido do usuário (2026-08-15): "retire os anos das
+    tabelas de entradas/saídas/estoque. unifique as tabelas em relação
+    às medidas de quantidades e valores" — as Grades de Produtos
+    (`interface._render_grades_produtos_733()`) vinham uma linha por
+    (ANO, DESCR_PROD, UNID_PROD), mesma granularidade de agregação de
+    `gerar_consolidado_origens_733()`; aqui soma-se a dimensão ANO por
+    cima, ficando uma linha só por produto/unidade.
+
+    `COD_ITEM` reagregado (concatena os códigos DISTINTOS de todos os
+    anos, `_MARCADOR_COD_ITEM_AUSENTE_733` ('nc') só quando NENHUM ano
+    tiver código) — mesmo raciocínio do `STRING_AGG DISTINCT` já usado
+    em `gerar_consolidado_origens_733()`, agora sobre a dimensão ANO que
+    lá ficava fixa no agrupamento. `ncm2` (Capítulo NCM) assumido igual
+    entre os anos do mesmo produto (o mesmo item físico não muda de
+    Capítulo NCM ano a ano) — usa o primeiro valor não vazio encontrado.
+
+    Devolve `df` sem alteração se vazio ou sem as colunas mínimas
+    (DESCR_PROD/UNID_PROD/ORIGEM)."""
+    colunas_minimas = {"DESCR_PROD", "UNID_PROD", "ORIGEM", "QTDE", "VALOR_TOTAL"}
+    if df.empty or not colunas_minimas.issubset(df.columns):
+        return df
+
+    def _concat_cod_item_distinto(serie: pd.Series) -> str:
+        codigos = set()
+        for valor in serie.dropna():
+            for cod in str(valor).split(", "):
+                cod = cod.strip()
+                if cod and cod != _MARCADOR_COD_ITEM_AUSENTE_733:
+                    codigos.add(cod)
+        return ", ".join(sorted(codigos)) if codigos else _MARCADOR_COD_ITEM_AUSENTE_733
+
+    def _primeiro_nao_vazio(serie: pd.Series) -> str:
+        for valor in serie:
+            if valor:
+                return valor
+        return ""
+
+    agregacao = {"QTDE": "sum", "VALOR_TOTAL": "sum"}
+    if "COD_ITEM" in df.columns:
+        agregacao["COD_ITEM"] = _concat_cod_item_distinto
+    if "ncm2" in df.columns:
+        agregacao["ncm2"] = _primeiro_nao_vazio
+
+    return df.groupby(["DESCR_PROD", "UNID_PROD", "ORIGEM"], as_index=False).agg(agregacao)
+
+
 def salvar_alvos_selecionados_733(selecionados: pd.DataFrame) -> dict:
     """Estágio 7.3.3 — "Cravar Alvos Selecionados": upsert ADITIVO em
     `produto_alvo_fiscalizacao` a partir de linhas escolhidas no

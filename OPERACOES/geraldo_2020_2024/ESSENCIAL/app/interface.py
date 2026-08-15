@@ -2130,7 +2130,7 @@ def render_rn1_simulada_30() -> None:
 
 
 _COLUNAS_CONSOLIDADO_733 = ["ANO", "DESCR_PROD", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL", "ORIGEM", "ncm2"]
-_COLUNAS_EXIBICAO_GRADE_733 = ["ANO", "DESCR_PROD", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL"]
+_COLUNAS_EXIBICAO_GRADE_733 = ["DESCR_PROD", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL"]
 _CHAVES_GRADE_733 = {"entrada": "grade_733_entrada", "saida": "grade_733_saida", "estoque": "grade_733_estoque"}
 _TITULOS_GRADE_733 = {
     "entrada": "📥 Itens de Entrada (XML)",
@@ -2173,20 +2173,23 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
     eventos = {}
     tabelas_por_origem = {}
     for origem, titulo in _TITULOS_GRADE_733.items():
-        # Ordenação padrão: Valor Total decrescente (pedido do usuário,
-        # 2026-08-15) — sobre TODA a base já filtrada (sem cap de 200,
-        # mesma política "sem cap" já usada em toda a página desde
-        # 2026-08-03), não só a fatia visível na tela. Selecionar linha
-        # continua funcionando após reordenar: `evento.selection.rows`
-        # (Streamlit) indexa pela posição no DataFrame passado a `st.
-        # dataframe`, não pela ordem original antes do sort — por isso
-        # `tabelas_por_origem[origem]` guarda a MESMA `sub` já ordenada,
-        # com índice resetado (0..n-1) igual ao que é exibido.
-        sub = (
-            filtrado_base[filtrado_base["ORIGEM"] == origem]
-            .sort_values("VALOR_TOTAL", ascending=False)
-            .reset_index(drop=True)
-        )
+        # Unificação por produto (pedido do usuário, 2026-08-15): "retire
+        # os anos das tabelas... unifique as tabelas em relação às
+        # medidas de quantidades e valores" — antes cada (ANO, DESCR_
+        # PROD, UNID_PROD) virava uma linha própria; loader.unificar_
+        # por_produto_733() soma QTDE/VALOR_TOTAL de todos os anos numa
+        # única linha por (DESCR_PROD, UNID_PROD), sem alterar os totais
+        # (mesma soma, granularidade menor). Ordenação padrão: Valor
+        # Total decrescente, sobre TODA a base já filtrada+unificada
+        # (sem cap de 200, mesma política já usada em toda a página
+        # desde 2026-08-03). Selecionar linha continua funcionando após
+        # reordenar: `evento.selection.rows` (Streamlit) indexa pela
+        # posição no DataFrame passado a `st.dataframe`, não pela ordem
+        # original antes do sort — por isso `tabelas_por_origem[origem]`
+        # guarda a MESMA `sub` já unificada/ordenada, com índice
+        # resetado (0..n-1) igual ao que é exibido.
+        sub = loader.unificar_por_produto_733(filtrado_base[filtrado_base["ORIGEM"] == origem])
+        sub = sub.sort_values("VALOR_TOTAL", ascending=False).reset_index(drop=True)
         tabelas_por_origem[origem] = sub
 
         st.markdown(f"**{titulo}** — {len(sub):,} linha(s)".replace(",", "."))
@@ -2257,7 +2260,7 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
     st.markdown(
         f"**🎯 Alvo ativo:** {alvo_ativo.get('DESCR_PROD', '')} "
         f"(Origem: {_TITULOS_GRADE_733.get(alvo_ativo.get('ORIGEM'), alvo_ativo.get('ORIGEM'))}, "
-        f"Cód.: {alvo_ativo.get('COD_ITEM', '')}, Ano: {alvo_ativo.get('ANO', '')})"
+        f"Cód.: {alvo_ativo.get('COD_ITEM', '')})"
     )
     col_cravar, col_limpar_alvo = st.columns(2)
     if col_cravar.button("🎯 Cravar Alvo Selecionado (7.3.3)", key="btn_cravar_alvo_733"):
