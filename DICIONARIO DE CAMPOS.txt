@@ -231,3 +231,6 @@ CREDITO_TRIBUTARIO;Credito Tributario Total (R$)
 # Novos campos - 2026-08-07 (Estagio 12 - Modulo de Relatorios Finais, relatorio final)
 COMPRAS_SEM_NF;Compras Sem NF (Qtde)
 VENDAS_SEM_NF;Vendas Sem NF (Qtde)
+
+# Novos campos - 2026-08-15 (Estagio 7.3.3 - Simulacao NCM2 com Filtro Vinculado)
+ncm2;Capitulo NCM

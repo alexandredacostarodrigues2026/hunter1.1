@@ -137,6 +137,9 @@ def render_entidade_auditada() -> None:
             f"Base: {total:,}".replace(",", ".")
             + f" itens de NF-e analisados (ET={fonte.get('ET', 0):,} | EP={fonte.get('EP', 0):,})".replace(",", ".")
         )
+    linhas_estoque = loader.contar_linhas_sped_estoque()
+    if linhas_estoque:
+        st.caption(f"Estoque (SPED, Bloco H): {linhas_estoque:,}".replace(",", ".") + " linhas")
     if info.get("erros"):
         st.caption("Avisos: " + "; ".join(info["erros"]))
 
@@ -2304,31 +2307,124 @@ def render_consolidado_origens_733() -> None:
             },
         )
 
+    # Simulação NCM2 (2026-08-15, Solicitação Técnica — ponte macro/micro):
+    # tabela de Simulação RN1 (+30%) agrupada por Capítulo NCM (2 primeiros
+    # dígitos do COD_NCM), posicionada logo acima do Detalhamento por Origem
+    # de propósito (pedido explícito) — selecionar uma linha aqui filtra as
+    # 3 abas logo abaixo pra só os produtos daquele Capítulo. Ver
+    # loader.gerar_simulacao_ncm2_733() pro raciocínio completo da fonte de
+    # dados (base própria, reconstruída do zero por COD_ITEM — NÃO é
+    # `estagio733_consolidado`, que não carrega EI/Compras/Vendas/EF).
+    ncm2_selecionado = st.session_state.get("ncm2_selecionado_733")
+
+    st.divider()
+    st.markdown("**📊 Simulação RN1 (+30%) por Capítulo NCM**")
+    st.caption(
+        "Agrupa EI, Compras, Vendas e Estoque Final por Capítulo NCM (2 primeiros dígitos do "
+        "COD_NCM, cadastro SPED Registro 0200) e aplica a mesma simulação +30% do Estágio 7.3.2 "
+        "sobre os totais agrupados — cobre TODOS os produtos com NCM cadastrado, não só os já "
+        "equalizados no Estágio 7.1/7.2. Respeita os filtros de Busca por Descrição e Ano acima. "
+        "Clique numa linha pra filtrar automaticamente o Detalhamento por Origem (Entradas/Saídas/"
+        "Estoque) logo abaixo por aquele Capítulo."
+    )
+
+    if "ncm2_733_base_gerada" not in st.session_state:
+        st.session_state["ncm2_733_base_gerada"] = loader.base_simulacao_ncm2_733_ja_gerado()
+
+    if st.session_state["ncm2_733_base_gerada"]:
+        clicou_ncm2 = st.button(
+            "Regerar Simulação NCM2", key="btn_regerar_base_ncm2_733",
+            help="Reprocessa EI/Compras/Vendas/EF por produto e Capítulo NCM.",
+        )
+    else:
+        clicou_ncm2 = st.button("Gerar Simulação NCM2", key="btn_gerar_base_ncm2_733")
+
+    if clicou_ncm2:
+        with st.spinner("Calculando EI/Compras/Vendas/EF por produto e cruzando com o cadastro NCM..."):
+            resultado_ncm2 = loader.persistir_base_simulacao_ncm2_733()
+        if "erro" in resultado_ncm2:
+            st.error(f"Erro: {resultado_ncm2['erro']}")
+        else:
+            st.session_state["ncm2_733_base_gerada"] = True
+            st.rerun()
+
+    if not st.session_state["ncm2_733_base_gerada"]:
+        st.info('Clique em "Gerar Simulação NCM2" pra montar a tabela de Capítulos NCM.')
+    else:
+        resultado_sim_ncm2 = loader.gerar_simulacao_ncm2_733(busca_descricao, ano_selecionado)
+        for erro in resultado_sim_ncm2.get("erros", []):
+            st.warning(erro)
+        tabela_ncm2 = resultado_sim_ncm2.get("simulacao", pd.DataFrame())
+        if tabela_ncm2.empty:
+            st.info("Nenhum Capítulo NCM encontrado para os filtros atuais.")
+        else:
+            exibicao_ncm2 = tabela_ncm2.copy()
+            acima_30_ncm2 = exibicao_ncm2["PCT_DIVERGENCIA"] > _LIMIAR_DESTAQUE_VERMELHO_PCT_DIVERG
+            exibicao_ncm2["PCT_DIVERGENCIA"] = exibicao_ncm2["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+            for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
+                exibicao_ncm2[_col] = exibicao_ncm2[_col].apply(_formatar_moeda_br)
+            exibicao_ncm2 = exibicao_ncm2.rename(columns=loader.carregar_dicionario_campos())
+
+            with st.container(key="estagio733_ncm2_tabela"):
+                st.markdown(
+                    "<style>.st-key-estagio733_ncm2_tabela [data-testid='stDataFrame'] "
+                    "* { font-size: 9px; }</style>",
+                    unsafe_allow_html=True,
+                )
+                evento_ncm2 = st.dataframe(
+                    _destacar_vermelho_grupo_alvo(exibicao_ncm2, acima_30_ncm2),
+                    use_container_width=True,
+                    hide_index=True,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key="tabela_simulacao_ncm2_733",
+                )
+
+            linhas_marcadas_ncm2 = evento_ncm2.selection.rows if evento_ncm2 and evento_ncm2.selection else []
+            if linhas_marcadas_ncm2:
+                ncm2_selecionado = str(tabela_ncm2.iloc[linhas_marcadas_ncm2[0]]["ncm2"])
+                st.session_state["ncm2_selecionado_733"] = ncm2_selecionado
+
+            if ncm2_selecionado:
+                col_ncm2_info, col_ncm2_limpar = st.columns([4, 1])
+                col_ncm2_info.info(f"Filtrando Detalhamento por Origem pelo Capítulo NCM **{ncm2_selecionado}**.")
+                if col_ncm2_limpar.button("Limpar filtro NCM", key="btn_limpar_ncm2_733"):
+                    st.session_state["ncm2_selecionado_733"] = None
+                    ncm2_selecionado = None
+                    st.rerun()
+
     # Detalhamento por Origem (2026-08-12, tabelas lado a lado; refinado
     # 2026-08-13 — Solicitação Técnica: gate por busca + desvínculo do
     # filtro de Origem + KPIs; refinado de novo 2026-08-13, 2ª rodada —
     # Solicitação Técnica "painel de instrumentos": abas em vez de colunas
-    # lado a lado, fonte 9px, KPIs miniaturizados): só renderiza quando há
-    # termo de busca por descrição (senão a seção fica igual à tabela
-    # principal e não agrega valor pra quem só está navegando/filtrando
-    # por Ano). Usa `filtrado_base` (busca+ano, SEM o filtro de Origem) de
-    # propósito — o objetivo declarado é o auditor ver as 3 frentes
-    # (Entradas/Saídas/Estoque) do item buscado simultaneamente, mesmo com
-    # um valor específico selecionado no selectbox de Origem (que só vale
-    # pra tabela principal de seleção). Cada aba é sempre a origem fixa do
-    # loop (`origem_valor`), não a do selectbox. `st.tabs` de topo, não
-    # aninhado em outro `st.tabs` desta página — as 3 abas rodam no mesmo
-    # script run do Streamlit (conteúdo das 3 é sempre computado, só a
-    # exibição é client-side), por isso não há custo de re-fetch ao trocar
-    # de aba. NumberColumn (não mais texto BR pré-formatado) nas colunas
-    # Qtde/Valor Total, mesmo motivo já documentado na tabela principal:
-    # ordenação por clique no cabeçalho do grid é por STRING quando a
-    # coluna é texto, quebrando a ordenação numérica.
-    if busca_descricao.strip():
+    # lado a lado, fonte 9px, KPIs miniaturizados): renderiza quando há
+    # termo de busca por descrição OU um Capítulo NCM selecionado na
+    # Simulação NCM2 acima (2026-08-15 — antes só o termo de busca abria
+    # a seção; senão a seção fica igual à tabela principal e não agrega
+    # valor pra quem só está navegando/filtrando por Ano). Usa
+    # `filtrado_base` (busca+ano, SEM o filtro de Origem) de propósito —
+    # o objetivo declarado é o auditor ver as 3 frentes (Entradas/Saídas/
+    # Estoque) do item buscado simultaneamente, mesmo com um valor
+    # específico selecionado no selectbox de Origem (que só vale pra
+    # tabela principal de seleção); `filtro_ncm2_733` restringe essa
+    # mesma fatia ao Capítulo NCM selecionado (loader.filtrar_por_
+    # ncm2_733(), tolera múltiplos códigos concatenados por linha). Cada
+    # aba é sempre a origem fixa do loop (`origem_valor`), não a do
+    # selectbox. `st.tabs` de topo, não aninhado em outro `st.tabs` desta
+    # página — as 3 abas rodam no mesmo script run do Streamlit (conteúdo
+    # das 3 é sempre computado, só a exibição é client-side), por isso
+    # não há custo de re-fetch ao trocar de aba. NumberColumn (não mais
+    # texto BR pré-formatado) nas colunas Qtde/Valor Total, mesmo motivo
+    # já documentado na tabela principal: ordenação por clique no
+    # cabeçalho do grid é por STRING quando a coluna é texto, quebrando a
+    # ordenação numérica.
+    if busca_descricao.strip() or ncm2_selecionado:
+        filtrado_detalhamento = loader.filtrar_por_ncm2_733(filtrado_base, ncm2_selecionado)
         st.markdown("**Detalhamento por Origem (Entradas / Saídas / Estoque)**")
         st.caption(
             "Ignora o filtro de Origem acima — mostra sempre as 3 origens pro termo "
             "buscado, pra comparar se o item comprado também foi vendido ou consta em estoque."
+            + (f" Restrito ao Capítulo NCM **{ncm2_selecionado}**." if ncm2_selecionado else "")
         )
         aba_entrada, aba_saida, aba_estoque = st.tabs(["📥 Entradas", "📤 Saídas", "📦 Estoque"])
         for aba, origem_valor in (
@@ -2336,7 +2432,7 @@ def render_consolidado_origens_733() -> None:
             (aba_saida, "saida"),
             (aba_estoque, "estoque"),
         ):
-            sub = filtrado_base[filtrado_base["ORIGEM"] == origem_valor]
+            sub = filtrado_detalhamento[filtrado_detalhamento["ORIGEM"] == origem_valor]
             with aba:
                 chave_kpi = f"estagio733_kpi_{origem_valor}"
                 with st.container(key=chave_kpi):

@@ -1266,6 +1266,24 @@ def garantir_entidade_auditada(forcar: bool = False) -> dict:
     return info
 
 
+def contar_linhas_sped_estoque() -> int:
+    """Lê direto do DuckDB (sem reprocessar) a quantidade de linhas já
+    persistidas em sped_estoque (H010/Bloco H, ver persistir_sped()). 0 tanto
+    se o banco/tabela ainda não existe quanto se existe vazia — usado no
+    painel 'Entidade auditada' (render_entidade_auditada())."""
+    if not _BANCO_PATH.exists():
+        return 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "sped_estoque" not in tabelas:
+                return 0
+            return con.execute("SELECT COUNT(*) FROM sped_estoque").fetchone()[0]
+    except Exception:
+        logger.exception("Erro ao contar linhas de sped_estoque em %s", _BANCO_PATH)
+        return 0
+
+
 # ── Upload de XML de NF-e (arraste e solte) — classificação ET/EP ────────────
 # Não lê *.txt em lote: recebe XML individual em memória (drag-and-drop) e
 # classifica conforme o CNPJ da entidade auditada já fixado (obter_entidade_auditada).
@@ -5599,6 +5617,307 @@ def consultar_rn1_simulada_30(limite: "int | None" = 200) -> "tuple[pd.DataFrame
     except Exception:
         logger.exception("Erro ao consultar rn1_simulada_30 em %s", _BANCO_PATH)
         return pd.DataFrame(), 0
+
+
+# ── Estágio 7.3.3 (NCM2) — Simulação RN1 por Capítulo NCM ────────────────
+# Solicitação Técnica (2026-08-15): ponte entre a visão macro (Capítulo do
+# NCM, 2 primeiros dígitos do COD_NCM) e a visão micro (Entradas/Saídas/
+# Estoque já existentes no 7.3.3) — ao selecionar um Capítulo NCM na nova
+# tabela de simulação, o Detalhamento por Origem (abas) filtra pra mostrar
+# só os produtos daquele capítulo.
+#
+# Fonte de EI/Compras/Vendas/EF por Capítulo NCM (decisão confirmada com o
+# usuário via AskUserQuestion, 2026-08-15): a especificação original pedia
+# cruzar `estagio733_consolidado` com `sped_produtos`, mas
+# `estagio733_consolidado` só carrega QTDE/VALOR_TOTAL por ORIGEM
+# ('entrada'/'saida'/'estoque') — sem a quebra EI×Compras×Vendas×EF que a
+# fórmula RN1 (+30%) exige. Essa quebra só existia, até aqui, em
+# `cruzamento_valor`/`rn1_produto` (Estágio 7.2/7.3.1), ambos restritos ao
+# universo já equalizado no Estágio 7.1 (INNER JOIN em `produto_alvo`) —
+# inadequado pro 7.3.3, cujo propósito declarado é justamente achar item
+# SEM divergência aparente no 7.2/7.3 (fora desse universo equalizado).
+# Optou-se por reconstruir EI/Compras/Vendas/EF do zero por COD_ITEM
+# (`gerar_base_simulacao_ncm2_733()`, réplica de `gerar_cruzamento_valor()`
+# SEM o merge final em `produto_alvo`), cobrindo TODOS os produtos com
+# COD_NCM cadastrado — mesmo escopo abrangente do restante do 7.3.3.
+_COLUNAS_BASE_SIMULACAO_NCM2_733 = ["ANO", "COD_ITEM", "ncm2", "DESCR_ITEM", "EI", "COMPRAS", "VENDAS", "EF"]
+_COLUNAS_SIMULACAO_NCM2_733 = [
+    "ncm2", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
+    "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
+]
+
+
+def _padrao_busca_curinga_ncm2(texto: str) -> str:
+    """Duplicata mínima de `interface._padrao_busca_curinga()` (curinga
+    "*" estilo Qlik/SQL LIKE — ver docstring de lá pro raciocínio
+    completo das 5 regras) só pra suportar `busca_descricao` dentro do
+    loader.py — `gerar_simulacao_ncm2_733()` precisa aplicar o MESMO
+    padrão de busca já usado no resto do app, mas loader.py não pode
+    importar interface.py (regra do projeto: interface chama loader,
+    nunca o contrário). Mantém as duas cópias em sincronia manualmente se
+    a regra de busca mudar de novo."""
+    if "*" not in texto:
+        return re.escape(texto)
+    comeca_asterisco = texto.startswith("*")
+    termina_asterisco = texto.endswith("*")
+    fragmentos = [parte for parte in texto.split("*") if parte]
+    if not fragmentos:
+        return ".*"
+    if comeca_asterisco and len(fragmentos) > 1:
+        lookaheads = "".join(f"(?=.*{re.escape(fragmento)})" for fragmento in fragmentos)
+        return f"^{lookaheads}.*$"
+    meio = ".*".join(re.escape(fragmento) for fragmento in fragmentos)
+    prefixo = ".*" if comeca_asterisco else "^"
+    sufixo = ".*" if termina_asterisco else "$"
+    return f"{prefixo}{meio}{sufixo}"
+
+
+def _mapa_cod_item_ncm2() -> pd.DataFrame:
+    """COD_ITEM (normalizado, `_normalizar_cod_item_flexivel()`) -> ncm2
+    (2 primeiros dígitos do COD_NCM) + DESCR_ITEM (descrição do
+    cadastro), a partir de `sped_produtos` (Registro 0200, já persistida
+    pelo Estágio 3) — usado só por `gerar_base_simulacao_ncm2_733()` e
+    `filtrar_por_ncm2_733()` pra juntar Capítulo NCM/descrição aos
+    valores de EI/Compras/Vendas/EF e ao consolidado do 7.3.3 (nenhum dos
+    dois carrega NCM). `ncm2` vazio quando `COD_NCM` não tem pelo menos 2
+    dígitos numéricos (cadastro incompleto). Regra R07: COD_ITEM/ncm2/
+    DESCR_ITEM sempre string. Colisão rara de normalização (dois COD_ITEM
+    crus virando o mesmo normalizado) resolvida por `keep='first'` —
+    mesmo raciocínio já aceito em `produto_alvo`/`gerar_cruzamento_
+    valor()`."""
+    colunas = ["COD_ITEM", "ncm2", "DESCR_ITEM"]
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas)
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "sped_produtos" not in tabelas:
+                return pd.DataFrame(columns=colunas)
+            df = con.execute("SELECT COD_ITEM, COD_NCM, DESCR_ITEM FROM sped_produtos").df()
+    except Exception:
+        logger.exception("Erro ao consultar sped_produtos em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas)
+    if df.empty:
+        return pd.DataFrame(columns=colunas)
+    df["COD_ITEM"] = _normalizar_cod_item_flexivel(df["COD_ITEM"])
+    ncm2 = df["COD_NCM"].astype(str).str.strip().str.slice(0, 2)
+    df["ncm2"] = ncm2.where(ncm2.str.fullmatch(r"\d{2}"), "")
+    df["DESCR_ITEM"] = df["DESCR_ITEM"].astype(str)
+    return df[colunas].drop_duplicates("COD_ITEM", keep="first").reset_index(drop=True)
+
+
+def gerar_base_simulacao_ncm2_733() -> dict:
+    """Estágio 7.3.3 (NCM2) — monta a base ANO+COD_ITEM de EI/Compras/
+    Vendas/EF + Capítulo NCM (ncm2) + descrição do cadastro, pra
+    alimentar `gerar_simulacao_ncm2_733()`. Réplica de `gerar_cruzamento_
+    valor()` (Estágio 7.2) SEM o INNER JOIN final contra `produto_alvo`
+    — ver comentário da seção acima pro raciocínio completo (confirmado
+    com o usuário via AskUserQuestion, 2026-08-15). EI/EF vêm de
+    `_valores_estoque_hunter()` (mesma continuidade EI(ano)=EF(ano-1) e
+    mesma dedup de declaração duplicada de `gerar_cruzamento_valor()`);
+    Compras/Vendas de `_valores_por_ano_item()` (mesma dedup ET/EP e
+    exclusão de autoemissão em Vendas). Capítulo NCM/descrição vêm de
+    `_mapa_cod_item_ncm2()` — INNER JOIN: produto sem COD_NCM válido no
+    cadastro não entra em nenhum Capítulo, fica de fora da base.
+
+    Regra R07: ANO/COD_ITEM/ncm2/DESCR_ITEM sempre string. Devolve
+    {'base': DataFrame, 'erros': list} — erros não-vazio quando
+    `sped_produtos` (Estágio 3) ainda não foi gerada."""
+    compras = _valores_por_ano_item("estoque_entradas", "ANO_ELEITO", "COD_ITEM_DECLARACAO")
+    compras = compras.rename(columns={"VALOR": "COMPRAS"})
+    vendas = _valores_por_ano_item("estoque_saidas", "ANO_ELEITO", "fatoitemnfe_infnfe_det_prod_cprod")
+    vendas = vendas.rename(columns={"VALOR": "VENDAS"})
+    estoque = _valores_estoque_hunter()
+
+    compras = _normalizar_agrupar_valor(compras, ["COMPRAS"])
+    vendas = _normalizar_agrupar_valor(vendas, ["VENDAS"])
+    estoque = _normalizar_agrupar_valor(estoque, ["VALOR_INICIAL", "VALOR_FINAL"])
+
+    base = compras.merge(vendas, on=["ANO", "COD_ITEM"], how="outer")
+    if estoque.empty:
+        base["VALOR_INICIAL"] = 0.0
+        base["VALOR_FINAL"] = 0.0
+    else:
+        base = base.merge(estoque, on=["ANO", "COD_ITEM"], how="outer")
+    if base.empty:
+        return {"base": pd.DataFrame(columns=_COLUNAS_BASE_SIMULACAO_NCM2_733), "erros": []}
+
+    for col in ("COMPRAS", "VENDAS", "VALOR_INICIAL", "VALOR_FINAL"):
+        base[col] = base[col].fillna(0.0)
+    base = base.rename(columns={"VALOR_INICIAL": "EI", "VALOR_FINAL": "EF"})
+
+    mapa_ncm2 = _mapa_cod_item_ncm2()
+    if mapa_ncm2.empty:
+        return {
+            "base": pd.DataFrame(columns=_COLUNAS_BASE_SIMULACAO_NCM2_733),
+            "erros": ["Tabela sped_produtos (Registro 0200, Estágio 3) ainda não foi gerada."],
+        }
+    base = base.merge(mapa_ncm2, on="COD_ITEM", how="inner")
+    base = base[base["ncm2"] != ""]
+    if base.empty:
+        return {"base": pd.DataFrame(columns=_COLUNAS_BASE_SIMULACAO_NCM2_733), "erros": []}
+
+    base = (
+        _forcar_colunas_string(base, ["ANO", "COD_ITEM", "ncm2", "DESCR_ITEM"])[_COLUNAS_BASE_SIMULACAO_NCM2_733]
+        .reset_index(drop=True)
+    )
+    return {"base": base, "erros": []}
+
+
+def persistir_base_simulacao_ncm2_733(callback=None) -> dict:
+    """Estágio 7.3.3 (NCM2): persiste `simulacao_ncm2_733_base` no
+    DuckDB, ver `gerar_base_simulacao_ncm2_733()`. callback(n) chamado ao
+    final."""
+    resultado: dict = {}
+    try:
+        dados = gerar_base_simulacao_ncm2_733()
+        if dados["erros"]:
+            resultado["erro"] = " | ".join(dados["erros"])
+            return resultado
+        df = dados["base"]
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            con.register("_df_simulacao_ncm2_733_base", df)
+            con.execute(
+                "CREATE OR REPLACE TABLE simulacao_ncm2_733_base AS SELECT * FROM _df_simulacao_ncm2_733_base"
+            )
+            con.unregister("_df_simulacao_ncm2_733_base")
+        resultado["total"] = len(df)
+        if callback:
+            callback(resultado["total"])
+    except Exception as exc:
+        logger.exception("Erro ao persistir simulacao_ncm2_733_base: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def base_simulacao_ncm2_733_ja_gerado() -> bool:
+    """True se `simulacao_ncm2_733_base` (Estágio 7.3.3, NCM2) já existe
+    no DuckDB da operação."""
+    if not _BANCO_PATH.exists():
+        return False
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            return "simulacao_ncm2_733_base" in tabelas
+    except Exception:
+        logger.exception("Erro ao verificar simulacao_ncm2_733_base existente em %s", _BANCO_PATH)
+        return False
+
+
+def consultar_base_simulacao_ncm2_733(limite: "int | None" = None) -> "tuple[pd.DataFrame, int]":
+    """Lê `simulacao_ncm2_733_base` já persistida (sem reprocessar)."""
+    colunas = _COLUNAS_BASE_SIMULACAO_NCM2_733
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "simulacao_ncm2_733_base" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            total = con.execute("SELECT COUNT(*) FROM simulacao_ncm2_733_base").fetchone()[0]
+            query = (
+                "SELECT * FROM simulacao_ncm2_733_base" if limite is None
+                else f"SELECT * FROM simulacao_ncm2_733_base LIMIT {limite}"
+            )
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar simulacao_ncm2_733_base em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
+def gerar_simulacao_ncm2_733(busca_descricao: str = "", ano_selecionado: str = "Todos") -> dict:
+    """Estágio 7.3.3 (NCM2) — Simulação RN1 (+30%) por Capítulo NCM: parte
+    de `simulacao_ncm2_733_base` (ANO+COD_ITEM+ncm2, já persistida — ver
+    `gerar_base_simulacao_ncm2_733()`), agrupa por `ncm2` (2 primeiros
+    dígitos do COD_NCM, "Capítulo"), soma EI/Compras/Vendas/EF e aplica a
+    mesma simulação +30% do Estágio 7.3.2 (`_aplicar_simulacao_30()`)
+    sobre os totais agrupados — mesmo raciocínio de `gerar_rn1_
+    simulada_30()`, mas por Capítulo NCM em vez de Descrição Relevante, e
+    sobre TODOS os produtos com COD_NCM cadastrado (não só os já
+    equalizados no Estágio 7.1).
+
+    `busca_descricao`/`ano_selecionado` — os MESMOS filtros já aplicados
+    na tela do 7.3.3 (Buscar por Descrição/Ano), passados aqui pelo
+    chamador (`interface.render_consolidado_origens_733()`) pra manter a
+    tabela de Capítulos coerente com o recorte que o auditor já está
+    vendo. `busca_descricao` filtra por `DESCR_ITEM` (descrição do
+    cadastro SPED, Registro 0200) ANTES de agrupar, com o mesmo padrão de
+    curinga do resto do app (`_padrao_busca_curinga_ncm2()`).
+    `ano_selecionado='Todos'` soma todos os anos presentes na base (mesmo
+    comportamento de `gerar_rn1_simulada_30()` por produto); um ano
+    específico restringe antes de agrupar.
+
+    Regra R07: ncm2 sempre string. Devolve {'resumo': dict, 'simulacao':
+    DataFrame, 'erros': list} — erros não-vazio quando `simulacao_
+    ncm2_733_base` ainda não foi gerada."""
+    base, _ = consultar_base_simulacao_ncm2_733(limite=None)
+    if base.empty:
+        return {
+            "resumo": {}, "simulacao": pd.DataFrame(columns=_COLUNAS_SIMULACAO_NCM2_733),
+            "erros": ["Tabela simulacao_ncm2_733_base (Estágio 7.3.3, NCM2) ainda não foi gerada."],
+        }
+
+    filtrado = base
+    if ano_selecionado and ano_selecionado != "Todos":
+        filtrado = filtrado[filtrado["ANO"] == str(ano_selecionado)]
+    if busca_descricao and busca_descricao.strip():
+        filtrado = filtrado[
+            filtrado["DESCR_ITEM"].str.contains(
+                _padrao_busca_curinga_ncm2(busca_descricao.strip()), case=False, na=False,
+            )
+        ]
+    if filtrado.empty:
+        return {"resumo": {}, "simulacao": pd.DataFrame(columns=_COLUNAS_SIMULACAO_NCM2_733), "erros": []}
+
+    agrupado = filtrado.groupby("ncm2", as_index=False)[["EI", "COMPRAS", "VENDAS", "EF"]].sum()
+    simulado = _aplicar_simulacao_30(agrupado)
+    simulacao = (
+        _forcar_colunas_string(simulado, ["ncm2"])[_COLUNAS_SIMULACAO_NCM2_733]
+        .sort_values("DIVERGENCIA", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    resumo = {
+        "total_capitulos": len(simulacao),
+        "total_divergencia_acumulada": float(simulacao["DIVERGENCIA"].sum()),
+    }
+    return {"resumo": resumo, "simulacao": simulacao, "erros": []}
+
+
+def filtrar_por_ncm2_733(df: pd.DataFrame, ncm2: "str | None", coluna_cod_item: str = "COD_ITEM") -> pd.DataFrame:
+    """Restringe um recorte de `estagio733_consolidado` (Estágio 7.3.3,
+    ver `gerar_consolidado_origens_733()`) ao Capítulo NCM (`ncm2`)
+    selecionado na tabela de Simulação NCM2 —
+    `interface.render_consolidado_origens_733()`, Detalhamento por
+    Origem (abas Entradas/Saídas/Estoque). `coluna_cod_item` pode trazer
+    MÚLTIPLOS códigos concatenados por ", " (`STRING_AGG DISTINCT` em
+    `gerar_consolidado_origens_733()`) — uma linha "pertence" ao capítulo
+    se QUALQUER UM dos códigos mapear pra aquele `ncm2` (mesma tolerância
+    já aceita no agrupamento do consolidado). Sem filtro (`ncm2` vazio/
+    None) devolve `df` sem alteração; mapa de NCM vazio (sped_produtos
+    ainda não gerada) devolve `df` vazio, já que nenhuma linha teria como
+    comprovar pertencer ao capítulo pedido."""
+    if not ncm2 or df.empty:
+        return df
+    mapa = _mapa_cod_item_ncm2()
+    if mapa.empty:
+        return df.iloc[0:0]
+    ncm2_por_cod = pd.Series(mapa["ncm2"].to_numpy(), index=mapa["COD_ITEM"].to_numpy())
+
+    def _pertence(cod_item_concat: str) -> bool:
+        for cod in str(cod_item_concat).split(", "):
+            cod = cod.strip()
+            if not cod or cod == _MARCADOR_COD_ITEM_AUSENTE_733:
+                continue
+            cod_norm = _normalizar_cod_item_flexivel(pd.Series([cod])).iloc[0]
+            if ncm2_por_cod.get(cod_norm) == ncm2:
+                return True
+        return False
+
+    mask = df[coluna_cod_item].apply(_pertence)
+    return df[mask]
 
 
 # ── Grupo de Produto Alvo (Fiscalização) ─────────────────────────────────
