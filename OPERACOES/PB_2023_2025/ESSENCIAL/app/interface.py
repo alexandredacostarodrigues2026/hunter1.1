@@ -2173,7 +2173,20 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
     eventos = {}
     tabelas_por_origem = {}
     for origem, titulo in _TITULOS_GRADE_733.items():
-        sub = filtrado_base[filtrado_base["ORIGEM"] == origem].reset_index(drop=True)
+        # Ordenação padrão: Valor Total decrescente (pedido do usuário,
+        # 2026-08-15) — sobre TODA a base já filtrada (sem cap de 200,
+        # mesma política "sem cap" já usada em toda a página desde
+        # 2026-08-03), não só a fatia visível na tela. Selecionar linha
+        # continua funcionando após reordenar: `evento.selection.rows`
+        # (Streamlit) indexa pela posição no DataFrame passado a `st.
+        # dataframe`, não pela ordem original antes do sort — por isso
+        # `tabelas_por_origem[origem]` guarda a MESMA `sub` já ordenada,
+        # com índice resetado (0..n-1) igual ao que é exibido.
+        sub = (
+            filtrado_base[filtrado_base["ORIGEM"] == origem]
+            .sort_values("VALOR_TOTAL", ascending=False)
+            .reset_index(drop=True)
+        )
         tabelas_por_origem[origem] = sub
 
         st.markdown(f"**{titulo}** — {len(sub):,} linha(s)".replace(",", "."))
