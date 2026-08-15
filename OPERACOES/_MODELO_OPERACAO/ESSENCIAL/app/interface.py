@@ -2129,8 +2129,146 @@ def render_rn1_simulada_30() -> None:
     st.rerun()
 
 
-_COLUNAS_CONSOLIDADO_733 = ["ANO", "DESCR_PROD", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL", "ORIGEM"]
-_COLUNA_CHECKBOX_CONSOLIDADO_733 = "Selecionar p/ Fiscalização"
+_COLUNAS_CONSOLIDADO_733 = ["ANO", "DESCR_PROD", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL", "ORIGEM", "ncm2"]
+_COLUNAS_EXIBICAO_GRADE_733 = ["ANO", "DESCR_PROD", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL"]
+_CHAVES_GRADE_733 = {"entrada": "grade_733_entrada", "saida": "grade_733_saida", "estoque": "grade_733_estoque"}
+_TITULOS_GRADE_733 = {
+    "entrada": "📥 Itens de Entrada (XML)",
+    "saida": "📤 Itens de Saída (XML)",
+    "estoque": "📦 Itens de Estoque (SPED)",
+}
+
+
+def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
+    """Estágio 7.3.3 — "Grades de Produtos" (2026-08-15, Solicitação
+    Técnica de reestruturação): substitui a antiga tabela única (st.
+    data_editor com checkbox "Selecionar p/ Fiscalização") e o antigo
+    "Detalhamento por Origem" (st.tabs) por TRÊS grades independentes,
+    sempre visíveis (Entradas/Saídas/Estoque), cada uma com KPIs
+    miniaturizados (Soma Quantidade/Soma Valor Total) e seleção de linha
+    NATIVA (`st.dataframe(on_select="rerun", selection_mode="single-
+    row")` — 2ª vez que o app usa esse recurso, depois da tabela de
+    Simulação NCM2).
+
+    Seleção ÚNICA e EXCLUSIVA entre as 3 grades (pedido explícito —
+    "evita que o auditor 'crave' acidentalmente produtos diferentes com
+    o mesmo nome vindos de origens distintas"): o estado ativo fica em
+    `st.session_state["alvo_733_ativo"]` (a linha inteira selecionada,
+    incluindo ORIGEM). Ao detectar seleção NOVA numa grade diferente da
+    já ativa, limpa a seleção visual das outras 2 ANTES do próximo
+    rerender — via `st.session_state[chave_da_grade] = {"selection":
+    {"rows": []}}`, mecanismo oficial do Streamlit pra setar o estado de
+    um widget `on_select` programaticamente (`DataframeState` aceita
+    atribuição por dict com o mesmo schema, ver docstring de `st.
+    dataframe`) — e força `st.rerun()` pra aplicar a limpeza antes do
+    usuário ver as 2 seleções simultâneas na tela. Reselecionar outra
+    linha DENTRO da mesma grade só atualiza o alvo ativo, sem precisar
+    limpar nada (nenhuma das outras 2 estava selecionada)."""
+    st.markdown("**Grades de Produtos**")
+    st.caption(
+        "Selecione uma linha em UMA das 3 grades pra marcar o Alvo de Fiscalização — selecionar em "
+        "outra grade substitui a seleção anterior (só um produto ativo por vez)."
+    )
+
+    eventos = {}
+    tabelas_por_origem = {}
+    for origem, titulo in _TITULOS_GRADE_733.items():
+        sub = filtrado_base[filtrado_base["ORIGEM"] == origem].reset_index(drop=True)
+        tabelas_por_origem[origem] = sub
+
+        st.markdown(f"**{titulo}** — {len(sub):,} linha(s)".replace(",", "."))
+        chave_kpi = f"estagio733_grade_kpi_{origem}"
+        with st.container(key=chave_kpi):
+            st.markdown(
+                f"<style>.st-key-{chave_kpi} [data-testid='stMetricLabel'] "
+                "{ font-size: 10px; } "
+                f".st-key-{chave_kpi} [data-testid='stMetricValue'] "
+                "{ font-size: 14px; }</style>",
+                unsafe_allow_html=True,
+            )
+            col_kpi1, col_kpi2 = st.columns(2)
+            col_kpi1.metric("Soma Quantidade", _formatar_moeda_br(sub["QTDE"].sum()))
+            col_kpi2.metric("Soma Valor Total", _formatar_moeda_br(sub["VALOR_TOTAL"].sum()))
+
+        if sub.empty:
+            st.caption("Nenhum item.")
+            eventos[origem] = None
+            continue
+
+        exibicao = sub[_COLUNAS_EXIBICAO_GRADE_733].rename(columns=loader.carregar_dicionario_campos())
+        chave_tabela = _CHAVES_GRADE_733[origem]
+        with st.container(key=f"estagio733_grade_container_{origem}"):
+            st.markdown(
+                f"<style>.st-key-estagio733_grade_container_{origem} [data-testid='stDataFrame'] "
+                "* { font-size: 9px; }</style>",
+                unsafe_allow_html=True,
+            )
+            eventos[origem] = st.dataframe(
+                exibicao,
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key=chave_tabela,
+                column_config={
+                    "Qtde": st.column_config.NumberColumn(format="%.2f"),
+                    "Valor Total": st.column_config.NumberColumn(format="%.2f"),
+                },
+            )
+        st.divider()
+
+    selecao_atual = None
+    for origem, evento in eventos.items():
+        linhas = evento.selection.rows if evento and evento.selection else []
+        if linhas:
+            selecao_atual = (origem, linhas[0])
+
+    if selecao_atual:
+        origem_sel, idx_sel = selecao_atual
+        linha_dados = tabelas_por_origem[origem_sel].iloc[idx_sel].to_dict()
+        alvo_anterior = st.session_state.get("alvo_733_ativo")
+        if not alvo_anterior or alvo_anterior.get("ORIGEM") != origem_sel:
+            for outra_origem, chave in _CHAVES_GRADE_733.items():
+                if outra_origem != origem_sel:
+                    st.session_state[chave] = {"selection": {"rows": []}}
+            st.session_state["alvo_733_ativo"] = linha_dados
+            st.rerun()
+        else:
+            st.session_state["alvo_733_ativo"] = linha_dados
+
+    alvo_ativo = st.session_state.get("alvo_733_ativo")
+    if not alvo_ativo:
+        st.info("Nenhum produto selecionado como Alvo — clique numa linha de uma das 3 grades acima.")
+        return
+
+    st.markdown(
+        f"**🎯 Alvo ativo:** {alvo_ativo.get('DESCR_PROD', '')} "
+        f"(Origem: {_TITULOS_GRADE_733.get(alvo_ativo.get('ORIGEM'), alvo_ativo.get('ORIGEM'))}, "
+        f"Cód.: {alvo_ativo.get('COD_ITEM', '')}, Ano: {alvo_ativo.get('ANO', '')})"
+    )
+    col_cravar, col_limpar_alvo = st.columns(2)
+    if col_cravar.button("🎯 Cravar Alvo Selecionado (7.3.3)", key="btn_cravar_alvo_733"):
+        selecionado_df = pd.DataFrame([{
+            "DESCR_PROD": alvo_ativo.get("DESCR_PROD", ""),
+            "COD_ITEM": alvo_ativo.get("COD_ITEM", ""),
+        }])
+        resultado = loader.salvar_alvos_selecionados_733(selecionado_df)
+        if "erro" in resultado:
+            st.error(f"Erro: {resultado['erro']}")
+        else:
+            st.success(
+                f"✅ {resultado['total_adicionado']} alvo(s) novo(s) cravado(s), "
+                f"{resultado['total_reativado']} reativado(s)."
+            )
+            st.session_state["alvo_733_ativo"] = None
+            for chave in _CHAVES_GRADE_733.values():
+                st.session_state[chave] = {"selection": {"rows": []}}
+            st.rerun()
+    if col_limpar_alvo.button("Limpar seleção de Alvo", key="btn_limpar_alvo_733"):
+        st.session_state["alvo_733_ativo"] = None
+        for chave in _CHAVES_GRADE_733.values():
+            st.session_state[chave] = {"selection": {"rows": []}}
+        st.rerun()
 
 
 def render_consolidado_origens_733() -> None:
@@ -2141,10 +2279,7 @@ def render_consolidado_origens_733() -> None:
     (XML) ou estoque estagnado (Bloco H) suspeito. Ver
     loader.gerar_consolidado_origens_733() pro raciocínio de agregação/
     fontes. Chamada por render_pagina_consolidado_733() — botão PRÓPRIO
-    no Menu Principal desde 2026-08-03 (pedido do usuário: "separe 7.3.3
-    do 7.3.2 criando botão próprio pra ele"); a Solicitação Técnica
-    original pedia essa seção logo abaixo do 7.3.2, na mesma página —
-    revertido nesta sessão.
+    no Menu Principal desde 2026-08-03.
 
     Upsert ADITIVO (loader.salvar_alvos_selecionados_733(), confirmado com
     o usuário via AskUserQuestion): cravar aqui nunca cancela nada que já
@@ -2155,177 +2290,61 @@ def render_consolidado_origens_733() -> None:
     TOTAL_CREDITO=0, INFRACAO vazio, OBSERVACAO registra a origem) —
     também confirmado com o usuário, em vez de calcular RN1 na hora.
 
-    Sem limite de linhas carregadas no editor (2026-08-03, pedido do
-    usuário — "quando ordenar pelo título, não ficar restrito às 200
-    primeiras e sim buscar no todo"): a versão original capava em 200
-    linhas após filtro (mesmo padrão do 7.3.2), o que fazia a ordenação
-    por clique no cabeçalho da coluna (recurso nativo do
-    st.data_editor/glide-data-grid) ordenar só as 200 já carregadas, não
-    o total filtrado. Removido o cap — todo `filtrado` vai pro editor,
-    já que o grid é virtualizado (só renderiza as linhas visíveis).
+    Reestruturação 2026-08-15 (Solicitação Técnica "Reestruturação e
+    Performance"): ordem vertical mudou pra Setor (NCM) -> Filtro ->
+    Produto, espelhando a metodologia real de auditoria (materialidade
+    macro pro item específico):
+    1. Simulação NCM2 (topo, "primeiro elemento de análise") — não
+       depende de `estagio733_consolidado` (fonte própria, `simulacao_
+       ncm2_733_base`), por isso renderiza mesmo antes do Consolidado
+       ter sido gerado.
+    2. Gate "Gerar/Regerar Consolidado" (ação de preparo, não é
+       "elemento de análise" — fica entre a Simulação NCM2 e os Filtros,
+       que dependem dele).
+    3. Container de Filtros (Busca por Descrição + Ano) — perdeu o
+       selectbox de Origem (2026-08-15): com as 3 grades sempre
+       separadas por origem, o seletor global virou redundante.
+    4. Grades de Produtos (base) — `_render_grades_produtos_733()`.
+    A antiga tabela única com checkbox + o antigo "Detalhamento por
+    Origem" (st.tabs, só aparecia com busca preenchida) foram
+    SUBSTITUÍDOS pelas 3 grades sempre visíveis, com seleção de linha
+    única e exclusiva entre elas (ver `_render_grades_produtos_733()`).
 
-    Refinamento 2026-08-13, 1ª rodada (Solicitação Técnica — auditoria
-    integrada): fonte unificada em 10px na tabela principal e nas 3
-    tabelas de Detalhamento por Origem; Detalhamento só aparece com termo
-    de busca preenchido (senão repetiria a tabela principal sem agregar
-    valor); Detalhamento ignora o selectbox de Origem de propósito —
-    mostra sempre Entradas/Saídas/Estoque juntos pro termo buscado, pra
-    achar omissão (comprou mas não vendeu, ou vice-versa) sem trocar o
-    filtro repetidamente; ganhou 2 st.metric (Soma Quantidade/Soma Valor
-    Total) por origem, calculados com `.sum()` puro (nulo vira 0.0).
-
-    Refinamento 2026-08-13, 2ª rodada (Solicitação Técnica — "painel de
-    instrumentos"): Detalhamento por Origem trocou de 3 colunas lado a
-    lado pra `st.tabs(["📥 Entradas", "📤 Saídas", "📦 Estoque"])`; fonte
-    das grades reduzida de 10px pra 9px (principal e detalhes); KPIs
-    miniaturizados via CSS (rótulo 10px, valor 14px, mesmo padrão já usado
-    no painel de Matching/BC3 — `.st-key-bc3_kpis`); colunas Qtde/Valor
-    Total das tabelas de detalhe deixaram de ser texto BR pré-formatado e
-    passaram a usar `column_config.NumberColumn(format="%.2f")`, mesmo
-    motivo já documentado no editor principal (ordenação por clique no
-    cabeçalho é por STRING quando a coluna é texto).
-
-    Refinamento 2026-08-13, 3ª rodada (usuário questionou a alegação
-    repetida de que "o Bloco H não tem valor"): CONFIRMADO como falso pra
-    granularidade bruta do H010 (`VL_ITEM`/`VL_UNIT` 100% preenchidos) —
-    o que não tinha valor era só a tabela consolidada do Estágio 5
-    (`estoque_anual_consolidado`), que passou a carregar VALOR_INICIAL/
-    VALOR_FINAL (ver loader.montar_estoque_anual_consolidado()). Valor
-    Total do Estoque, aqui e no Detalhamento por Origem, deixou de ser
-    NULL/branco e passou a mostrar o valor declarado real (VL_ITEM do
-    inventário de fechamento do ano)."""
+    Performance do filtro por Capítulo NCM (2026-08-15, mesma
+    Solicitação Técnica): antes, selecionar um Capítulo na Simulação
+    NCM2 refazia o JOIN contra `sped_produtos` em tempo de execução
+    (`loader.filtrar_por_ncm2_733()`), causando atraso perceptível a
+    cada troca. Agora a coluna `ncm2` já vem PRÉ-CALCULADA e persistida
+    em `estagio733_consolidado` (`loader.gerar_consolidado_origens_733()`
+    grava com `_resolver_ncm2_por_cod_item_concatenado()`), então o
+    filtro na tela é uma comparação de coluna, não um JOIN."""
     st.markdown("**🔍 7.3.3: Seleção Consolidada (Estoque/XML)**")
     st.caption(
         "Une Entradas, Saídas (excluindo autoemissão) e Estoque (Bloco H, só anos já fechados) "
-        "numa única tabela — Qtde/Valor Total agregados por Ano+Descrição+Unidade+Origem. Ajuda a "
-        "encontrar itens com volume físico ou estoque suspeito que não aparecem no 7.2/7.3 por "
-        "falta de divergência financeira. Valor Total do Estoque é o valor declarado (VL_ITEM) do "
-        "inventário de fechamento do ano (Bloco H). Cód. Produto mostra "
-        "'nc' quando nenhuma origem tinha código vinculado. Alvo cravado aqui não passa pela "
-        "régua de divergência do 7.2/7.3 (fica marcado na Observação)."
+        "numa única base — Qtde/Valor Total agregados por Ano+Descrição+Unidade+Origem. Fluxo: "
+        "localize o Capítulo NCM (setor) na tabela abaixo, aplique os filtros de Busca/Ano e "
+        "escolha o produto alvo específico numa das 3 grades (Entradas/Saídas/Estoque). Alvo "
+        "cravado aqui não passa pela régua de divergência do 7.2/7.3 (fica marcado na Observação)."
     )
 
-    if "estagio733_gerado" not in st.session_state:
-        st.session_state["estagio733_gerado"] = loader.estagio733_consolidado_ja_gerado()
-
-    if st.session_state["estagio733_gerado"]:
-        df_preview, total = loader.consultar_consolidado_origens_733(limite=None)
-        st.success(f"✅ {total:,} linha(s) em `estagio733_consolidado`.".replace(",", "."))
-        clicou = st.button(
-            "Regerar Consolidado (7.3.3)", key="btn_regerar_consolidado_733",
-            help="Reprocessa Entradas/Saídas/Estoque do zero.",
-        )
-    else:
-        df_preview = pd.DataFrame(columns=_COLUNAS_CONSOLIDADO_733)
-        clicou = st.button("Gerar Consolidado (7.3.3)", key="btn_gerar_consolidado_733")
-
-    if clicou:
-        with st.spinner("Unindo Entradas/Saídas/Estoque..."):
-            resultado = loader.persistir_consolidado_origens_733()
-        if "erro" in resultado:
-            st.error(f"Erro: {resultado['erro']}")
-            return
-        for erro in resultado.get("erros", []):
-            st.warning(erro)
-        st.session_state["estagio733_gerado"] = True
-        st.rerun()
-
-    if df_preview.empty:
-        if st.session_state["estagio733_gerado"]:
-            st.info("Nenhuma linha encontrada — confira se Entradas/Saídas/Estoque já foram gerados.")
-        return
-
-    col_busca, col_ano, col_origem = st.columns(3)
-    busca_descricao = col_busca.text_input("Buscar por Descrição", key="filtro_descricao_733")
-    col_busca.caption(
-        r"Dica: use '\*' como curinga. Ex.: 'mac\*' (inicia com mac), '\*mac' (termina com mac), "
-        r"'\*mac\*' (contém mac), '\*mor\*mac\*' (contém mor e mac, em qualquer ordem)."
-    )
-    anos_disponiveis = sorted(df_preview["ANO"].dropna().unique().tolist())
-    ano_selecionado = col_ano.selectbox("Ano", ["Todos"] + anos_disponiveis, key="filtro_ano_733")
-    origens_disponiveis = sorted(df_preview["ORIGEM"].dropna().unique().tolist())
-    origem_selecionada = col_origem.selectbox(
-        "Origem", ["Todas"] + origens_disponiveis, key="filtro_origem_733",
-    )
-
-    # `filtrado_base` (busca+ano, sem Origem) alimenta o Detalhamento por
-    # Origem abaixo — 2026-08-13, pedido do usuário: o selectbox de Origem
-    # não deve limitar as 3 tabelas de detalhe (senão pesquisar um item com
-    # Origem="entrada" selecionada esconderia Saídas/Estoque desse mesmo
-    # item, o oposto do objetivo de ver as 3 frentes simultaneamente).
-    # `filtrado` (busca+ano+origem) continua alimentando só a tabela
-    # principal de seleção, que respeita os 3 filtros normalmente.
-    filtrado_base = df_preview
-    if busca_descricao.strip():
-        filtrado_base = filtrado_base[
-            filtrado_base["DESCR_PROD"].str.contains(
-                _padrao_busca_curinga(busca_descricao.strip()), case=False, na=False,
-            )
-        ]
-    if ano_selecionado != "Todos":
-        filtrado_base = filtrado_base[filtrado_base["ANO"] == ano_selecionado]
-
-    filtrado = filtrado_base
-    if origem_selecionada != "Todas":
-        filtrado = filtrado[filtrado["ORIGEM"] == origem_selecionada]
-
-    st.markdown(f"**{len(filtrado):,} linha(s)** após filtro.".replace(",", "."))
-    amostra_raw = filtrado.copy()
-
-    editor_base = amostra_raw[_COLUNAS_CONSOLIDADO_733].copy()
-    editor_base.insert(0, _COLUNA_CHECKBOX_CONSOLIDADO_733, False)
-
-    editor_exibicao = editor_base.copy()
-    editor_exibicao = editor_exibicao.rename(columns=loader.carregar_dicionario_campos())
-    editor_exibicao = editor_exibicao.rename(columns={"ORIGEM": "Origem"})
-
-    colunas_travadas = [c for c in editor_exibicao.columns if c != _COLUNA_CHECKBOX_CONSOLIDADO_733]
-    with st.container(key="estagio733_editor_consolidado"):
-        st.markdown(
-            "<style>.st-key-estagio733_editor_consolidado [data-testid='stDataFrame'] "
-            "* { font-size: 9px; }</style>",
-            unsafe_allow_html=True,
-        )
-        editado = st.data_editor(
-            editor_exibicao,
-            use_container_width=True,
-            hide_index=True,
-            disabled=colunas_travadas,
-            key="editor_consolidado_733",
-            column_config={
-                # Mantidos NUMÉRICOS de propósito (2026-08-03, achado real:
-                # a versão anterior pré-formatava como texto BR — "3.740,88"
-                # — pra exibição, e a ordenação por clique no cabeçalho do
-                # grid (glide-data-grid) ordenava como STRING, não número:
-                # "999,60" ficava acima de "3.740,88" porque "9" > "3"
-                # lexicograficamente. NumberColumn não tem opção de milhar
-                # "." + decimal "," (mesma limitação já documentada em
-                # _formatar_moeda_br), então perde a formatação BR aqui —
-                # troca aceita pra ordenação numérica funcionar de verdade.
-                "Qtde": st.column_config.NumberColumn(format="%.2f"),
-                "Valor Total": st.column_config.NumberColumn(format="%.2f"),
-            },
-        )
-
-    # Simulação NCM2 (2026-08-15, Solicitação Técnica — ponte macro/micro):
-    # tabela de Simulação RN1 (+30%) agrupada por Capítulo NCM (2 primeiros
-    # dígitos do COD_NCM), posicionada logo acima do Detalhamento por Origem
-    # de propósito (pedido explícito) — selecionar uma linha aqui filtra as
-    # 3 abas logo abaixo pra só os produtos daquele Capítulo. Ver
-    # loader.gerar_simulacao_ncm2_733() pro raciocínio completo da fonte de
-    # dados (base própria, reconstruída do zero por COD_ITEM — NÃO é
-    # `estagio733_consolidado`, que não carrega EI/Compras/Vendas/EF).
+    # Simulação NCM2 — topo, "primeiro elemento de análise" (não depende
+    # do Consolidado abaixo). Lê busca_descricao/ano_selecionado do
+    # session_state ANTES dos widgets de Filtro serem instanciados mais
+    # abaixo na tela (mesma key — o Streamlit já preserva o valor entre
+    # reruns, padrão seguro pra layout onde o filtro aparece visualmente
+    # DEPOIS do conteúdo que ele afeta).
     ncm2_selecionado = st.session_state.get("ncm2_selecionado_733")
+    busca_descricao_atual = st.session_state.get("filtro_descricao_733", "")
+    ano_selecionado_atual = st.session_state.get("filtro_ano_733", "Todos")
 
-    st.divider()
     st.markdown("**📊 Simulação RN1 (+30%) por Capítulo NCM**")
     st.caption(
         "Agrupa EI, Compras, Vendas e Estoque Final por Capítulo NCM (2 primeiros dígitos do "
         "COD_NCM, cadastro SPED Registro 0200) e aplica a mesma simulação +30% do Estágio 7.3.2 "
         "sobre os totais agrupados — cobre TODOS os produtos com NCM cadastrado, não só os já "
-        "equalizados no Estágio 7.1/7.2. Respeita os filtros de Busca por Descrição e Ano acima. "
-        "Clique numa linha pra filtrar automaticamente o Detalhamento por Origem (Entradas/Saídas/"
-        "Estoque) logo abaixo por aquele Capítulo."
+        "equalizados no Estágio 7.1/7.2. Respeita os filtros de Busca por Descrição e Ano do "
+        "container logo abaixo. Clique numa linha pra filtrar automaticamente as Grades de "
+        "Produtos por aquele Capítulo."
     )
 
     if "ncm2_733_base_gerada" not in st.session_state:
@@ -2351,7 +2370,7 @@ def render_consolidado_origens_733() -> None:
     if not st.session_state["ncm2_733_base_gerada"]:
         st.info('Clique em "Gerar Simulação NCM2" pra montar a tabela de Capítulos NCM.')
     else:
-        resultado_sim_ncm2 = loader.gerar_simulacao_ncm2_733(busca_descricao, ano_selecionado)
+        resultado_sim_ncm2 = loader.gerar_simulacao_ncm2_733(busca_descricao_atual, ano_selecionado_atual)
         for erro in resultado_sim_ncm2.get("erros", []):
             st.warning(erro)
         tabela_ncm2 = resultado_sim_ncm2.get("simulacao", pd.DataFrame())
@@ -2387,112 +2406,77 @@ def render_consolidado_origens_733() -> None:
 
             if ncm2_selecionado:
                 col_ncm2_info, col_ncm2_limpar = st.columns([4, 1])
-                col_ncm2_info.info(f"Filtrando Detalhamento por Origem pelo Capítulo NCM **{ncm2_selecionado}**.")
+                col_ncm2_info.info(f"Filtrando Grades de Produtos pelo Capítulo NCM **{ncm2_selecionado}**.")
                 if col_ncm2_limpar.button("Limpar filtro NCM", key="btn_limpar_ncm2_733"):
                     st.session_state["ncm2_selecionado_733"] = None
                     ncm2_selecionado = None
                     st.rerun()
 
-    # Detalhamento por Origem (2026-08-12, tabelas lado a lado; refinado
-    # 2026-08-13 — Solicitação Técnica: gate por busca + desvínculo do
-    # filtro de Origem + KPIs; refinado de novo 2026-08-13, 2ª rodada —
-    # Solicitação Técnica "painel de instrumentos": abas em vez de colunas
-    # lado a lado, fonte 9px, KPIs miniaturizados): renderiza quando há
-    # termo de busca por descrição OU um Capítulo NCM selecionado na
-    # Simulação NCM2 acima (2026-08-15 — antes só o termo de busca abria
-    # a seção; senão a seção fica igual à tabela principal e não agrega
-    # valor pra quem só está navegando/filtrando por Ano). Usa
-    # `filtrado_base` (busca+ano, SEM o filtro de Origem) de propósito —
-    # o objetivo declarado é o auditor ver as 3 frentes (Entradas/Saídas/
-    # Estoque) do item buscado simultaneamente, mesmo com um valor
-    # específico selecionado no selectbox de Origem (que só vale pra
-    # tabela principal de seleção); `filtro_ncm2_733` restringe essa
-    # mesma fatia ao Capítulo NCM selecionado (loader.filtrar_por_
-    # ncm2_733(), tolera múltiplos códigos concatenados por linha). Cada
-    # aba é sempre a origem fixa do loop (`origem_valor`), não a do
-    # selectbox. `st.tabs` de topo, não aninhado em outro `st.tabs` desta
-    # página — as 3 abas rodam no mesmo script run do Streamlit (conteúdo
-    # das 3 é sempre computado, só a exibição é client-side), por isso
-    # não há custo de re-fetch ao trocar de aba. NumberColumn (não mais
-    # texto BR pré-formatado) nas colunas Qtde/Valor Total, mesmo motivo
-    # já documentado na tabela principal: ordenação por clique no
-    # cabeçalho do grid é por STRING quando a coluna é texto, quebrando a
-    # ordenação numérica.
-    if busca_descricao.strip() or ncm2_selecionado:
-        filtrado_detalhamento = loader.filtrar_por_ncm2_733(filtrado_base, ncm2_selecionado)
-        st.markdown("**Detalhamento por Origem (Entradas / Saídas / Estoque)**")
-        st.caption(
-            "Ignora o filtro de Origem acima — mostra sempre as 3 origens pro termo "
-            "buscado, pra comparar se o item comprado também foi vendido ou consta em estoque."
-            + (f" Restrito ao Capítulo NCM **{ncm2_selecionado}**." if ncm2_selecionado else "")
-        )
-        aba_entrada, aba_saida, aba_estoque = st.tabs(["📥 Entradas", "📤 Saídas", "📦 Estoque"])
-        for aba, origem_valor in (
-            (aba_entrada, "entrada"),
-            (aba_saida, "saida"),
-            (aba_estoque, "estoque"),
-        ):
-            sub = filtrado_detalhamento[filtrado_detalhamento["ORIGEM"] == origem_valor]
-            with aba:
-                chave_kpi = f"estagio733_kpi_{origem_valor}"
-                with st.container(key=chave_kpi):
-                    st.markdown(
-                        f"<style>.st-key-{chave_kpi} [data-testid='stMetricLabel'] "
-                        "{ font-size: 10px; } "
-                        f".st-key-{chave_kpi} [data-testid='stMetricValue'] "
-                        "{ font-size: 14px; }</style>",
-                        unsafe_allow_html=True,
-                    )
-                    col_kpi1, col_kpi2 = st.columns(2)
-                    col_kpi1.metric("Soma Quantidade", _formatar_moeda_br(sub["QTDE"].sum()))
-                    col_kpi2.metric("Soma Valor Total", _formatar_moeda_br(sub["VALOR_TOTAL"].sum()))
-                if sub.empty:
-                    st.caption("Nenhum item.")
-                    continue
-                agrupado = (
-                    sub.groupby("DESCR_PROD", as_index=False)[["QTDE", "VALOR_TOTAL"]]
-                    .sum(min_count=1)
-                    .sort_values("DESCR_PROD")
-                )
-                linha_total = pd.DataFrame([{
-                    "DESCR_PROD": "TOTAL",
-                    "QTDE": agrupado["QTDE"].sum(min_count=1),
-                    "VALOR_TOTAL": agrupado["VALOR_TOTAL"].sum(min_count=1),
-                }])
-                exibicao = pd.concat([agrupado, linha_total], ignore_index=True)
-                exibicao = exibicao.rename(
-                    columns={"DESCR_PROD": "Descrição", "QTDE": "Qtde", "VALOR_TOTAL": "Valor Total"}
-                )
-                chave = f"estagio733_tabela_{origem_valor}"
-                with st.container(key=chave):
-                    st.markdown(
-                        f"<style>.st-key-{chave} [data-testid='stDataFrame'] "
-                        "* { font-size: 9px; }</style>",
-                        unsafe_allow_html=True,
-                    )
-                    st.dataframe(
-                        exibicao, use_container_width=True, hide_index=True,
-                        column_config={
-                            "Qtde": st.column_config.NumberColumn(format="%.2f"),
-                            "Valor Total": st.column_config.NumberColumn(format="%.2f"),
-                        },
-                    )
+    st.divider()
 
-    if st.button("🎯 Cravar Alvos Selecionados (7.3.3)", key="btn_cravar_alvos_733"):
-        marcados = editado[_COLUNA_CHECKBOX_CONSOLIDADO_733].reindex(editor_base.index).fillna(False)
-        selecionados = editor_base.loc[marcados.to_numpy()]
-        if selecionados.empty:
-            st.warning("Nenhuma linha marcada.")
-        else:
-            resultado = loader.salvar_alvos_selecionados_733(selecionados)
-            if "erro" in resultado:
-                st.error(f"Erro: {resultado['erro']}")
-            else:
-                st.success(
-                    f"✅ {resultado['total_adicionado']} alvo(s) novo(s) cravado(s), "
-                    f"{resultado['total_reativado']} reativado(s)."
-                )
-                st.rerun()
+    if "estagio733_gerado" not in st.session_state:
+        st.session_state["estagio733_gerado"] = loader.estagio733_consolidado_ja_gerado()
+
+    if st.session_state["estagio733_gerado"]:
+        df_preview, total = loader.consultar_consolidado_origens_733(limite=None)
+        st.success(f"✅ {total:,} linha(s) em `estagio733_consolidado`.".replace(",", "."))
+        clicou = st.button(
+            "Regerar Consolidado (7.3.3)", key="btn_regerar_consolidado_733",
+            help="Reprocessa Entradas/Saídas/Estoque do zero (recalcula também o Capítulo NCM).",
+        )
+    else:
+        df_preview = pd.DataFrame(columns=_COLUNAS_CONSOLIDADO_733)
+        clicou = st.button("Gerar Consolidado (7.3.3)", key="btn_gerar_consolidado_733")
+
+    if clicou:
+        with st.spinner("Unindo Entradas/Saídas/Estoque..."):
+            resultado = loader.persistir_consolidado_origens_733()
+        if "erro" in resultado:
+            st.error(f"Erro: {resultado['erro']}")
+            return
+        for erro in resultado.get("erros", []):
+            st.warning(erro)
+        st.session_state["estagio733_gerado"] = True
+        st.rerun()
+
+    if df_preview.empty:
+        if st.session_state["estagio733_gerado"]:
+            st.info("Nenhuma linha encontrada — confira se Entradas/Saídas/Estoque já foram gerados.")
+        return
+
+    # Filtros — meio: container único (Busca + Ano), sem o antigo
+    # selectbox de Origem (redundante desde que as 3 grades abaixo já
+    # separam por origem, ver docstring da função).
+    with st.container(key="estagio733_filtros"):
+        st.markdown("**Filtros**")
+        col_busca, col_ano = st.columns(2)
+        busca_descricao = col_busca.text_input("Buscar por Descrição", key="filtro_descricao_733")
+        col_busca.caption(
+            r"Dica: use '\*' como curinga. Ex.: 'mac\*' (inicia com mac), '\*mac' (termina com mac), "
+            r"'\*mac\*' (contém mac), '\*mor\*mac\*' (contém mor e mac, em qualquer ordem)."
+        )
+        anos_disponiveis = sorted(df_preview["ANO"].dropna().unique().tolist())
+        ano_selecionado = col_ano.selectbox("Ano", ["Todos"] + anos_disponiveis, key="filtro_ano_733")
+
+    filtrado_base = df_preview
+    if busca_descricao.strip():
+        filtrado_base = filtrado_base[
+            filtrado_base["DESCR_PROD"].str.contains(
+                _padrao_busca_curinga(busca_descricao.strip()), case=False, na=False,
+            )
+        ]
+    if ano_selecionado != "Todos":
+        filtrado_base = filtrado_base[filtrado_base["ANO"] == ano_selecionado]
+    if ncm2_selecionado:
+        filtrado_base = loader.filtrar_por_ncm2_733(filtrado_base, ncm2_selecionado)
+
+    if ncm2_selecionado:
+        st.caption(f"Restrito ao Capítulo NCM **{ncm2_selecionado}** (selecionado na Simulação NCM2 acima).")
+    st.markdown(f"**{len(filtrado_base):,} linha(s)** após filtro.".replace(",", "."))
+
+    # Grades de Produtos — base.
+    st.divider()
+    _render_grades_produtos_733(filtrado_base)
 
 
 _COLUNAS_PREVIEW_DIVERGENCIA = [

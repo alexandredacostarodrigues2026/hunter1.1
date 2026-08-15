@@ -5886,38 +5886,25 @@ def gerar_simulacao_ncm2_733(busca_descricao: str = "", ano_selecionado: str = "
     return {"resumo": resumo, "simulacao": simulacao, "erros": []}
 
 
-def filtrar_por_ncm2_733(df: pd.DataFrame, ncm2: "str | None", coluna_cod_item: str = "COD_ITEM") -> pd.DataFrame:
-    """Restringe um recorte de `estagio733_consolidado` (Estágio 7.3.3,
-    ver `gerar_consolidado_origens_733()`) ao Capítulo NCM (`ncm2`)
-    selecionado na tabela de Simulação NCM2 —
-    `interface.render_consolidado_origens_733()`, Detalhamento por
-    Origem (abas Entradas/Saídas/Estoque). `coluna_cod_item` pode trazer
-    MÚLTIPLOS códigos concatenados por ", " (`STRING_AGG DISTINCT` em
-    `gerar_consolidado_origens_733()`) — uma linha "pertence" ao capítulo
-    se QUALQUER UM dos códigos mapear pra aquele `ncm2` (mesma tolerância
-    já aceita no agrupamento do consolidado). Sem filtro (`ncm2` vazio/
-    None) devolve `df` sem alteração; mapa de NCM vazio (sped_produtos
-    ainda não gerada) devolve `df` vazio, já que nenhuma linha teria como
-    comprovar pertencer ao capítulo pedido."""
+def filtrar_por_ncm2_733(df: pd.DataFrame, ncm2: "str | None") -> pd.DataFrame:
+    """Restringe um recorte de `estagio733_consolidado` (Estágio 7.3.3)
+    ao Capítulo NCM (`ncm2`) selecionado na tabela de Simulação NCM2 —
+    `interface.render_consolidado_origens_733()`. Comparação DIRETA
+    contra a coluna `ncm2`, já pré-calculada e persistida por
+    `gerar_consolidado_origens_733()` (`_resolver_ncm2_por_cod_item_
+    concatenado()`) — sem JOIN em tempo de execução (2026-08-15,
+    Solicitação Técnica de performance: a versão anterior refazia o JOIN
+    contra `sped_produtos` a CADA troca de Capítulo selecionado na tela,
+    causando atraso perceptível; agora é uma comparação de coluna, O(n)
+    sem I/O). Sem filtro (`ncm2` vazio/None) devolve `df` sem alteração;
+    `df` sem a coluna `ncm2` (cache antiga, gerada antes desta mudança)
+    devolve `df` vazio — sinaliza a necessidade de "Regerar Consolidado"
+    em vez de silenciosamente não filtrar nada."""
     if not ncm2 or df.empty:
         return df
-    mapa = _mapa_cod_item_ncm2()
-    if mapa.empty:
+    if "ncm2" not in df.columns:
         return df.iloc[0:0]
-    ncm2_por_cod = pd.Series(mapa["ncm2"].to_numpy(), index=mapa["COD_ITEM"].to_numpy())
-
-    def _pertence(cod_item_concat: str) -> bool:
-        for cod in str(cod_item_concat).split(", "):
-            cod = cod.strip()
-            if not cod or cod == _MARCADOR_COD_ITEM_AUSENTE_733:
-                continue
-            cod_norm = _normalizar_cod_item_flexivel(pd.Series([cod])).iloc[0]
-            if ncm2_por_cod.get(cod_norm) == ncm2:
-                return True
-        return False
-
-    mask = df[coluna_cod_item].apply(_pertence)
-    return df[mask]
+    return df[df["ncm2"] == ncm2]
 
 
 # ── Grupo de Produto Alvo (Fiscalização) ─────────────────────────────────
@@ -6197,7 +6184,7 @@ def salvar_edicoes_produto_alvo_salvos(atualizacoes: pd.DataFrame) -> dict:
 # Saídas) numa única tabela de consulta, pra o auditor "cravar" alvos de
 # fiscalização que não têm divergência financeira aparente no 7.2/7.3, mas
 # têm volume físico (XML) ou estoque estagnado (Bloco H) suspeito.
-_COLUNAS_CONSOLIDADO_733 = ["ANO", "DESCR_PROD", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL", "ORIGEM"]
+_COLUNAS_CONSOLIDADO_733 = ["ANO", "DESCR_PROD", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL", "ORIGEM", "ncm2"]
 _MARCADOR_COD_ITEM_AUSENTE_733 = "nc"
 
 _QUERY_CONSOLIDADO_733_XML = """
@@ -6235,6 +6222,35 @@ FROM estoque_anual_consolidado
 WHERE QUANTIDADE_FINAL IS NOT NULL
 GROUP BY ANO_REFERENCIA, DESCR_ITEM_DECLARACAO, UNIDADE
 """
+
+
+def _resolver_ncm2_por_cod_item_concatenado(serie_cod_item: pd.Series, mapa_ncm2: pd.DataFrame) -> pd.Series:
+    """Resolve, pra cada valor de `serie_cod_item` (podendo trazer
+    MÚLTIPLOS códigos concatenados por ", " — `STRING_AGG DISTINCT`, ver
+    `gerar_consolidado_origens_733()`), o Capítulo NCM (`ncm2`) do
+    PRIMEIRO código que tiver NCM cadastrado em `mapa_ncm2` (`_mapa_
+    cod_item_ncm2()`) — mesma tolerância já documentada lá (raro mais de
+    um código por linha, mais raro ainda de capítulos diferentes entre
+    eles). `""` quando nenhum código da linha tem NCM cadastrado, ou
+    `mapa_ncm2` vier vazio. Usada só na GERAÇÃO/REGERAÇÃO do consolidado
+    (uma vez por clique em "Gerar/Regerar Consolidado") — não em toda
+    troca de filtro na tela, ver `filtrar_por_ncm2_733()`."""
+    if mapa_ncm2.empty:
+        return pd.Series([""] * len(serie_cod_item), index=serie_cod_item.index, dtype="object")
+    ncm2_por_cod = pd.Series(mapa_ncm2["ncm2"].to_numpy(), index=mapa_ncm2["COD_ITEM"].to_numpy())
+
+    def _resolver(cod_item_concat: str) -> str:
+        for cod in str(cod_item_concat).split(", "):
+            cod = cod.strip()
+            if not cod or cod == _MARCADOR_COD_ITEM_AUSENTE_733:
+                continue
+            cod_norm = _normalizar_cod_item_flexivel(pd.Series([cod])).iloc[0]
+            valor = ncm2_por_cod.get(cod_norm, "")
+            if valor:
+                return valor
+        return ""
+
+    return serie_cod_item.apply(_resolver)
 
 
 def gerar_consolidado_origens_733() -> dict:
@@ -6283,9 +6299,23 @@ def gerar_consolidado_origens_733() -> dict:
     estabelecido); `'nc'` ("não consta") quando não há nenhum código —
     pedido explícito do usuário (2026-08-03).
 
-    Regra R07: ANO/DESCR_PROD/COD_ITEM/UNID_PROD/ORIGEM sempre string.
-    Devolve {'consolidado': DataFrame, 'erros': list} — erros acumula
-    tabela por tabela ausente, sem interromper as demais origens."""
+    `ncm2` (2 primeiros dígitos do COD_NCM, "Capítulo") calculado e
+    gravado AQUI, uma vez por geração/regeração (Solicitação Técnica de
+    performance, 2026-08-15): antes, `filtrar_por_ncm2_733()` fazia o
+    JOIN contra `sped_produtos` (via `_mapa_cod_item_ncm2()`) TODA VEZ
+    que o auditor selecionava um Capítulo na tela — atraso perceptível.
+    Resolvido ao vivo do mesmo jeito que `_mapa_cod_item_ncm2()` já
+    resolve `filtrar_por_ncm2_733()`/`gerar_base_simulacao_ncm2_733()`:
+    quando `COD_ITEM` vem com múltiplos códigos concatenados por ", "
+    (linha acima), usa o PRIMEIRO que tiver Capítulo NCM válido no
+    cadastro — mesma tolerância já documentada ali (raro mais de um
+    código, e mais raro ainda de capítulos diferentes entre eles).
+    `ncm2=""` quando nenhum código da linha tem NCM cadastrado.
+
+    Regra R07: ANO/DESCR_PROD/COD_ITEM/UNID_PROD/ORIGEM/ncm2 sempre
+    string. Devolve {'consolidado': DataFrame, 'erros': list} — erros
+    acumula tabela por tabela ausente, sem interromper as demais
+    origens."""
     colunas = _COLUNAS_CONSOLIDADO_733
     erros: list = []
     partes = []
@@ -6338,6 +6368,7 @@ def gerar_consolidado_origens_733() -> dict:
 
     consolidado = pd.concat(partes, ignore_index=True)
     consolidado = _forcar_colunas_string(consolidado, ["ANO", "DESCR_PROD", "COD_ITEM", "UNID_PROD", "ORIGEM"])
+    consolidado["ncm2"] = _resolver_ncm2_por_cod_item_concatenado(consolidado["COD_ITEM"], _mapa_cod_item_ncm2())
     consolidado = (
         consolidado[colunas]
         .sort_values(["ORIGEM", "ANO", "DESCR_PROD"])
