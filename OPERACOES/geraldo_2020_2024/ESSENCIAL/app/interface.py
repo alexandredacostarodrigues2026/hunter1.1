@@ -2614,7 +2614,7 @@ def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | No
     with st.container(key="estagio733_ncm2_tabela"):
         st.markdown(
             "<style>.st-key-estagio733_ncm2_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 9px; }</style>",
+            "* { font-size: 8px; }</style>",
             unsafe_allow_html=True,
         )
         evento_ncm2 = st.dataframe(
@@ -2624,6 +2624,17 @@ def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | No
             on_select="rerun",
             selection_mode="single-row",
             key="tabela_simulacao_ncm2_733",
+            # Quebra de texto na Descrição do Capítulo (2026-08-16, pedido
+            # do usuário — "diminua a fonte e insira quebra de texto"):
+            # `row_height` acima do padrão de 1 linha (~35px) habilita
+            # quebra automática de texto nas colunas de texto do grid
+            # (glide-data-grid) — sem isso, a descrição só truncava com
+            # "...", mesmo com a coluna larga. `width="large"` reduz
+            # quantas linhas a descrição precisa pra caber.
+            row_height=70,
+            column_config={
+                "Descricao do Capitulo": st.column_config.TextColumn(width="large"),
+            },
         )
 
     linhas_marcadas_ncm2 = evento_ncm2.selection.rows if evento_ncm2 and evento_ncm2.selection else []
