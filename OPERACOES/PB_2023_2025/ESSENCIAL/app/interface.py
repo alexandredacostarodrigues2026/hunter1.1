@@ -2181,7 +2181,23 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
     Selecionado"/"Limpar seleção de Alvo" (limpam as 3 de uma vez).
     Reselecionar outra linha DENTRO da mesma grade só atualiza o alvo
     ativo, sem precisar limpar nada (nenhuma das outras 2 estava
-    selecionada)."""
+    selecionada).
+
+    Nome/Código EDITÁVEIS antes de cravar (2026-08-15, pedido do
+    usuário): dois `st.text_input` pré-preenchidos com DESCR_PROD/
+    COD_ITEM originais da linha selecionada — o que vai pra `loader.
+    salvar_alvos_selecionados_733()` é o texto EDITADO, não o valor
+    bruto da grade. Reset dos campos só quando a IDENTIDADE do alvo
+    ativo muda (origem+descrição+código originais, `_733_identidade_
+    edicao`) — trocar de produto limpa a edição anterior, mas continuar
+    editando o MESMO produto (sem trocar de seleção) preserva o que já
+    foi digitado.
+
+    "Relação de Produtos Alvo já Eleitos" (2026-08-15, pedido do
+    usuário): tabela SEMPRE visível ao final da função (não só quando
+    há alvo ativo), listando todo `produto_alvo_fiscalizacao` ATIVO —
+    tabela COMPARTILHADA com o Estágio 7.2/7.3.2, então pode mostrar
+    alvo eleito em qualquer estágio, não só via 7.3.3."""
     origens_a_limpar = st.session_state.pop("_733_limpar_grades", None)
     if origens_a_limpar:
         for origem_limpar in origens_a_limpar:
@@ -2280,34 +2296,89 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
     alvo_ativo = st.session_state.get("alvo_733_ativo")
     if not alvo_ativo:
         st.info("Nenhum produto selecionado como Alvo — clique numa linha de uma das 3 grades acima.")
-        return
+    else:
+        st.success(
+            f"🎯 **Produto selecionado:** {alvo_ativo.get('DESCR_PROD', '')} — "
+            f"Cód. original: **{alvo_ativo.get('COD_ITEM', '')}** "
+            f"(Origem: {_TITULOS_GRADE_733.get(alvo_ativo.get('ORIGEM'), alvo_ativo.get('ORIGEM'))})"
+        )
+        st.caption(
+            "Confira/corrija Nome e Código antes de cravar, se necessário — a edição vale só pra "
+            "este alvo, não altera a grade de origem."
+        )
 
-    st.success(
-        f"🎯 **Alvo ativo:** {alvo_ativo.get('DESCR_PROD', '')} — "
-        f"Cód.: **{alvo_ativo.get('COD_ITEM', '')}** "
-        f"(Origem: {_TITULOS_GRADE_733.get(alvo_ativo.get('ORIGEM'), alvo_ativo.get('ORIGEM'))})"
-    )
-    col_cravar, col_limpar_alvo = st.columns(2)
-    if col_cravar.button("🎯 Cravar Alvo Selecionado (7.3.3)", key="btn_cravar_alvo_733"):
-        selecionado_df = pd.DataFrame([{
-            "DESCR_PROD": alvo_ativo.get("DESCR_PROD", ""),
-            "COD_ITEM": alvo_ativo.get("COD_ITEM", ""),
-        }])
-        resultado = loader.salvar_alvos_selecionados_733(selecionado_df)
-        if "erro" in resultado:
-            st.error(f"Erro: {resultado['erro']}")
-        else:
-            st.success(
-                f"✅ {resultado['total_adicionado']} alvo(s) novo(s) cravado(s), "
-                f"{resultado['total_reativado']} reativado(s)."
-            )
+        # Edição de Nome/Código ANTES de cravar (pedido do usuário,
+        # 2026-08-15). Reset dos campos ANTES dos widgets serem
+        # instanciados nesta execução (mesma janela segura já usada em
+        # `_733_limpar_grades`, ver docstring da função) — só quando o
+        # ALVO muda de identidade (origem+descrição+código originais);
+        # reselecionar o MESMO alvo depois de editar não apaga a edição
+        # em andamento.
+        identidade_alvo = (
+            alvo_ativo.get("ORIGEM"), alvo_ativo.get("DESCR_PROD"), alvo_ativo.get("COD_ITEM"),
+        )
+        if st.session_state.get("_733_identidade_edicao") != identidade_alvo:
+            st.session_state["_733_identidade_edicao"] = identidade_alvo
+            st.session_state["edicao_descr_alvo_733"] = alvo_ativo.get("DESCR_PROD", "")
+            st.session_state["edicao_cod_alvo_733"] = alvo_ativo.get("COD_ITEM", "")
+
+        col_nome, col_codigo = st.columns(2)
+        descr_editada = col_nome.text_input("Nome do Produto Alvo", key="edicao_descr_alvo_733")
+        cod_editado = col_codigo.text_input("Código do Produto", key="edicao_cod_alvo_733")
+
+        col_cravar, col_limpar_alvo = st.columns(2)
+        if col_cravar.button("🎯 Cravar Alvo Selecionado (7.3.3)", key="btn_cravar_alvo_733"):
+            if not descr_editada.strip():
+                st.warning("Nome do Produto Alvo não pode ficar vazio.")
+            else:
+                selecionado_df = pd.DataFrame([{
+                    "DESCR_PROD": descr_editada.strip(),
+                    "COD_ITEM": cod_editado.strip(),
+                }])
+                resultado = loader.salvar_alvos_selecionados_733(selecionado_df)
+                if "erro" in resultado:
+                    st.error(f"Erro: {resultado['erro']}")
+                else:
+                    st.success(
+                        f"✅ {resultado['total_adicionado']} alvo(s) novo(s) cravado(s), "
+                        f"{resultado['total_reativado']} reativado(s)."
+                    )
+                    st.session_state["alvo_733_ativo"] = None
+                    st.session_state["_733_limpar_grades"] = list(_CHAVES_GRADE_733.keys())
+                    st.rerun()
+        if col_limpar_alvo.button("Limpar seleção de Alvo", key="btn_limpar_alvo_733"):
             st.session_state["alvo_733_ativo"] = None
             st.session_state["_733_limpar_grades"] = list(_CHAVES_GRADE_733.keys())
             st.rerun()
-    if col_limpar_alvo.button("Limpar seleção de Alvo", key="btn_limpar_alvo_733"):
-        st.session_state["alvo_733_ativo"] = None
-        st.session_state["_733_limpar_grades"] = list(_CHAVES_GRADE_733.keys())
-        st.rerun()
+
+    # Relação com todos os eleitos (pedido do usuário, 2026-08-15):
+    # SEMPRE visível (não só quando há um alvo ativo selecionado) —
+    # mesma tabela `produto_alvo_fiscalizacao` compartilhada com o
+    # Estágio 7.2/7.3.2 (não é exclusiva do 7.3.3), por isso pode listar
+    # alvo eleito em QUALQUER estágio, não só por aqui. Colunas
+    # reduzidas a Descrição/Código/Observação/Data (sem as colunas de
+    # RN1 — Divergência/Infração/%Diverg/Total Débito/Crédito — que
+    # ficam zeradas/vazias pra alvo cravado via 7.3.3, ver loader.
+    # salvar_alvos_selecionados_733(); mostrar essas colunas aqui só
+    # poluiria a tela sem informação real).
+    st.divider()
+    grupo_atual, total_grupo = loader.consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=True)
+    st.markdown(f"**Relação de Produtos Alvo já Eleitos** ({total_grupo:,})".replace(",", "."))
+    if grupo_atual.empty:
+        st.caption("Nenhum produto eleito ainda.")
+    else:
+        exibicao_eleitos = (
+            grupo_atual[["DESCR_ALVO", "COD_ITEM", "OBSERVACAO", "TS"]]
+            .sort_values("TS", ascending=False)
+            .rename(columns=loader.carregar_dicionario_campos())
+        )
+        with st.container(key="estagio733_eleitos"):
+            st.markdown(
+                "<style>.st-key-estagio733_eleitos [data-testid='stDataFrame'] "
+                "* { font-size: 9px; }</style>",
+                unsafe_allow_html=True,
+            )
+            st.dataframe(exibicao_eleitos, use_container_width=True, hide_index=True)
 
 
 def render_consolidado_origens_733() -> None:
