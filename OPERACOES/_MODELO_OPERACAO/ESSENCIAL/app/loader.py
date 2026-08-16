@@ -6703,6 +6703,52 @@ def salvar_alvos_selecionados_733(selecionados: pd.DataFrame) -> dict:
     return resultado
 
 
+def cancelar_produto_alvo_733(descr_alvo: str) -> dict:
+    """Cancela (STATUS='cancelado') um produto ATIVO em `produto_alvo_
+    fiscalizacao` a partir da "Relação de Produtos Alvo já Eleitos"
+    (Estágio 7.3.3) — pedido do usuário (2026-08-16): "possibilidade de
+    limpar o eleito com aviso de que cruzamentos efetuados serão
+    perdidos" (o aviso em si é responsabilidade da interface, ver
+    `interface._render_eleitos_733()` — checa `consultar_produto_
+    cruzamento_escolhido()`/`consultar_cruzamento_confirmado_
+    detalhado()` ANTES de chamar esta função).
+
+    NÃO apaga a linha — só marca `STATUS=STATUS_PRODUTO_ALVO_CANCELADO`
+    e atualiza `TS`, preservando histórico (mesmo padrão já usado em
+    `salvar_grupo_produto_alvo_fiscalizacao()`, Estágio 7.3.2, quando o
+    auditor desmarca um produto por lá). Como a tabela é COMPARTILHADA
+    entre 7.2/7.3.2/7.3.3, cancelar aqui um alvo criado em OUTRO
+    estágio também o remove de lá — mesmo raciocínio: "ativo" é um
+    estado único por produto, não por estágio de origem.
+
+    Devolve {'ok': True} ou {'erro': str} — erro quando `descr_alvo`
+    não existe (ou já está cancelado) em `produto_alvo_fiscalizacao`."""
+    resultado: dict = {}
+    try:
+        existente, _ = consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=False)
+        mask = existente["DESCR_ALVO"] == descr_alvo if not existente.empty else pd.Series(dtype=bool)
+        if existente.empty or not mask.any():
+            resultado["erro"] = f'Alvo "{descr_alvo}" não encontrado em produto_alvo_fiscalizacao.'
+            return resultado
+
+        existente.loc[mask, "STATUS"] = STATUS_PRODUTO_ALVO_CANCELADO
+        existente.loc[mask, "TS"] = datetime.now().isoformat(timespec="seconds")
+
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            con.register("_df_produto_alvo_fiscalizacao", existente)
+            con.execute(
+                "CREATE OR REPLACE TABLE produto_alvo_fiscalizacao AS "
+                "SELECT * FROM _df_produto_alvo_fiscalizacao"
+            )
+            con.unregister("_df_produto_alvo_fiscalizacao")
+        resultado["ok"] = True
+    except Exception as exc:
+        logger.exception("Erro ao cancelar produto_alvo_fiscalizacao (%s): %s", descr_alvo, exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
 # ── Sumário de Unidades para Fator Multiplicador (Estágio 10, Entradas) ─────
 # Solicitação Técnica (2026-07-25): ao analisar um produto alvo, o auditor
 # precisa decidir se as unidades vindas do XML (`ucom`, aqui `unid_prod`)

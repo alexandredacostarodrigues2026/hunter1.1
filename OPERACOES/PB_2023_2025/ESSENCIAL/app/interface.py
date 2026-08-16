@@ -2434,11 +2434,39 @@ def _render_eleitos_733() -> None:
     RN1 — Divergência/Infração/%Diverg/Total Débito/Crédito — que
     ficam zeradas/vazias pra alvo cravado via 7.3.3, ver loader.
     salvar_alvos_selecionados_733(); mostrar essas colunas aqui só
-    poluiria a tela sem informação real)."""
+    poluiria a tela sem informação real).
+
+    Remoção de alvo (2026-08-16, pedido do usuário — "aqui possibilidade
+    de limpar o eleito com aviso de que cruzamentos efetuados serão
+    perdidos"): seleção de linha NATIVA (mesmo padrão `st.dataframe(
+    on_select="rerun", selection_mode="single-row")` do resto do
+    7.3.3), com um botão "Remover Alvo Selecionado" logo abaixo.
+    `loader.cancelar_produto_alvo_733()` NÃO apaga a linha — só marca
+    STATUS='cancelado', preservando histórico. Antes de habilitar o
+    botão, checa se o alvo selecionado JÁ tem cruzamento EFETUADO no
+    Estágio 10 — é o `produto_cruzamento_escolhido` atual e/ou tem
+    item confirmado em `cruzamento_confirmado_detalhado` (Rubrica); se
+    sim, mostra `st.warning()` explícito e exige marcar um checkbox de
+    confirmação (key DINÂMICA por produto — mesmo raciocínio da Parte
+    5/2026-08-15, geração de key por identidade — evita que a
+    confirmação de um produto "vaze" pro próximo selecionado) antes do
+    botão ficar clicável. Sem cruzamento efetuado, o botão já vem
+    habilitado (menos fricção pra um cancelamento sem consequência).
+    Limpeza de seleção ADIADA pro próximo rerun (`_733_limpar_selecao_
+    eleitos`) depois de remover — mesma janela segura já usada em
+    `_733_limpar_grades` (Parte 5/2026-08-15): a tabela ENCOLHE 1 linha
+    após remover, então o índice antigo da seleção ficaria inválido/
+    apontando pro produto errado se não fosse limpo."""
+    limpar_selecao_eleitos = st.session_state.pop("_733_limpar_selecao_eleitos", False)
+    if limpar_selecao_eleitos:
+        st.session_state["tabela_eleitos_733"] = {"selection": {"rows": []}}
+        st.session_state["alvo_733_para_remover"] = None
+
     grupo_atual, total_grupo = loader.consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=True)
     st.caption(
         "Lista completa de produtos já eleitos como Alvo de Fiscalização (ativos), cravados em "
-        "qualquer estágio (7.2, 7.3.2 ou aqui) — sem filtro de Busca/Ano/Capítulo NCM."
+        "qualquer estágio (7.2, 7.3.2 ou aqui) — sem filtro de Busca/Ano/Capítulo NCM. Selecione "
+        "uma linha pra remover (cancelar) um alvo."
     )
     st.markdown(f"**{total_grupo:,} produto(s) eleito(s)**".replace(",", "."))
     if grupo_atual.empty:
@@ -2448,15 +2476,75 @@ def _render_eleitos_733() -> None:
     exibicao_eleitos = (
         grupo_atual[["DESCR_ALVO", "COD_ITEM", "OBSERVACAO", "TS"]]
         .sort_values("TS", ascending=False)
-        .rename(columns=loader.carregar_dicionario_campos())
+        .reset_index(drop=True)
     )
+    exibicao_renomeada = exibicao_eleitos.rename(columns=loader.carregar_dicionario_campos())
     with st.container(key="estagio733_eleitos"):
         st.markdown(
             "<style>.st-key-estagio733_eleitos [data-testid='stDataFrame'] "
             "* { font-size: 9px; }</style>",
             unsafe_allow_html=True,
         )
-        st.dataframe(exibicao_eleitos, use_container_width=True, hide_index=True)
+        evento_eleitos = st.dataframe(
+            exibicao_renomeada,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="tabela_eleitos_733",
+        )
+
+    # `alvo_733_para_remover` (session_state PRÓPRIO, não lido direto do
+    # widget a cada render — achado real, 2026-08-16): interagir com
+    # OUTRO widget da mesma seção (ex.: o checkbox de confirmação
+    # abaixo) pode fazer o `evento_eleitos.selection.rows` deste
+    # `st.dataframe` voltar vazio no rerun seguinte, mesmo sem o
+    # usuário ter clicado numa linha diferente — mesmo raciocínio já
+    # usado pra `alvo_733_ativo` nas grades (Parte 5/2026-08-15):
+    # atualiza a variável persistente só quando uma seleção NOVA
+    # aparece, e usa essa variável (não o widget) daqui pra frente.
+    linhas_marcadas = evento_eleitos.selection.rows if evento_eleitos and evento_eleitos.selection else []
+    if linhas_marcadas:
+        st.session_state["alvo_733_para_remover"] = str(exibicao_eleitos.iloc[linhas_marcadas[0]]["DESCR_ALVO"])
+
+    descr_selecionado = st.session_state.get("alvo_733_para_remover")
+    if not descr_selecionado:
+        return
+    st.divider()
+
+    escolhido_atual = loader.consultar_produto_cruzamento_escolhido()
+    e_escolhido_atual = bool(escolhido_atual) and str(escolhido_atual.get("DESCR_ALVO", "")) == descr_selecionado
+    _, total_confirmados = loader.consultar_cruzamento_confirmado_detalhado(descr_alvo=descr_selecionado, limite=0)
+    tem_cruzamento = e_escolhido_atual or total_confirmados > 0
+
+    if tem_cruzamento:
+        motivos = []
+        if e_escolhido_atual:
+            motivos.append("é o produto ATUALMENTE escolhido pra cruzamento no Estágio 10")
+        if total_confirmados > 0:
+            motivos.append(f"tem {total_confirmados} item(ns) confirmado(s) na Rubrica (Estágio 10)")
+        st.warning(
+            f"⚠️ **{descr_selecionado}** " + " e ".join(motivos) + ". Remover este alvo NÃO apaga os "
+            "dados do cruzamento do banco, mas o produto deixa de aparecer como Alvo ativo — o "
+            "trabalho de auditoria já feito em cima dele fica órfão/desvinculado."
+        )
+        confirmar = st.checkbox(
+            "Entendo que os cruzamentos já efetuados ficarão desvinculados e quero remover mesmo assim.",
+            key=f"confirmar_remocao_eleito_733_{descr_selecionado}",
+        )
+    else:
+        confirmar = True
+
+    if st.button(
+        "🗑️ Remover Alvo Selecionado", key="btn_remover_eleito_733", disabled=not confirmar,
+    ):
+        resultado = loader.cancelar_produto_alvo_733(descr_selecionado)
+        if "erro" in resultado:
+            st.error(f"Erro: {resultado['erro']}")
+        else:
+            st.success(f"✅ \"{descr_selecionado}\" removido dos Alvos ativos.")
+            st.session_state["_733_limpar_selecao_eleitos"] = True
+            st.rerun()
 
 
 def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | None") -> "str | None":
