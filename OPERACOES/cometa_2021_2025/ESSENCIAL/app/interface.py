@@ -2356,8 +2356,16 @@ def _render_grades_produtos_733(
             "Nome do Produto Alvo", value=alvo_ativo.get("DESCR_PROD", ""),
             key=f"edicao_descr_alvo_733_{geracao_edicao}",
         )
+        # Pré-preenche com o código de MAIOR OCORRÊNCIA (`COD_ITEM_
+        # FREQUENTE`, ver loader.unificar_por_produto_733()) quando o
+        # produto tem mais de um código distinto — pedido do usuário
+        # (2026-08-16): "em caso de mais de um cod prod, cravar o cód de
+        # maior ocorrência". Cai pro `COD_ITEM` bruto (lista completa) só
+        # se `COD_ITEM_FREQUENTE` vier vazio (cache antiga, gerada antes
+        # deste campo existir — precisa de "Regerar Consolidado" pra
+        # ganhar a coluna nova).
         cod_editado = col_codigo.text_input(
-            "Código do Produto", value=alvo_ativo.get("COD_ITEM", ""),
+            "Código do Produto", value=alvo_ativo.get("COD_ITEM_FREQUENTE") or alvo_ativo.get("COD_ITEM", ""),
             key=f"edicao_cod_alvo_733_{geracao_edicao}",
         )
         unid_editada = col_unidade.text_input(
