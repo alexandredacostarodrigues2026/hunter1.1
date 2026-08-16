@@ -2153,12 +2153,14 @@ def _render_grades_produtos_733(
     mesmo padrão visual já usado no antigo "Detalhamento por Origem" da
     Parte 2 desta sessão): `abas_por_origem` (dict origem->objeto de
     aba) é criado pelo CHAMADOR (`render_consolidado_origens_733()`),
-    junto com a aba de Simulação NCM2, num único `st.tabs([...])` de 4
-    abas (NCM2 primeiro, pedido do usuário 2026-08-16 — "crie tb aba
-    para tabela ncm que deverá ser a primeira") — esta função só
-    RENDERIZA dentro das 3 abas já criadas, não instancia `st.tabs`
-    própria. Não muda a lógica de seleção/sincronização: as abas rodam
-    no MESMO script run do Streamlit (conteúdo sempre computado, só a
+    junto com a aba de Simulação NCM2 (1ª) e a de "Relação de Produtos
+    Alvo já Eleitos" (`_render_eleitos_733()`, última), num único
+    `st.tabs([...])` de 5 abas (NCM2 primeiro, Eleitos por último —
+    pedidos explícitos do usuário 2026-08-16) — esta função só
+    RENDERIZA dentro das 3 abas de origem já criadas, não instancia
+    `st.tabs` própria. Não muda a lógica de seleção/sincronização: as
+    abas rodam no MESMO script run do Streamlit (conteúdo sempre
+    computado, só a
     exibição é client-side), então os 3 `st.dataframe` continuam sendo
     instanciados todo run, igual à versão empilhada/sem abas.
     `ncm2_selecionado`, quando presente, só alimenta uma legenda
@@ -2210,11 +2212,10 @@ def _render_grades_produtos_733(
     limpa a edição anterior, mas continuar editando o MESMO produto
     (sem trocar de seleção) preserva o que já foi digitado.
 
-    "Relação de Produtos Alvo já Eleitos" (2026-08-15, pedido do
-    usuário): tabela SEMPRE visível ao final da função (não só quando
-    há alvo ativo), listando todo `produto_alvo_fiscalizacao` ATIVO —
-    tabela COMPARTILHADA com o Estágio 7.2/7.3.2, então pode mostrar
-    alvo eleito em qualquer estágio, não só via 7.3.3."""
+    "Relação de Produtos Alvo já Eleitos" — extraída pra
+    `_render_eleitos_733()` em 2026-08-16, virou a ÚLTIMA aba da barra
+    de 5 (junto com a Simulação NCM2, 1ª aba); antes era uma seção
+    sempre visível ao final desta função, ver docstring de lá."""
     origens_a_limpar = st.session_state.pop("_733_limpar_grades", None)
     if origens_a_limpar:
         for origem_limpar in origens_a_limpar:
@@ -2373,34 +2374,45 @@ def _render_grades_produtos_733(
             st.session_state["_733_limpar_grades"] = list(_CHAVES_GRADE_733.keys())
             st.rerun()
 
-    # Relação com todos os eleitos (pedido do usuário, 2026-08-15):
-    # SEMPRE visível (não só quando há um alvo ativo selecionado) —
-    # mesma tabela `produto_alvo_fiscalizacao` compartilhada com o
-    # Estágio 7.2/7.3.2 (não é exclusiva do 7.3.3), por isso pode listar
-    # alvo eleito em QUALQUER estágio, não só por aqui. Colunas
-    # reduzidas a Descrição/Código/Observação/Data (sem as colunas de
-    # RN1 — Divergência/Infração/%Diverg/Total Débito/Crédito — que
-    # ficam zeradas/vazias pra alvo cravado via 7.3.3, ver loader.
-    # salvar_alvos_selecionados_733(); mostrar essas colunas aqui só
-    # poluiria a tela sem informação real).
-    st.divider()
+
+
+def _render_eleitos_733() -> None:
+    """Estágio 7.3.3 — aba "🗂️ Relação de Produtos Alvo já Eleitos"
+    (2026-08-16, extraída de `_render_grades_produtos_733()` pra virar
+    a ÚLTIMA aba da barra de 5, pedido explícito do usuário — "faça o
+    mesmo para esta tabela... será a última aba"). SEMPRE mostra a
+    lista completa (não filtrada por Busca/Ano/NCM2 — é uma conferência
+    do que já foi cravado, não um recorte de análise), listando todo
+    `produto_alvo_fiscalizacao` ATIVO — tabela COMPARTILHADA com o
+    Estágio 7.2/7.3.2 (não é exclusiva do 7.3.3), por isso pode mostrar
+    alvo eleito em QUALQUER estágio, não só via 7.3.3. Colunas
+    reduzidas a Descrição/Código/Observação/Data (sem as colunas de
+    RN1 — Divergência/Infração/%Diverg/Total Débito/Crédito — que
+    ficam zeradas/vazias pra alvo cravado via 7.3.3, ver loader.
+    salvar_alvos_selecionados_733(); mostrar essas colunas aqui só
+    poluiria a tela sem informação real)."""
     grupo_atual, total_grupo = loader.consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=True)
-    st.markdown(f"**Relação de Produtos Alvo já Eleitos** ({total_grupo:,})".replace(",", "."))
+    st.caption(
+        "Lista completa de produtos já eleitos como Alvo de Fiscalização (ativos), cravados em "
+        "qualquer estágio (7.2, 7.3.2 ou aqui) — sem filtro de Busca/Ano/Capítulo NCM."
+    )
+    st.markdown(f"**{total_grupo:,} produto(s) eleito(s)**".replace(",", "."))
     if grupo_atual.empty:
         st.caption("Nenhum produto eleito ainda.")
-    else:
-        exibicao_eleitos = (
-            grupo_atual[["DESCR_ALVO", "COD_ITEM", "OBSERVACAO", "TS"]]
-            .sort_values("TS", ascending=False)
-            .rename(columns=loader.carregar_dicionario_campos())
+        return
+
+    exibicao_eleitos = (
+        grupo_atual[["DESCR_ALVO", "COD_ITEM", "OBSERVACAO", "TS"]]
+        .sort_values("TS", ascending=False)
+        .rename(columns=loader.carregar_dicionario_campos())
+    )
+    with st.container(key="estagio733_eleitos"):
+        st.markdown(
+            "<style>.st-key-estagio733_eleitos [data-testid='stDataFrame'] "
+            "* { font-size: 9px; }</style>",
+            unsafe_allow_html=True,
         )
-        with st.container(key="estagio733_eleitos"):
-            st.markdown(
-                "<style>.st-key-estagio733_eleitos [data-testid='stDataFrame'] "
-                "* { font-size: 9px; }</style>",
-                unsafe_allow_html=True,
-            )
-            st.dataframe(exibicao_eleitos, use_container_width=True, hide_index=True)
+        st.dataframe(exibicao_eleitos, use_container_width=True, hide_index=True)
 
 
 def _render_simulacao_ncm2_733(
@@ -2521,25 +2533,29 @@ def render_consolidado_origens_733() -> None:
     Produto, espelhando a metodologia real de auditoria (materialidade
     macro pro item específico).
 
-    Layout em 4 ABAS (2026-08-16, pedido do usuário — "crie tb aba para
-    tabela ncm que deverá ser a primeira"): Simulação NCM2 + Entradas/
-    Saídas/Estoque viraram uma ÚNICA barra de abas (`st.tabs(["📊
-    Simulação NCM2", "📥 Entradas", "📤 Saídas", "📦 Estoque"])`), NCM2
-    primeiro. Ordem de CRIAÇÃO/EXECUÇÃO no código (não a ordem visual
-    das abas) importa aqui: 1) gate "Gerar/Regerar Consolidado"
-    (necessário só pras 3 abas de origem, mas fica ANTES pra já
-    determinar se há dado); 2) container de Filtros (Busca por
-    Descrição + Ano — perdeu o selectbox de Origem em 2026-08-15,
-    redundante desde que as 3 abas já separam por origem); 3) as 4 abas
-    são CRIADAS; 4) o CONTEÚDO da aba NCM2 roda PRIMEIRO
-    (`_render_simulacao_ncm2_733()`, que pode atualizar `ncm2_
-    selecionado` a partir de um clique nesta mesma execução); 5) só
-    ENTÃO `filtrado_base` é montado (já com o `ncm2_selecionado`
+    Layout em 5 ABAS (2026-08-16, pedidos do usuário — "crie tb aba
+    para tabela ncm que deverá ser a primeira", depois "faça o mesmo
+    para esta tabela Relação de Produtos Alvo já Eleitos. será a
+    ultima aba"): Simulação NCM2 + Entradas/Saídas/Estoque + Relação de
+    Eleitos viraram uma ÚNICA barra de abas (`st.tabs(["📊 Simulação
+    NCM2", "📥 Entradas", "📤 Saídas", "📦 Estoque", "🗂️ Relação de
+    Eleitos"])`), NCM2 primeiro e Eleitos por último. Ordem de CRIAÇÃO/
+    EXECUÇÃO no código (não a ordem visual das abas) importa aqui: 1)
+    gate "Gerar/Regerar Consolidado" (necessário só pras 3 abas de
+    origem, mas fica ANTES pra já determinar se há dado); 2) container
+    de Filtros (Busca por Descrição + Ano — perdeu o selectbox de
+    Origem em 2026-08-15, redundante desde que as 3 abas já separam por
+    origem); 3) as 5 abas são CRIADAS; 4) o CONTEÚDO da aba NCM2 roda
+    PRIMEIRO (`_render_simulacao_ncm2_733()`, que pode atualizar
+    `ncm2_selecionado` a partir de um clique nesta mesma execução); 5)
+    só ENTÃO `filtrado_base` é montado (já com o `ncm2_selecionado`
     possivelmente atualizado no passo 4) e passado pra `_render_grades_
     produtos_733()`, que renderiza dentro das 3 abas de origem já
-    criadas no passo 3. Esse cuidado de ordem evita o filtro por
-    Capítulo NCM ficar "um clique atrasado" (só refletir na PRÓXIMA
-    interação em vez de imediatamente).
+    criadas no passo 3; 6) `_render_eleitos_733()` roda por último,
+    dentro da aba Eleitos (não depende de `filtrado_base`/Filtros —
+    lista SEMPRE completa, sem recorte). Esse cuidado de ordem evita o
+    filtro por Capítulo NCM ficar "um clique atrasado" (só refletir na
+    PRÓXIMA interação em vez de imediatamente).
 
     Sem `return` antecipado quando o Consolidado ainda não foi gerado
     (2026-08-16, mudança da reestruturação anterior): a aba de
@@ -2595,8 +2611,9 @@ def render_consolidado_origens_733() -> None:
     if df_preview.empty and st.session_state["estagio733_gerado"]:
         st.info("Nenhuma linha encontrada — confira se Entradas/Saídas/Estoque já foram gerados.")
 
-    # Filtros — Busca + Ano, aplicam-se às 4 abas (Simulação NCM2 e as 3
-    # de origem), por isso ficam ACIMA da barra de abas.
+    # Filtros — Busca + Ano, aplicam-se a 4 das 5 abas (Simulação NCM2 e
+    # as 3 de origem — Eleitos fica de fora de propósito, ver
+    # `_render_eleitos_733()`), por isso ficam ACIMA da barra de abas.
     with st.container(key="estagio733_filtros"):
         st.markdown("**Filtros**")
         col_busca, col_ano = st.columns(2)
@@ -2608,8 +2625,8 @@ def render_consolidado_origens_733() -> None:
         anos_disponiveis = sorted(df_preview["ANO"].dropna().unique().tolist()) if not df_preview.empty else []
         ano_selecionado = col_ano.selectbox("Ano", ["Todos"] + anos_disponiveis, key="filtro_ano_733")
 
-    aba_ncm2, aba_entrada, aba_saida, aba_estoque = st.tabs(
-        ["📊 Simulação NCM2", "📥 Entradas", "📤 Saídas", "📦 Estoque"]
+    aba_ncm2, aba_entrada, aba_saida, aba_estoque, aba_eleitos = st.tabs(
+        ["📊 Simulação NCM2", "📥 Entradas", "📤 Saídas", "📦 Estoque", "🗂️ Relação de Eleitos"]
     )
 
     ncm2_selecionado = st.session_state.get("ncm2_selecionado_733")
@@ -2631,6 +2648,9 @@ def render_consolidado_origens_733() -> None:
 
     abas_por_origem = {"entrada": aba_entrada, "saida": aba_saida, "estoque": aba_estoque}
     _render_grades_produtos_733(filtrado_base, abas_por_origem, ncm2_selecionado)
+
+    with aba_eleitos:
+        _render_eleitos_733()
 
 
 _COLUNAS_PREVIEW_DIVERGENCIA = [
