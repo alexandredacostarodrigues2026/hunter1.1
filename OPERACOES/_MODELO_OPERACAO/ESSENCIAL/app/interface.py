@@ -2142,13 +2142,19 @@ _TITULOS_GRADE_733 = {
 def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
     """Estágio 7.3.3 — "Grades de Produtos" (2026-08-15, Solicitação
     Técnica de reestruturação): substitui a antiga tabela única (st.
-    data_editor com checkbox "Selecionar p/ Fiscalização") e o antigo
-    "Detalhamento por Origem" (st.tabs) por TRÊS grades independentes,
-    sempre visíveis (Entradas/Saídas/Estoque), cada uma com KPIs
+    data_editor com checkbox "Selecionar p/ Fiscalização") por TRÊS
+    grades independentes (Entradas/Saídas/Estoque), cada uma com KPIs
     miniaturizados (Soma Quantidade/Soma Valor Total) e seleção de linha
     NATIVA (`st.dataframe(on_select="rerun", selection_mode="single-
     row")` — 2ª vez que o app usa esse recurso, depois da tabela de
-    Simulação NCM2).
+    Simulação NCM2). Layout em `st.tabs(["📥 Entradas", "📤 Saídas", "📦
+    Estoque"])` (2026-08-16, pedido do usuário — mesmo padrão visual já
+    usado no antigo "Detalhamento por Origem" da Parte 2 desta sessão,
+    trocado por "sempre empilhadas" na mesma Parte 2 e revertido agora
+    de volta pra abas): não muda a lógica de seleção/sincronização — as
+    3 abas rodam no MESMO script run (conteúdo das 3 sempre computado,
+    só a exibição é client-side), então os 3 `st.dataframe` continuam
+    sendo instanciados todo run, igual à versão empilhada.
 
     Seleção ÚNICA e EXCLUSIVA entre as 3 grades (pedido explícito —
     "evita que o auditor 'crave' acidentalmente produtos diferentes com
@@ -2211,68 +2217,80 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
         "outra grade substitui a seleção anterior (só um produto ativo por vez)."
     )
 
+    # Layout em abas (2026-08-16, pedido do usuário — "faça isso para as
+    # tabelas", mesmo padrão visual já usado no antigo "Detalhamento por
+    # Origem", ver histórico do 2026-08-13 na Parte 2 desta sessão):
+    # `st.tabs` de topo, não muda a lógica de seleção/sincronização
+    # abaixo — as 3 abas rodam no MESMO script run do Streamlit
+    # (conteúdo das 3 sempre computado, só a exibição é client-side),
+    # então os 3 `st.dataframe(on_select=...)` continuam sendo
+    # instanciados todo run, exatamente como na versão empilhada.
+    aba_entrada, aba_saida, aba_estoque = st.tabs(["📥 Entradas", "📤 Saídas", "📦 Estoque"])
+    abas_por_origem = {"entrada": aba_entrada, "saida": aba_saida, "estoque": aba_estoque}
+
     eventos = {}
     tabelas_por_origem = {}
     for origem, titulo in _TITULOS_GRADE_733.items():
-        # Unificação por produto (pedido do usuário, 2026-08-15): "retire
-        # os anos das tabelas... unifique as tabelas em relação às
-        # medidas de quantidades e valores" — antes cada (ANO, DESCR_
-        # PROD, UNID_PROD) virava uma linha própria; loader.unificar_
-        # por_produto_733() soma QTDE/VALOR_TOTAL de todos os anos numa
-        # única linha por (DESCR_PROD, UNID_PROD), sem alterar os totais
-        # (mesma soma, granularidade menor). Ordenação padrão: Valor
-        # Total decrescente, sobre TODA a base já filtrada+unificada
-        # (sem cap de 200, mesma política já usada em toda a página
-        # desde 2026-08-03). Selecionar linha continua funcionando após
-        # reordenar: `evento.selection.rows` (Streamlit) indexa pela
-        # posição no DataFrame passado a `st.dataframe`, não pela ordem
-        # original antes do sort — por isso `tabelas_por_origem[origem]`
-        # guarda a MESMA `sub` já unificada/ordenada, com índice
-        # resetado (0..n-1) igual ao que é exibido.
-        sub = loader.unificar_por_produto_733(filtrado_base[filtrado_base["ORIGEM"] == origem])
-        sub = sub.sort_values("VALOR_TOTAL", ascending=False).reset_index(drop=True)
-        tabelas_por_origem[origem] = sub
+        with abas_por_origem[origem]:
+            # Unificação por produto (pedido do usuário, 2026-08-15):
+            # "retire os anos das tabelas... unifique as tabelas em
+            # relação às medidas de quantidades e valores" — antes cada
+            # (ANO, DESCR_PROD, UNID_PROD) virava uma linha própria;
+            # loader.unificar_por_produto_733() soma QTDE/VALOR_TOTAL de
+            # todos os anos numa única linha por (DESCR_PROD, UNID_PROD),
+            # sem alterar os totais (mesma soma, granularidade menor).
+            # Ordenação padrão: Valor Total decrescente, sobre TODA a
+            # base já filtrada+unificada (sem cap de 200, mesma política
+            # já usada em toda a página desde 2026-08-03). Selecionar
+            # linha continua funcionando após reordenar: `evento.
+            # selection.rows` (Streamlit) indexa pela posição no
+            # DataFrame passado a `st.dataframe`, não pela ordem
+            # original antes do sort — por isso `tabelas_por_origem[
+            # origem]` guarda a MESMA `sub` já unificada/ordenada, com
+            # índice resetado (0..n-1) igual ao que é exibido.
+            sub = loader.unificar_por_produto_733(filtrado_base[filtrado_base["ORIGEM"] == origem])
+            sub = sub.sort_values("VALOR_TOTAL", ascending=False).reset_index(drop=True)
+            tabelas_por_origem[origem] = sub
 
-        st.markdown(f"**{titulo}** — {len(sub):,} linha(s)".replace(",", "."))
-        chave_kpi = f"estagio733_grade_kpi_{origem}"
-        with st.container(key=chave_kpi):
-            st.markdown(
-                f"<style>.st-key-{chave_kpi} [data-testid='stMetricLabel'] "
-                "{ font-size: 10px; } "
-                f".st-key-{chave_kpi} [data-testid='stMetricValue'] "
-                "{ font-size: 14px; }</style>",
-                unsafe_allow_html=True,
-            )
-            col_kpi1, col_kpi2 = st.columns(2)
-            col_kpi1.metric("Soma Quantidade", _formatar_moeda_br(sub["QTDE"].sum()))
-            col_kpi2.metric("Soma Valor Total", _formatar_moeda_br(sub["VALOR_TOTAL"].sum()))
+            st.markdown(f"**{titulo}** — {len(sub):,} linha(s)".replace(",", "."))
+            chave_kpi = f"estagio733_grade_kpi_{origem}"
+            with st.container(key=chave_kpi):
+                st.markdown(
+                    f"<style>.st-key-{chave_kpi} [data-testid='stMetricLabel'] "
+                    "{ font-size: 10px; } "
+                    f".st-key-{chave_kpi} [data-testid='stMetricValue'] "
+                    "{ font-size: 14px; }</style>",
+                    unsafe_allow_html=True,
+                )
+                col_kpi1, col_kpi2 = st.columns(2)
+                col_kpi1.metric("Soma Quantidade", _formatar_moeda_br(sub["QTDE"].sum()))
+                col_kpi2.metric("Soma Valor Total", _formatar_moeda_br(sub["VALOR_TOTAL"].sum()))
 
-        if sub.empty:
-            st.caption("Nenhum item.")
-            eventos[origem] = None
-            continue
+            if sub.empty:
+                st.caption("Nenhum item.")
+                eventos[origem] = None
+                continue
 
-        exibicao = sub[_COLUNAS_EXIBICAO_GRADE_733].rename(columns=loader.carregar_dicionario_campos())
-        chave_tabela = _CHAVES_GRADE_733[origem]
-        with st.container(key=f"estagio733_grade_container_{origem}"):
-            st.markdown(
-                f"<style>.st-key-estagio733_grade_container_{origem} [data-testid='stDataFrame'] "
-                "* { font-size: 9px; }</style>",
-                unsafe_allow_html=True,
-            )
-            eventos[origem] = st.dataframe(
-                exibicao,
-                use_container_width=True,
-                hide_index=True,
-                on_select="rerun",
-                selection_mode="single-row",
-                key=chave_tabela,
-                column_config={
-                    "Qtde": st.column_config.NumberColumn(format="%.2f"),
-                    "Valor Total": st.column_config.NumberColumn(format="%.2f"),
-                },
-            )
-        st.divider()
+            exibicao = sub[_COLUNAS_EXIBICAO_GRADE_733].rename(columns=loader.carregar_dicionario_campos())
+            chave_tabela = _CHAVES_GRADE_733[origem]
+            with st.container(key=f"estagio733_grade_container_{origem}"):
+                st.markdown(
+                    f"<style>.st-key-estagio733_grade_container_{origem} [data-testid='stDataFrame'] "
+                    "* { font-size: 9px; }</style>",
+                    unsafe_allow_html=True,
+                )
+                eventos[origem] = st.dataframe(
+                    exibicao,
+                    use_container_width=True,
+                    hide_index=True,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key=chave_tabela,
+                    column_config={
+                        "Qtde": st.column_config.NumberColumn(format="%.2f"),
+                        "Valor Total": st.column_config.NumberColumn(format="%.2f"),
+                    },
+                )
 
     selecao_atual = None
     for origem, evento in eventos.items():
