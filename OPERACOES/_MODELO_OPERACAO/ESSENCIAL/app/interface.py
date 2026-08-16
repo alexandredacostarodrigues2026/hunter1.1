@@ -2225,9 +2225,25 @@ def _render_grades_produtos_733(
 
     st.caption(
         "Selecione uma linha em UMA das 3 grades pra marcar o Alvo de Fiscalização — selecionar em "
-        "outra grade substitui a seleção anterior (só um produto ativo por vez)."
+        "outra grade substitui a seleção anterior (só um produto ativo por vez). A coluna \"Já "
+        "Eleito\" mostra os produtos que já estão salvos como alvo ativo (de qualquer estágio, não "
+        "só daqui)."
         + (f" Restrito ao Capítulo NCM **{ncm2_selecionado}**." if ncm2_selecionado else "")
     )
+
+    # "Já Eleito" (2026-08-16, pedido do usuário — "deixar gravado os já
+    # selecionados em ent-said-estoq"): marca, com uma coluna própria
+    # (não o checkbox de seleção nativo, que só permite 1 linha marcada
+    # por vez — `selection_mode="single-row"`), quais produtos JÁ estão
+    # ativos em `produto_alvo_fiscalizacao` — mesma tabela compartilhada
+    # com o Estágio 7.2/7.3.2, então mostra alvo eleito em QUALQUER
+    # estágio, não só via 7.3.3 (mesmo raciocínio de `_render_eleitos_
+    # 733()`). Consultada UMA vez, fora do laço das 3 origens, pra não
+    # repetir a mesma leitura do banco 3x. Casamento por `DESCR_PROD`
+    # (== `DESCR_ALVO`, mesma chave de upsert de `salvar_alvos_
+    # selecionados_733()`).
+    grupo_ativo, _ = loader.consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=True)
+    descricoes_ja_eleitas = set(grupo_ativo["DESCR_ALVO"]) if not grupo_ativo.empty else set()
 
     eventos = {}
     tabelas_por_origem = {}
@@ -2272,7 +2288,9 @@ def _render_grades_produtos_733(
                 eventos[origem] = None
                 continue
 
-            exibicao = sub[_COLUNAS_EXIBICAO_GRADE_733].rename(columns=loader.carregar_dicionario_campos())
+            exibicao = sub[_COLUNAS_EXIBICAO_GRADE_733].copy()
+            exibicao.insert(0, "JA_ELEITO_733", sub["DESCR_PROD"].isin(descricoes_ja_eleitas))
+            exibicao = exibicao.rename(columns=loader.carregar_dicionario_campos())
             chave_tabela = _CHAVES_GRADE_733[origem]
             with st.container(key=f"estagio733_grade_container_{origem}"):
                 st.markdown(
@@ -2288,6 +2306,7 @@ def _render_grades_produtos_733(
                     selection_mode="single-row",
                     key=chave_tabela,
                     column_config={
+                        "Ja Eleito": st.column_config.CheckboxColumn(disabled=True),
                         "Qtde": st.column_config.NumberColumn(format="%.2f"),
                         "Valor Total": st.column_config.NumberColumn(format="%.2f"),
                     },
