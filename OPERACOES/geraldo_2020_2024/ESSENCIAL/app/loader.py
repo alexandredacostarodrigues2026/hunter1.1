@@ -2028,6 +2028,44 @@ def carregar_dicionario_campos() -> dict:
     return dicionario
 
 
+_TABELA_NCM_PATH = _OPERACAO_DIR.parent.parent / "Tabela_NCM_20220521.xlsx"
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def carregar_descricoes_ncm2() -> dict:
+    """Lê `Tabela_NCM_20220521.xlsx` (Tabela NCM oficial, vigente em
+    21/05/2022, aba "Tabela NCM") da raiz do projeto — pedido do
+    usuário (2026-08-16): "suba a tabela Tabela_NCM_20220521 a fim de
+    buscar a descrição de ncm2 e implantar na tabela" (Simulação NCM2,
+    Estágio 7.3.3). A planilha tem uma linha por CÓDIGO em TODOS os
+    níveis de granularidade da NCM (ex.: "01" Capítulo, "01.01"
+    Posição, "0101.21.00" Subitem) — só as linhas de CAPÍTULO (`Código`
+    com EXATAMENTE 2 dígitos numéricos, sem ponto) interessam aqui,
+    mesmo nível de `ncm2` (2 primeiros dígitos do COD_NCM) usado no
+    resto do 7.3.3. Cabeçalho real na linha 4 da planilha (3 linhas de
+    título/subtítulo/branco antes, `header=3` 0-indexed). Devolve
+    {ncm2: descrição} — 96 capítulos na tabela oficial (não são 99
+    sequenciais: alguns números de Capítulo são reservados/não usados
+    pela Nomenclatura). `{}` se o arquivo não existir (portabilidade —
+    mesma convenção de `carregar_dicionario_campos()`, não é
+    obrigatório pra app rodar) ou não puder ser lido (ex.: `openpyxl`
+    ausente no runtime portátil — achado real já documentado em outra
+    tela, `render_auditoria_divergencia_entradas()`)."""
+    if not _TABELA_NCM_PATH.exists():
+        return {}
+    try:
+        df = pd.read_excel(_TABELA_NCM_PATH, sheet_name="Tabela NCM", header=3, dtype=str)
+    except Exception:
+        logger.exception("Erro ao ler Tabela NCM em %s", _TABELA_NCM_PATH)
+        return {}
+    if "Código" not in df.columns or "Descrição" not in df.columns:
+        return {}
+    codigos = df["Código"].astype(str).str.strip()
+    mascara_capitulo = codigos.str.fullmatch(r"\d{2}")
+    descricoes = df.loc[mascara_capitulo, "Descrição"].astype(str).str.strip()
+    return dict(zip(codigos[mascara_capitulo], descricoes))
+
+
 _TABELAS_SEGREGACAO = (
     "nfe_analise_et", "nfe_analise_ep", "nfe_situacao_et", "nfe_situacao_ep",
 )
@@ -5643,7 +5681,7 @@ def consultar_rn1_simulada_30(limite: "int | None" = 200) -> "tuple[pd.DataFrame
 # COD_NCM cadastrado — mesmo escopo abrangente do restante do 7.3.3.
 _COLUNAS_BASE_SIMULACAO_NCM2_733 = ["ANO", "COD_ITEM", "ncm2", "DESCR_ITEM", "EI", "COMPRAS", "VENDAS", "EF"]
 _COLUNAS_SIMULACAO_NCM2_733 = [
-    "ncm2", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
+    "ncm2", "DESCRICAO_NCM2", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
     "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
 
@@ -5850,6 +5888,14 @@ def gerar_simulacao_ncm2_733(busca_descricao: str = "", ano_selecionado: str = "
     comportamento de `gerar_rn1_simulada_30()` por produto); um ano
     específico restringe antes de agrupar.
 
+    `DESCRICAO_NCM2` (2026-08-16, pedido do usuário — "suba a tabela
+    Tabela_NCM_20220521 a fim de buscar a descrição de ncm2 e implantar
+    na tabela"): nome oficial do Capítulo (ex.: "Animais vivos." pro
+    Capítulo "01"), via `carregar_descricoes_ncm2()` (Tabela NCM oficial
+    na raiz do projeto). "" quando o Capítulo não existe na tabela
+    oficial (não deveria acontecer com `ncm2` válido) ou o arquivo de
+    referência não está disponível.
+
     Regra R07: ncm2 sempre string. Devolve {'resumo': dict, 'simulacao':
     DataFrame, 'erros': list} — erros não-vazio quando `simulacao_
     ncm2_733_base` ainda não foi gerada."""
@@ -5874,8 +5920,10 @@ def gerar_simulacao_ncm2_733(busca_descricao: str = "", ano_selecionado: str = "
 
     agrupado = filtrado.groupby("ncm2", as_index=False)[["EI", "COMPRAS", "VENDAS", "EF"]].sum()
     simulado = _aplicar_simulacao_30(agrupado)
+    descricoes_ncm2 = carregar_descricoes_ncm2()
+    simulado["DESCRICAO_NCM2"] = simulado["ncm2"].map(descricoes_ncm2).fillna("")
     simulacao = (
-        _forcar_colunas_string(simulado, ["ncm2"])[_COLUNAS_SIMULACAO_NCM2_733]
+        _forcar_colunas_string(simulado, ["ncm2", "DESCRICAO_NCM2"])[_COLUNAS_SIMULACAO_NCM2_733]
         .sort_values("DIVERGENCIA", ascending=False)
         .reset_index(drop=True)
     )
