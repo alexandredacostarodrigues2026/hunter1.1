@@ -6453,22 +6453,30 @@ def consultar_consolidado_origens_733(limite: "int | None" = None) -> "tuple[pd.
         return pd.DataFrame(columns=colunas), 0
 
 
-def _codigo_mais_frequente_733(ocorrencias_concat: str) -> str:
-    """Extrai o código de MAIOR OCORRÊNCIA de uma string com códigos
+def _codigos_por_ocorrencia_733(ocorrencias_concat: str) -> "list[str]":
+    """Lista de códigos DISTINTOS extraída de uma string com códigos
     concatenados por ", " SEM distinct — um código por item físico real
     (ver `COD_ITEM_OCORRENCIAS`, `_QUERY_CONSOLIDADO_733_XML`/`_ESTOQUE`
-    em `gerar_consolidado_origens_733()`). Pedido do usuário (2026-08-16):
-    "nas entradas, saídas, estoque, em caso de mais de um cod prod,
-    cravar o cód de maior ocorrência" — usa `collections.Counter`,
-    empate resolvido pela ORDEM de aparição (`Counter.most_common()` é
-    estável: entre 2 códigos com a MESMA contagem, vence o que apareceu
-    primeiro na string). `""` se `ocorrencias_concat` vier vazio/None."""
+    em `gerar_consolidado_origens_733()`) — ORDENADA por OCORRÊNCIA
+    DECRESCENTE (o código mais frequente vem PRIMEIRO). Empate resolvido
+    pela ORDEM de aparição (`Counter.most_common()` é estável: entre 2
+    códigos com a MESMA contagem, vence o que apareceu primeiro na
+    string). `[]` se `ocorrencias_concat` vier vazio/None."""
     if not ocorrencias_concat or not str(ocorrencias_concat).strip():
-        return ""
+        return []
     codigos = [c.strip() for c in str(ocorrencias_concat).split(", ") if c.strip()]
     if not codigos:
-        return ""
-    return Counter(codigos).most_common(1)[0][0]
+        return []
+    return [codigo for codigo, _contagem in Counter(codigos).most_common()]
+
+
+def _codigo_mais_frequente_733(ocorrencias_concat: str) -> str:
+    """Extrai só o PRIMEIRO código de `_codigos_por_ocorrencia_733()` —
+    o de MAIOR OCORRÊNCIA. Pedido do usuário (2026-08-16): "nas
+    entradas, saídas, estoque, em caso de mais de um cod prod, cravar o
+    cód de maior ocorrência". `""` se não houver nenhum código."""
+    lista = _codigos_por_ocorrencia_733(ocorrencias_concat)
+    return lista[0] if lista else ""
 
 
 def unificar_por_produto_733(df: pd.DataFrame) -> pd.DataFrame:
@@ -6483,28 +6491,38 @@ def unificar_por_produto_733(df: pd.DataFrame) -> pd.DataFrame:
     `gerar_consolidado_origens_733()`; aqui soma-se a dimensão ANO por
     cima, ficando uma linha só por produto/unidade.
 
-    `COD_ITEM` reagregado (concatena os códigos DISTINTOS de todos os
-    anos, `_MARCADOR_COD_ITEM_AUSENTE_733` ('nc') só quando NENHUM ano
-    tiver código) — mesmo raciocínio do `STRING_AGG DISTINCT` já usado
-    em `gerar_consolidado_origens_733()`, agora sobre a dimensão ANO que
-    lá ficava fixa no agrupamento — usado só pra EXIBIÇÃO na grade
-    (coluna "Cód. Produto"). `ncm2` (Capítulo NCM) assumido igual
-    entre os anos do mesmo produto (o mesmo item físico não muda de
-    Capítulo NCM ano a ano) — usa o primeiro valor não vazio encontrado.
+    `COD_ITEM` (exibição, coluna "Cód. Produto" na grade) reagregado com
+    os códigos DISTINTOS de todos os anos, ORDENADOS por OCORRÊNCIA
+    DECRESCENTE — o mais frequente aparece PRIMEIRO na lista (2026-08-16,
+    pedido do usuário: "quero que a maior ocorrência já apareça antes" —
+    antes vinha em ordem ALFABÉTICA simples, sem relação com frequência
+    real). `_MARCADOR_COD_ITEM_AUSENTE_733` ('nc') só quando NENHUM ano
+    tiver código. `ncm2` (Capítulo NCM) assumido igual entre os anos do
+    mesmo produto (o mesmo item físico não muda de Capítulo NCM ano a
+    ano) — usa o primeiro valor não vazio encontrado.
 
     `COD_ITEM_FREQUENTE` (2026-08-16, pedido do usuário — "em caso de
     mais de um cod prod, cravar o cód de maior ocorrência"): quando um
     produto tem MÚLTIPLOS códigos distintos (ex.: "00000000014928,
     0000000100154" na grade), o código PRÉ-PREENCHIDO no campo editável
     de cravamento (`interface._render_grades_produtos_733()`) passa a
-    ser o de MAIOR OCORRÊNCIA entre os itens físicos reais, não a lista
-    toda nem um valor arbitrário. Calculado a partir de `COD_ITEM_
-    OCORRENCIAS` (concatenação SEM distinct — um código por item físico
-    real, ver `gerar_consolidado_origens_733()`/`_QUERY_CONSOLIDADO_
-    733_XML`), reagregada aqui por simples concatenação de string entre
-    os anos (preserva a contagem de cada código) e resolvida por
-    `_codigo_mais_frequente_733()` (`collections.Counter`, empate
-    resolvido pela ORDEM de aparição). "" quando não há nenhum código.
+    ser o de MAIOR OCORRÊNCIA entre os itens físicos reais — mesmo
+    critério de `COD_ITEM` acima, mas só o PRIMEIRO da lista.
+
+    Ambos calculados a partir de `COD_ITEM_OCORRENCIAS` (concatenação
+    SEM distinct — um código por item físico real, ver `gerar_
+    consolidado_origens_733()`/`_QUERY_CONSOLIDADO_733_XML`), reagregada
+    aqui por simples concatenação de string entre os anos (preserva a
+    contagem de cada código) e resolvida por `_codigos_por_ocorrencia_
+    733()` (`collections.Counter`, empate resolvido pela ORDEM de
+    aparição). Contagem sempre escopada DENTRO do mesmo `DESCR_PROD` —
+    nunca mistura ocorrências de produtos diferentes, mesmo que
+    compartilhem um código (achado real: código `00000000024045`
+    aparece tanto em "#DES.ABOVE AER.MEN E.CARB.150M" quanto em
+    "#DES.ABOVE AER.WOM.T.SWE.150ML", cada um com sua própria contagem,
+    confirmado 2026-08-16). Cache SEM `COD_ITEM_OCORRENCIAS` (gerada
+    antes de 2026-08-16) cai pro `COD_ITEM` alfabético antigo e não
+    ganha `COD_ITEM_FREQUENTE` — precisa de "Regerar Consolidado".
 
     Devolve `df` sem alteração se vazio ou sem as colunas mínimas
     (DESCR_PROD/UNID_PROD/ORIGEM)."""
@@ -6541,7 +6559,15 @@ def unificar_por_produto_733(df: pd.DataFrame) -> pd.DataFrame:
 
     unificado = df.groupby(["DESCR_PROD", "UNID_PROD", "ORIGEM"], as_index=False).agg(agregacao)
     if "COD_ITEM_OCORRENCIAS" in unificado.columns:
-        unificado["COD_ITEM_FREQUENTE"] = unificado["COD_ITEM_OCORRENCIAS"].apply(_codigo_mais_frequente_733)
+        listas_por_ocorrencia = unificado["COD_ITEM_OCORRENCIAS"].apply(_codigos_por_ocorrencia_733)
+        unificado["COD_ITEM_FREQUENTE"] = listas_por_ocorrencia.apply(lambda lst: lst[0] if lst else "")
+        # COD_ITEM (exibição) reordenado por ocorrência decrescente — substitui
+        # a versão alfabética de _concat_cod_item_distinto() acima quando há
+        # dado de ocorrência disponível (pedido do usuário, 2026-08-16).
+        if "COD_ITEM" in unificado.columns:
+            unificado["COD_ITEM"] = [
+                ", ".join(lst) if lst else _MARCADOR_COD_ITEM_AUSENTE_733 for lst in listas_por_ocorrencia
+            ]
     return unificado
 
 
