@@ -2154,16 +2154,41 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
     "evita que o auditor 'crave' acidentalmente produtos diferentes com
     o mesmo nome vindos de origens distintas"): o estado ativo fica em
     `st.session_state["alvo_733_ativo"]` (a linha inteira selecionada,
-    incluindo ORIGEM). Ao detectar seleção NOVA numa grade diferente da
-    já ativa, limpa a seleção visual das outras 2 ANTES do próximo
-    rerender — via `st.session_state[chave_da_grade] = {"selection":
-    {"rows": []}}`, mecanismo oficial do Streamlit pra setar o estado de
-    um widget `on_select` programaticamente (`DataframeState` aceita
-    atribuição por dict com o mesmo schema, ver docstring de `st.
-    dataframe`) — e força `st.rerun()` pra aplicar a limpeza antes do
-    usuário ver as 2 seleções simultâneas na tela. Reselecionar outra
-    linha DENTRO da mesma grade só atualiza o alvo ativo, sem precisar
-    limpar nada (nenhuma das outras 2 estava selecionada)."""
+    incluindo ORIGEM). Ao final das 3 grades, uma linha de confirmação
+    mostra Descrição/Origem/Código do produto eleito, antes do botão de
+    cravar (pedido do usuário — "gerar o nome ao final das 3 tabelas a
+    fim de confirmar o nome e o código do produto a ser eleito").
+
+    Limpeza de seleção ADIADA pro próximo rerun (2026-08-15, correção de
+    bug real — `StreamlitAPIException: st.session_state.grade_733_x
+    cannot be modified after the widget with key grade_733_x is
+    instantiated`): a 1ª versão tentava `st.session_state[chave_da_
+    grade] = {"selection": {"rows": []}}` DEPOIS das 3 `st.dataframe`
+    já terem sido instanciadas neste mesmo script run (o laço que as
+    desenha roda ANTES desta lógica de sincronização) — o Streamlit
+    proíbe escrever no `session_state` de um widget `key` já instanciado
+    na MESMA execução, mesmo que a intenção seja só preparar o próximo
+    rerender. Corrigido com uma flag própria, não ligada a nenhum widget
+    (`st.session_state["_733_limpar_grades"]`, uma lista de origens):
+    quando uma seleção nova aparece numa grade diferente da já ativa,
+    só grava a lista de origens a limpar + `st.rerun()`; a limpeza de
+    verdade (`st.session_state[chave] = {"selection": {"rows": []}}`)
+    roda no INÍCIO desta função, no PRÓXIMO script run, ANTES de
+    qualquer uma das 3 `st.dataframe` serem instanciadas — janela seguro
+    documentada pelo próprio Streamlit (`DataframeState` aceita
+    atribuição programática só ANTES do widget existir na execução
+    atual). Mesmo mecanismo reaproveitado pelos botões "Cravar Alvo
+    Selecionado"/"Limpar seleção de Alvo" (limpam as 3 de uma vez).
+    Reselecionar outra linha DENTRO da mesma grade só atualiza o alvo
+    ativo, sem precisar limpar nada (nenhuma das outras 2 estava
+    selecionada)."""
+    origens_a_limpar = st.session_state.pop("_733_limpar_grades", None)
+    if origens_a_limpar:
+        for origem_limpar in origens_a_limpar:
+            chave_limpar = _CHAVES_GRADE_733.get(origem_limpar)
+            if chave_limpar:
+                st.session_state[chave_limpar] = {"selection": {"rows": []}}
+
     st.markdown("**Grades de Produtos**")
     st.caption(
         "Selecione uma linha em UMA das 3 grades pra marcar o Alvo de Fiscalização — selecionar em "
@@ -2244,9 +2269,9 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
         linha_dados = tabelas_por_origem[origem_sel].iloc[idx_sel].to_dict()
         alvo_anterior = st.session_state.get("alvo_733_ativo")
         if not alvo_anterior or alvo_anterior.get("ORIGEM") != origem_sel:
-            for outra_origem, chave in _CHAVES_GRADE_733.items():
-                if outra_origem != origem_sel:
-                    st.session_state[chave] = {"selection": {"rows": []}}
+            st.session_state["_733_limpar_grades"] = [
+                outra_origem for outra_origem in _CHAVES_GRADE_733 if outra_origem != origem_sel
+            ]
             st.session_state["alvo_733_ativo"] = linha_dados
             st.rerun()
         else:
@@ -2257,10 +2282,10 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
         st.info("Nenhum produto selecionado como Alvo — clique numa linha de uma das 3 grades acima.")
         return
 
-    st.markdown(
-        f"**🎯 Alvo ativo:** {alvo_ativo.get('DESCR_PROD', '')} "
-        f"(Origem: {_TITULOS_GRADE_733.get(alvo_ativo.get('ORIGEM'), alvo_ativo.get('ORIGEM'))}, "
-        f"Cód.: {alvo_ativo.get('COD_ITEM', '')})"
+    st.success(
+        f"🎯 **Alvo ativo:** {alvo_ativo.get('DESCR_PROD', '')} — "
+        f"Cód.: **{alvo_ativo.get('COD_ITEM', '')}** "
+        f"(Origem: {_TITULOS_GRADE_733.get(alvo_ativo.get('ORIGEM'), alvo_ativo.get('ORIGEM'))})"
     )
     col_cravar, col_limpar_alvo = st.columns(2)
     if col_cravar.button("🎯 Cravar Alvo Selecionado (7.3.3)", key="btn_cravar_alvo_733"):
@@ -2277,13 +2302,11 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
                 f"{resultado['total_reativado']} reativado(s)."
             )
             st.session_state["alvo_733_ativo"] = None
-            for chave in _CHAVES_GRADE_733.values():
-                st.session_state[chave] = {"selection": {"rows": []}}
+            st.session_state["_733_limpar_grades"] = list(_CHAVES_GRADE_733.keys())
             st.rerun()
     if col_limpar_alvo.button("Limpar seleção de Alvo", key="btn_limpar_alvo_733"):
         st.session_state["alvo_733_ativo"] = None
-        for chave in _CHAVES_GRADE_733.values():
-            st.session_state[chave] = {"selection": {"rows": []}}
+        st.session_state["_733_limpar_grades"] = list(_CHAVES_GRADE_733.keys())
         st.rerun()
 
 
