@@ -47,10 +47,20 @@ def main() -> None:
         # interface.render_menu_principal().
         st.session_state["pagina_ativa"] = None
 
-    st.title("Hunter 1.1")
-    st.subheader(f"Operação ativa: {loader.nome_operacao()}")
-
     pagina = st.session_state["pagina_ativa"]
+    if pagina is None:
+        # Título/subtítulo só no Menu Principal (2026-08-16, pedido do
+        # usuário — "deixar isso somente e procedimento inicial. ocupa
+        # muito espaço"): antes apareciam ACIMA de toda página, inclusive
+        # nas 17 sub-páginas navegáveis, empurrando o conteúdo real pra
+        # baixo sem necessidade — o operador já sabe em qual operação
+        # está depois da primeira tela. Botão "⬅️ Voltar ao Menu
+        # Principal" (`_botao_voltar_menu()`, cada sub-página chama o
+        # seu) continua aparecendo normalmente nas sub-páginas — é
+        # navegação, não redundância visual.
+        st.title("Hunter 1.1")
+        st.subheader(f"Operação ativa: {loader.nome_operacao()}")
+
     if pagina == "extracao":
         interface.render_pagina_extracao()
     elif pagina == "matching":
