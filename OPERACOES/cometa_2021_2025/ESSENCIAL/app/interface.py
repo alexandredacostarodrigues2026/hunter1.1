@@ -2313,9 +2313,7 @@ def _render_grades_produtos_733(
             st.session_state["alvo_733_ativo"] = linha_dados
 
     alvo_ativo = st.session_state.get("alvo_733_ativo")
-    if not alvo_ativo:
-        st.info("Nenhum produto selecionado como Alvo — clique numa linha de uma das 3 grades acima.")
-    else:
+    if alvo_ativo:
         st.success(
             f"🎯 **Produto selecionado:** {alvo_ativo.get('DESCR_PROD', '')} — "
             f"Cód. original: **{alvo_ativo.get('COD_ITEM', '')}** — "
@@ -2328,25 +2326,44 @@ def _render_grades_produtos_733(
         )
 
         # Edição de Nome/Código/Unidade ANTES de cravar (pedido do
-        # usuário, 2026-08-15/16 — Unidade incluída em 2026-08-16). Reset
-        # dos campos ANTES dos widgets serem instanciados nesta execução
-        # (mesma janela segura já usada em `_733_limpar_grades`, ver
-        # docstring da função) — só quando o ALVO muda de identidade
-        # (origem+descrição+código originais); reselecionar o MESMO alvo
-        # depois de editar não apaga a edição em andamento.
+        # usuário, 2026-08-15/16 — Unidade incluída em 2026-08-16;
+        # pré-preenchimento corrigido em 2026-08-16 depois de o usuário
+        # reportar campos vazios no print da tela real). ANTES: uma única
+        # `key` fixa por campo, pré-semeada via `st.session_state[key] =
+        # valor` ANTES do `st.text_input` ser instanciado — funcionava no
+        # `AppTest` (que resolve o `st.rerun()` internamente até
+        # estabilizar), mas no navegador real o widget component do
+        # frontend pode manter estado de uma instanciação ANTERIOR com a
+        # MESMA key, sem repovoar visualmente com o novo valor pré-
+        # semeado. Corrigido trocando pra uma `key` DINÂMICA — sufixo
+        # `_733_edicao_geracao` (contador incrementado só quando a
+        # IDENTIDADE do alvo muda, origem+descrição+código originais) —
+        # combinada com `value=` explícito: cada troca de alvo vira uma
+        # instância de widget genuinamente NOVA pro Streamlit (key nunca
+        # vista antes), eliminando qualquer ambiguidade de estado
+        # residual do frontend. Reselecionar o MESMO alvo mantém a MESMA
+        # `geracao` (mesma key), preservando a edição em andamento.
         identidade_alvo = (
             alvo_ativo.get("ORIGEM"), alvo_ativo.get("DESCR_PROD"), alvo_ativo.get("COD_ITEM"),
         )
         if st.session_state.get("_733_identidade_edicao") != identidade_alvo:
             st.session_state["_733_identidade_edicao"] = identidade_alvo
-            st.session_state["edicao_descr_alvo_733"] = alvo_ativo.get("DESCR_PROD", "")
-            st.session_state["edicao_cod_alvo_733"] = alvo_ativo.get("COD_ITEM", "")
-            st.session_state["edicao_unid_alvo_733"] = alvo_ativo.get("UNID_PROD", "")
+            st.session_state["_733_edicao_geracao"] = st.session_state.get("_733_edicao_geracao", 0) + 1
+        geracao_edicao = st.session_state.get("_733_edicao_geracao", 0)
 
         col_nome, col_codigo, col_unidade = st.columns(3)
-        descr_editada = col_nome.text_input("Nome do Produto Alvo", key="edicao_descr_alvo_733")
-        cod_editado = col_codigo.text_input("Código do Produto", key="edicao_cod_alvo_733")
-        unid_editada = col_unidade.text_input("Unidade do Produto", key="edicao_unid_alvo_733")
+        descr_editada = col_nome.text_input(
+            "Nome do Produto Alvo", value=alvo_ativo.get("DESCR_PROD", ""),
+            key=f"edicao_descr_alvo_733_{geracao_edicao}",
+        )
+        cod_editado = col_codigo.text_input(
+            "Código do Produto", value=alvo_ativo.get("COD_ITEM", ""),
+            key=f"edicao_cod_alvo_733_{geracao_edicao}",
+        )
+        unid_editada = col_unidade.text_input(
+            "Unidade do Produto", value=alvo_ativo.get("UNID_PROD", ""),
+            key=f"edicao_unid_alvo_733_{geracao_edicao}",
+        )
 
         col_cravar, col_limpar_alvo = st.columns(2)
         if col_cravar.button("🎯 Cravar Alvo Selecionado (7.3.3)", key="btn_cravar_alvo_733"):
