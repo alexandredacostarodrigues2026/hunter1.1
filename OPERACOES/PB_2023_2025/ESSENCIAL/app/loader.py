@@ -6513,8 +6513,12 @@ def salvar_alvos_selecionados_733(selecionados: pd.DataFrame) -> dict:
     coluna homônima do consolidado (`'nc'` quando nenhuma origem tinha
     código) — mesmo raciocínio de `_mapa_cod_item_por_descr_alvo()`
     quando a mesma descrição aparece com códigos diferentes em
-    anos/origens distintos, usa o primeiro valor diferente de `'nc'`. Se
-    o produto JÁ EXISTIR (ex.:
+    anos/origens distintos, usa o primeiro valor diferente de `'nc'`.
+    `UNID_ALVO` (2026-08-16, pedido do usuário — "inclua tb unidade de
+    produto"): vem da coluna `UNID_PROD` de `selecionados`, se presente
+    (opcional — chamadas antigas sem essa coluna continuam funcionando,
+    UNID_ALVO fica ""); primeiro valor não vazio por descrição, mesmo
+    raciocínio de `COD_ITEM` acima. Se o produto JÁ EXISTIR (ex.:
     já veio do 7.2 com RN1 de verdade), preserva TODOS os campos já
     calculados — só reativa (STATUS='ativo') e atualiza TS, sem
     sobrescrever DIVERGENCIA/INFRACAO/TOTAL_DEBITO/TOTAL_CREDITO/COD_ITEM/
@@ -6557,12 +6561,20 @@ def salvar_alvos_selecionados_733(selecionados: pd.DataFrame) -> dict:
                 elif descr not in cod_item_por_descricao:
                     cod_item_por_descricao[descr] = cod or _MARCADOR_COD_ITEM_AUSENTE_733
 
+        unid_por_descricao = {}
+        if "UNID_PROD" in selecionados.columns:
+            for _, linha in selecionados.iterrows():
+                descr = str(linha["DESCR_PROD"]).strip()
+                unid = str(linha["UNID_PROD"]).strip() if pd.notna(linha["UNID_PROD"]) else ""
+                if unid and descr not in unid_por_descricao:
+                    unid_por_descricao[descr] = unid
+
         novas_descricoes = [d for d in descricoes if d not in ja_existiam]
         linhas_novas = pd.DataFrame([{
             "DESCR_ALVO": descr,
             "DESCR_EDITADA": "",
             "COD_ITEM": cod_item_por_descricao.get(descr, _MARCADOR_COD_ITEM_AUSENTE_733),
-            "UNID_ALVO": "",
+            "UNID_ALVO": unid_por_descricao.get(descr, ""),
             "UNID_EDITADA": "",
             "TS": ts_agora,
             "STATUS": STATUS_PRODUTO_ALVO_ATIVO, "DIVERGENCIA": 0.0,

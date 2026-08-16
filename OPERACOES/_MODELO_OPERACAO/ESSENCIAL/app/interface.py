@@ -2189,15 +2189,17 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
     ativo, sem precisar limpar nada (nenhuma das outras 2 estava
     selecionada).
 
-    Nome/Código EDITÁVEIS antes de cravar (2026-08-15, pedido do
-    usuário): dois `st.text_input` pré-preenchidos com DESCR_PROD/
-    COD_ITEM originais da linha selecionada — o que vai pra `loader.
-    salvar_alvos_selecionados_733()` é o texto EDITADO, não o valor
-    bruto da grade. Reset dos campos só quando a IDENTIDADE do alvo
-    ativo muda (origem+descrição+código originais, `_733_identidade_
-    edicao`) — trocar de produto limpa a edição anterior, mas continuar
-    editando o MESMO produto (sem trocar de seleção) preserva o que já
-    foi digitado.
+    Nome/Código/Unidade EDITÁVEIS antes de cravar (2026-08-15, pedido do
+    usuário; Unidade incluída em 2026-08-16 — "inclua tb unidade de
+    produto"): três `st.text_input` pré-preenchidos com DESCR_PROD/
+    COD_ITEM/UNID_PROD originais da linha selecionada — o que vai pra
+    `loader.salvar_alvos_selecionados_733()` é o texto EDITADO, não o
+    valor bruto da grade (`UNID_PROD` populando `UNID_ALVO`, campo que
+    antes ficava sempre `""` pra alvo cravado via 7.3.3). Reset dos
+    campos só quando a IDENTIDADE do alvo ativo muda (origem+descrição+
+    código originais, `_733_identidade_edicao`) — trocar de produto
+    limpa a edição anterior, mas continuar editando o MESMO produto
+    (sem trocar de seleção) preserva o que já foi digitado.
 
     "Relação de Produtos Alvo já Eleitos" (2026-08-15, pedido do
     usuário): tabela SEMPRE visível ao final da função (não só quando
@@ -2317,21 +2319,22 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
     else:
         st.success(
             f"🎯 **Produto selecionado:** {alvo_ativo.get('DESCR_PROD', '')} — "
-            f"Cód. original: **{alvo_ativo.get('COD_ITEM', '')}** "
+            f"Cód. original: **{alvo_ativo.get('COD_ITEM', '')}** — "
+            f"Unid. original: **{alvo_ativo.get('UNID_PROD', '')}** "
             f"(Origem: {_TITULOS_GRADE_733.get(alvo_ativo.get('ORIGEM'), alvo_ativo.get('ORIGEM'))})"
         )
         st.caption(
-            "Confira/corrija Nome e Código antes de cravar, se necessário — a edição vale só pra "
-            "este alvo, não altera a grade de origem."
+            "Confira/corrija Nome, Código e Unidade antes de cravar, se necessário — a edição vale "
+            "só pra este alvo, não altera a grade de origem."
         )
 
-        # Edição de Nome/Código ANTES de cravar (pedido do usuário,
-        # 2026-08-15). Reset dos campos ANTES dos widgets serem
-        # instanciados nesta execução (mesma janela segura já usada em
-        # `_733_limpar_grades`, ver docstring da função) — só quando o
-        # ALVO muda de identidade (origem+descrição+código originais);
-        # reselecionar o MESMO alvo depois de editar não apaga a edição
-        # em andamento.
+        # Edição de Nome/Código/Unidade ANTES de cravar (pedido do
+        # usuário, 2026-08-15/16 — Unidade incluída em 2026-08-16). Reset
+        # dos campos ANTES dos widgets serem instanciados nesta execução
+        # (mesma janela segura já usada em `_733_limpar_grades`, ver
+        # docstring da função) — só quando o ALVO muda de identidade
+        # (origem+descrição+código originais); reselecionar o MESMO alvo
+        # depois de editar não apaga a edição em andamento.
         identidade_alvo = (
             alvo_ativo.get("ORIGEM"), alvo_ativo.get("DESCR_PROD"), alvo_ativo.get("COD_ITEM"),
         )
@@ -2339,10 +2342,12 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
             st.session_state["_733_identidade_edicao"] = identidade_alvo
             st.session_state["edicao_descr_alvo_733"] = alvo_ativo.get("DESCR_PROD", "")
             st.session_state["edicao_cod_alvo_733"] = alvo_ativo.get("COD_ITEM", "")
+            st.session_state["edicao_unid_alvo_733"] = alvo_ativo.get("UNID_PROD", "")
 
-        col_nome, col_codigo = st.columns(2)
+        col_nome, col_codigo, col_unidade = st.columns(3)
         descr_editada = col_nome.text_input("Nome do Produto Alvo", key="edicao_descr_alvo_733")
         cod_editado = col_codigo.text_input("Código do Produto", key="edicao_cod_alvo_733")
+        unid_editada = col_unidade.text_input("Unidade do Produto", key="edicao_unid_alvo_733")
 
         col_cravar, col_limpar_alvo = st.columns(2)
         if col_cravar.button("🎯 Cravar Alvo Selecionado (7.3.3)", key="btn_cravar_alvo_733"):
@@ -2352,6 +2357,7 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
                 selecionado_df = pd.DataFrame([{
                     "DESCR_PROD": descr_editada.strip(),
                     "COD_ITEM": cod_editado.strip(),
+                    "UNID_PROD": unid_editada.strip(),
                 }])
                 resultado = loader.salvar_alvos_selecionados_733(selecionado_df)
                 if "erro" in resultado:
