@@ -2440,28 +2440,29 @@ def _render_eleitos_733() -> None:
         st.dataframe(exibicao_eleitos, use_container_width=True, hide_index=True)
 
 
-def _render_simulacao_ncm2_733(
-    busca_descricao: str, ano_selecionado: str, ncm2_selecionado: "str | None",
-) -> "str | None":
+def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | None") -> "str | None":
     """Estágio 7.3.3 — aba "📊 Simulação NCM2" (2026-08-16, extraída de
     `render_consolidado_origens_733()` pra virar conteúdo de uma aba
     própria — ver docstring de lá pro raciocínio completo). Fonte
     própria (`simulacao_ncm2_733_base`), independente de `estagio733_
     consolidado` — por isso tem seu PRÓPRIO gate "Gerar/Regerar
     Simulação NCM2", que funciona mesmo sem o Consolidado já gerado.
-    `busca_descricao`/`ano_selecionado` vêm do container de Filtros
-    (renderizado pelo chamador, ANTES das abas). Devolve o `ncm2_
-    selecionado` (possivelmente atualizado por um clique nesta mesma
-    execução) pro chamador usar no filtro das outras 3 abas — updates
-    aqui precisam acontecer ANTES do chamador montar `filtrado_base`,
-    por isso esta função roda primeiro no código (mesmo sendo a aba
-    visualmente à esquerda, ordem de EXECUÇÃO ≠ ordem visual de abas)."""
+    `busca_descricao` vem do container de Filtros (renderizado pelo
+    chamador, ANTES das abas) — perdeu o seletor de Ano (2026-08-16,
+    pedido do usuário: "retire o ano"), soma sempre TODOS os anos.
+    Devolve o `ncm2_selecionado` (possivelmente atualizado por um clique
+    nesta mesma execução) pro chamador usar no filtro das outras 3 abas
+    — updates aqui precisam acontecer ANTES do chamador montar
+    `filtrado_base`, por isso esta função roda primeiro no código (mesmo
+    sendo a aba visualmente à esquerda, ordem de EXECUÇÃO ≠ ordem visual
+    de abas)."""
     st.caption(
         "Agrupa EI, Compras, Vendas e Estoque Final por Capítulo NCM (2 primeiros dígitos do "
         "COD_NCM, cadastro SPED Registro 0200) e aplica a mesma simulação +30% do Estágio 7.3.2 "
         "sobre os totais agrupados — cobre TODOS os produtos com NCM cadastrado, não só os já "
-        "equalizados no Estágio 7.1/7.2. Respeita os filtros de Busca por Descrição e Ano acima. "
-        "Clique numa linha pra filtrar automaticamente as Grades de Produtos por aquele Capítulo."
+        "equalizados no Estágio 7.1/7.2. Respeita o filtro de Busca por Descrição acima, soma "
+        "todos os anos. Clique numa linha pra filtrar automaticamente as Grades de Produtos por "
+        "aquele Capítulo."
     )
 
     if "ncm2_733_base_gerada" not in st.session_state:
@@ -2488,7 +2489,7 @@ def _render_simulacao_ncm2_733(
         st.info('Clique em "Gerar Simulação NCM2" pra montar a tabela de Capítulos NCM.')
         return ncm2_selecionado
 
-    resultado_sim_ncm2 = loader.gerar_simulacao_ncm2_733(busca_descricao, ano_selecionado)
+    resultado_sim_ncm2 = loader.gerar_simulacao_ncm2_733(busca_descricao, "Todos")
     for erro in resultado_sim_ncm2.get("erros", []):
         st.warning(erro)
     tabela_ncm2 = resultado_sim_ncm2.get("simulacao", pd.DataFrame())
@@ -2568,9 +2569,11 @@ def render_consolidado_origens_733() -> None:
     EXECUÇÃO no código (não a ordem visual das abas) importa aqui: 1)
     gate "Gerar/Regerar Consolidado" (necessário só pras 3 abas de
     origem, mas fica ANTES pra já determinar se há dado); 2) container
-    de Filtros (Busca por Descrição + Ano — perdeu o selectbox de
-    Origem em 2026-08-15, redundante desde que as 3 abas já separam por
-    origem); 3) as 5 abas são CRIADAS; 4) o CONTEÚDO da aba NCM2 roda
+    de Filtros (só Busca por Descrição — perdeu o selectbox de Origem em
+    2026-08-15, redundante desde que as 3 abas já separam por origem;
+    perdeu o seletor de Ano em 2026-08-16, pedido do usuário "retire o
+    ano" — soma sempre todos os anos); 3) as 5 abas são CRIADAS; 4) o
+    CONTEÚDO da aba NCM2 roda
     PRIMEIRO (`_render_simulacao_ncm2_733()`, que pode atualizar
     `ncm2_selecionado` a partir de um clique nesta mesma execução); 5)
     só ENTÃO `filtrado_base` é montado (já com o `ncm2_selecionado`
@@ -2636,19 +2639,19 @@ def render_consolidado_origens_733() -> None:
     if df_preview.empty and st.session_state["estagio733_gerado"]:
         st.info("Nenhuma linha encontrada — confira se Entradas/Saídas/Estoque já foram gerados.")
 
-    # Filtros — Busca + Ano, aplicam-se a 4 das 5 abas (Simulação NCM2 e
-    # as 3 de origem — Eleitos fica de fora de propósito, ver
-    # `_render_eleitos_733()`), por isso ficam ACIMA da barra de abas.
+    # Filtros — só Busca por Descrição (2026-08-16, pedido do usuário —
+    # "retire o ano": o seletor de Ano foi removido; filtro passou a
+    # cobrir sempre TODOS os anos, mesmo comportamento de "Todos" de
+    # antes). Aplica-se a 4 das 5 abas (Simulação NCM2 e as 3 de origem
+    # — Eleitos fica de fora de propósito, ver `_render_eleitos_733()`),
+    # por isso fica ACIMA da barra de abas.
     with st.container(key="estagio733_filtros"):
         st.markdown("**Filtros**")
-        col_busca, col_ano = st.columns(2)
-        busca_descricao = col_busca.text_input("Buscar por Descrição", key="filtro_descricao_733")
-        col_busca.caption(
+        busca_descricao = st.text_input("Buscar por Descrição", key="filtro_descricao_733")
+        st.caption(
             r"Dica: use '\*' como curinga. Ex.: 'mac\*' (inicia com mac), '\*mac' (termina com mac), "
             r"'\*mac\*' (contém mac), '\*mor\*mac\*' (contém mor e mac, em qualquer ordem)."
         )
-        anos_disponiveis = sorted(df_preview["ANO"].dropna().unique().tolist()) if not df_preview.empty else []
-        ano_selecionado = col_ano.selectbox("Ano", ["Todos"] + anos_disponiveis, key="filtro_ano_733")
 
     aba_ncm2, aba_entrada, aba_saida, aba_estoque, aba_eleitos = st.tabs(
         ["📊 Simulação NCM2", "📥 Entradas", "📤 Saídas", "📦 Estoque", "🗂️ Relação de Eleitos"]
@@ -2656,7 +2659,7 @@ def render_consolidado_origens_733() -> None:
 
     ncm2_selecionado = st.session_state.get("ncm2_selecionado_733")
     with aba_ncm2:
-        ncm2_selecionado = _render_simulacao_ncm2_733(busca_descricao, ano_selecionado, ncm2_selecionado)
+        ncm2_selecionado = _render_simulacao_ncm2_733(busca_descricao, ncm2_selecionado)
 
     filtrado_base = df_preview
     if not filtrado_base.empty:
@@ -2666,8 +2669,6 @@ def render_consolidado_origens_733() -> None:
                     _padrao_busca_curinga(busca_descricao.strip()), case=False, na=False,
                 )
             ]
-        if ano_selecionado != "Todos":
-            filtrado_base = filtrado_base[filtrado_base["ANO"] == ano_selecionado]
         if ncm2_selecionado:
             filtrado_base = loader.filtrar_por_ncm2_733(filtrado_base, ncm2_selecionado)
 
