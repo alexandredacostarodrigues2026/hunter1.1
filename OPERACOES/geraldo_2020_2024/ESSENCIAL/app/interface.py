@@ -2139,7 +2139,9 @@ _TITULOS_GRADE_733 = {
 }
 
 
-def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
+def _render_grades_produtos_733(
+    filtrado_base: pd.DataFrame, abas_por_origem: dict, ncm2_selecionado: "str | None" = None,
+) -> None:
     """Estágio 7.3.3 — "Grades de Produtos" (2026-08-15, Solicitação
     Técnica de reestruturação): substitui a antiga tabela única (st.
     data_editor com checkbox "Selecionar p/ Fiscalização") por TRÊS
@@ -2147,14 +2149,21 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
     miniaturizados (Soma Quantidade/Soma Valor Total) e seleção de linha
     NATIVA (`st.dataframe(on_select="rerun", selection_mode="single-
     row")` — 2ª vez que o app usa esse recurso, depois da tabela de
-    Simulação NCM2). Layout em `st.tabs(["📥 Entradas", "📤 Saídas", "📦
-    Estoque"])` (2026-08-16, pedido do usuário — mesmo padrão visual já
-    usado no antigo "Detalhamento por Origem" da Parte 2 desta sessão,
-    trocado por "sempre empilhadas" na mesma Parte 2 e revertido agora
-    de volta pra abas): não muda a lógica de seleção/sincronização — as
-    3 abas rodam no MESMO script run (conteúdo das 3 sempre computado,
-    só a exibição é client-side), então os 3 `st.dataframe` continuam
-    sendo instanciados todo run, igual à versão empilhada.
+    Simulação NCM2). Layout em abas (2026-08-16, pedido do usuário —
+    mesmo padrão visual já usado no antigo "Detalhamento por Origem" da
+    Parte 2 desta sessão): `abas_por_origem` (dict origem->objeto de
+    aba) é criado pelo CHAMADOR (`render_consolidado_origens_733()`),
+    junto com a aba de Simulação NCM2, num único `st.tabs([...])` de 4
+    abas (NCM2 primeiro, pedido do usuário 2026-08-16 — "crie tb aba
+    para tabela ncm que deverá ser a primeira") — esta função só
+    RENDERIZA dentro das 3 abas já criadas, não instancia `st.tabs`
+    própria. Não muda a lógica de seleção/sincronização: as abas rodam
+    no MESMO script run do Streamlit (conteúdo sempre computado, só a
+    exibição é client-side), então os 3 `st.dataframe` continuam sendo
+    instanciados todo run, igual à versão empilhada/sem abas.
+    `ncm2_selecionado`, quando presente, só alimenta uma legenda
+    informativa no topo — o FILTRO em si já vem aplicado em
+    `filtrado_base` pelo chamador.
 
     Seleção ÚNICA e EXCLUSIVA entre as 3 grades (pedido explícito —
     "evita que o auditor 'crave' acidentalmente produtos diferentes com
@@ -2213,22 +2222,11 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
             if chave_limpar:
                 st.session_state[chave_limpar] = {"selection": {"rows": []}}
 
-    st.markdown("**Grades de Produtos**")
     st.caption(
         "Selecione uma linha em UMA das 3 grades pra marcar o Alvo de Fiscalização — selecionar em "
         "outra grade substitui a seleção anterior (só um produto ativo por vez)."
+        + (f" Restrito ao Capítulo NCM **{ncm2_selecionado}**." if ncm2_selecionado else "")
     )
-
-    # Layout em abas (2026-08-16, pedido do usuário — "faça isso para as
-    # tabelas", mesmo padrão visual já usado no antigo "Detalhamento por
-    # Origem", ver histórico do 2026-08-13 na Parte 2 desta sessão):
-    # `st.tabs` de topo, não muda a lógica de seleção/sincronização
-    # abaixo — as 3 abas rodam no MESMO script run do Streamlit
-    # (conteúdo das 3 sempre computado, só a exibição é client-side),
-    # então os 3 `st.dataframe(on_select=...)` continuam sendo
-    # instanciados todo run, exatamente como na versão empilhada.
-    aba_entrada, aba_saida, aba_estoque = st.tabs(["📥 Entradas", "📤 Saídas", "📦 Estoque"])
-    abas_por_origem = {"entrada": aba_entrada, "saida": aba_saida, "estoque": aba_estoque}
 
     eventos = {}
     tabelas_por_origem = {}
@@ -2405,80 +2403,28 @@ def _render_grades_produtos_733(filtrado_base: pd.DataFrame) -> None:
             st.dataframe(exibicao_eleitos, use_container_width=True, hide_index=True)
 
 
-def render_consolidado_origens_733() -> None:
-    """Estágio 7.3.3 — Seleção Consolidada de Alvos (2026-08-03,
-    Solicitação Técnica): une Entradas/Saídas/Estoque (Estágio 4/5) numa
-    única tabela de consulta, pro auditor "cravar" alvos que não têm
-    divergência financeira aparente no 7.2/7.3, mas têm volume físico
-    (XML) ou estoque estagnado (Bloco H) suspeito. Ver
-    loader.gerar_consolidado_origens_733() pro raciocínio de agregação/
-    fontes. Chamada por render_pagina_consolidado_733() — botão PRÓPRIO
-    no Menu Principal desde 2026-08-03.
-
-    Upsert ADITIVO (loader.salvar_alvos_selecionados_733(), confirmado com
-    o usuário via AskUserQuestion): cravar aqui nunca cancela nada que já
-    estava ativo em produto_alvo_fiscalizacao (nem do 7.2, nem de uma
-    rodada anterior do 7.3.3) — diferente do "💾 Salvar Grupo de Produto
-    Alvo" do 7.3.2, que reconcilia a tela inteira (desmarcar cancela).
-    Alvo cravado aqui não tem RN1 calculado (DIVERGENCIA/TOTAL_DEBITO/
-    TOTAL_CREDITO=0, INFRACAO vazio, OBSERVACAO registra a origem) —
-    também confirmado com o usuário, em vez de calcular RN1 na hora.
-
-    Reestruturação 2026-08-15 (Solicitação Técnica "Reestruturação e
-    Performance"): ordem vertical mudou pra Setor (NCM) -> Filtro ->
-    Produto, espelhando a metodologia real de auditoria (materialidade
-    macro pro item específico):
-    1. Simulação NCM2 (topo, "primeiro elemento de análise") — não
-       depende de `estagio733_consolidado` (fonte própria, `simulacao_
-       ncm2_733_base`), por isso renderiza mesmo antes do Consolidado
-       ter sido gerado.
-    2. Gate "Gerar/Regerar Consolidado" (ação de preparo, não é
-       "elemento de análise" — fica entre a Simulação NCM2 e os Filtros,
-       que dependem dele).
-    3. Container de Filtros (Busca por Descrição + Ano) — perdeu o
-       selectbox de Origem (2026-08-15): com as 3 grades sempre
-       separadas por origem, o seletor global virou redundante.
-    4. Grades de Produtos (base) — `_render_grades_produtos_733()`.
-    A antiga tabela única com checkbox + o antigo "Detalhamento por
-    Origem" (st.tabs, só aparecia com busca preenchida) foram
-    SUBSTITUÍDOS pelas 3 grades sempre visíveis, com seleção de linha
-    única e exclusiva entre elas (ver `_render_grades_produtos_733()`).
-
-    Performance do filtro por Capítulo NCM (2026-08-15, mesma
-    Solicitação Técnica): antes, selecionar um Capítulo na Simulação
-    NCM2 refazia o JOIN contra `sped_produtos` em tempo de execução
-    (`loader.filtrar_por_ncm2_733()`), causando atraso perceptível a
-    cada troca. Agora a coluna `ncm2` já vem PRÉ-CALCULADA e persistida
-    em `estagio733_consolidado` (`loader.gerar_consolidado_origens_733()`
-    grava com `_resolver_ncm2_por_cod_item_concatenado()`), então o
-    filtro na tela é uma comparação de coluna, não um JOIN."""
-    st.markdown("**🔍 7.3.3: Seleção Consolidada (Estoque/XML)**")
-    st.caption(
-        "Une Entradas, Saídas (excluindo autoemissão) e Estoque (Bloco H, só anos já fechados) "
-        "numa única base — Qtde/Valor Total agregados por Ano+Descrição+Unidade+Origem. Fluxo: "
-        "localize o Capítulo NCM (setor) na tabela abaixo, aplique os filtros de Busca/Ano e "
-        "escolha o produto alvo específico numa das 3 grades (Entradas/Saídas/Estoque). Alvo "
-        "cravado aqui não passa pela régua de divergência do 7.2/7.3 (fica marcado na Observação)."
-    )
-
-    # Simulação NCM2 — topo, "primeiro elemento de análise" (não depende
-    # do Consolidado abaixo). Lê busca_descricao/ano_selecionado do
-    # session_state ANTES dos widgets de Filtro serem instanciados mais
-    # abaixo na tela (mesma key — o Streamlit já preserva o valor entre
-    # reruns, padrão seguro pra layout onde o filtro aparece visualmente
-    # DEPOIS do conteúdo que ele afeta).
-    ncm2_selecionado = st.session_state.get("ncm2_selecionado_733")
-    busca_descricao_atual = st.session_state.get("filtro_descricao_733", "")
-    ano_selecionado_atual = st.session_state.get("filtro_ano_733", "Todos")
-
-    st.markdown("**📊 Simulação RN1 (+30%) por Capítulo NCM**")
+def _render_simulacao_ncm2_733(
+    busca_descricao: str, ano_selecionado: str, ncm2_selecionado: "str | None",
+) -> "str | None":
+    """Estágio 7.3.3 — aba "📊 Simulação NCM2" (2026-08-16, extraída de
+    `render_consolidado_origens_733()` pra virar conteúdo de uma aba
+    própria — ver docstring de lá pro raciocínio completo). Fonte
+    própria (`simulacao_ncm2_733_base`), independente de `estagio733_
+    consolidado` — por isso tem seu PRÓPRIO gate "Gerar/Regerar
+    Simulação NCM2", que funciona mesmo sem o Consolidado já gerado.
+    `busca_descricao`/`ano_selecionado` vêm do container de Filtros
+    (renderizado pelo chamador, ANTES das abas). Devolve o `ncm2_
+    selecionado` (possivelmente atualizado por um clique nesta mesma
+    execução) pro chamador usar no filtro das outras 3 abas — updates
+    aqui precisam acontecer ANTES do chamador montar `filtrado_base`,
+    por isso esta função roda primeiro no código (mesmo sendo a aba
+    visualmente à esquerda, ordem de EXECUÇÃO ≠ ordem visual de abas)."""
     st.caption(
         "Agrupa EI, Compras, Vendas e Estoque Final por Capítulo NCM (2 primeiros dígitos do "
         "COD_NCM, cadastro SPED Registro 0200) e aplica a mesma simulação +30% do Estágio 7.3.2 "
         "sobre os totais agrupados — cobre TODOS os produtos com NCM cadastrado, não só os já "
-        "equalizados no Estágio 7.1/7.2. Respeita os filtros de Busca por Descrição e Ano do "
-        "container logo abaixo. Clique numa linha pra filtrar automaticamente as Grades de "
-        "Produtos por aquele Capítulo."
+        "equalizados no Estágio 7.1/7.2. Respeita os filtros de Busca por Descrição e Ano acima. "
+        "Clique numa linha pra filtrar automaticamente as Grades de Produtos por aquele Capítulo."
     )
 
     if "ncm2_733_base_gerada" not in st.session_state:
@@ -2503,50 +2449,122 @@ def render_consolidado_origens_733() -> None:
 
     if not st.session_state["ncm2_733_base_gerada"]:
         st.info('Clique em "Gerar Simulação NCM2" pra montar a tabela de Capítulos NCM.')
-    else:
-        resultado_sim_ncm2 = loader.gerar_simulacao_ncm2_733(busca_descricao_atual, ano_selecionado_atual)
-        for erro in resultado_sim_ncm2.get("erros", []):
-            st.warning(erro)
-        tabela_ncm2 = resultado_sim_ncm2.get("simulacao", pd.DataFrame())
-        if tabela_ncm2.empty:
-            st.info("Nenhum Capítulo NCM encontrado para os filtros atuais.")
-        else:
-            exibicao_ncm2 = tabela_ncm2.copy()
-            acima_30_ncm2 = exibicao_ncm2["PCT_DIVERGENCIA"] > _LIMIAR_DESTAQUE_VERMELHO_PCT_DIVERG
-            exibicao_ncm2["PCT_DIVERGENCIA"] = exibicao_ncm2["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
-            for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
-                exibicao_ncm2[_col] = exibicao_ncm2[_col].apply(_formatar_moeda_br)
-            exibicao_ncm2 = exibicao_ncm2.rename(columns=loader.carregar_dicionario_campos())
+        return ncm2_selecionado
 
-            with st.container(key="estagio733_ncm2_tabela"):
-                st.markdown(
-                    "<style>.st-key-estagio733_ncm2_tabela [data-testid='stDataFrame'] "
-                    "* { font-size: 9px; }</style>",
-                    unsafe_allow_html=True,
-                )
-                evento_ncm2 = st.dataframe(
-                    _destacar_vermelho_grupo_alvo(exibicao_ncm2, acima_30_ncm2),
-                    use_container_width=True,
-                    hide_index=True,
-                    on_select="rerun",
-                    selection_mode="single-row",
-                    key="tabela_simulacao_ncm2_733",
-                )
+    resultado_sim_ncm2 = loader.gerar_simulacao_ncm2_733(busca_descricao, ano_selecionado)
+    for erro in resultado_sim_ncm2.get("erros", []):
+        st.warning(erro)
+    tabela_ncm2 = resultado_sim_ncm2.get("simulacao", pd.DataFrame())
+    if tabela_ncm2.empty:
+        st.info("Nenhum Capítulo NCM encontrado para os filtros atuais.")
+        return ncm2_selecionado
 
-            linhas_marcadas_ncm2 = evento_ncm2.selection.rows if evento_ncm2 and evento_ncm2.selection else []
-            if linhas_marcadas_ncm2:
-                ncm2_selecionado = str(tabela_ncm2.iloc[linhas_marcadas_ncm2[0]]["ncm2"])
-                st.session_state["ncm2_selecionado_733"] = ncm2_selecionado
+    exibicao_ncm2 = tabela_ncm2.copy()
+    acima_30_ncm2 = exibicao_ncm2["PCT_DIVERGENCIA"] > _LIMIAR_DESTAQUE_VERMELHO_PCT_DIVERG
+    exibicao_ncm2["PCT_DIVERGENCIA"] = exibicao_ncm2["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+    for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
+        exibicao_ncm2[_col] = exibicao_ncm2[_col].apply(_formatar_moeda_br)
+    exibicao_ncm2 = exibicao_ncm2.rename(columns=loader.carregar_dicionario_campos())
 
-            if ncm2_selecionado:
-                col_ncm2_info, col_ncm2_limpar = st.columns([4, 1])
-                col_ncm2_info.info(f"Filtrando Grades de Produtos pelo Capítulo NCM **{ncm2_selecionado}**.")
-                if col_ncm2_limpar.button("Limpar filtro NCM", key="btn_limpar_ncm2_733"):
-                    st.session_state["ncm2_selecionado_733"] = None
-                    ncm2_selecionado = None
-                    st.rerun()
+    with st.container(key="estagio733_ncm2_tabela"):
+        st.markdown(
+            "<style>.st-key-estagio733_ncm2_tabela [data-testid='stDataFrame'] "
+            "* { font-size: 9px; }</style>",
+            unsafe_allow_html=True,
+        )
+        evento_ncm2 = st.dataframe(
+            _destacar_vermelho_grupo_alvo(exibicao_ncm2, acima_30_ncm2),
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="tabela_simulacao_ncm2_733",
+        )
 
-    st.divider()
+    linhas_marcadas_ncm2 = evento_ncm2.selection.rows if evento_ncm2 and evento_ncm2.selection else []
+    if linhas_marcadas_ncm2:
+        ncm2_selecionado = str(tabela_ncm2.iloc[linhas_marcadas_ncm2[0]]["ncm2"])
+        st.session_state["ncm2_selecionado_733"] = ncm2_selecionado
+
+    if ncm2_selecionado:
+        col_ncm2_info, col_ncm2_limpar = st.columns([4, 1])
+        col_ncm2_info.info(f"Filtrando Grades de Produtos pelo Capítulo NCM **{ncm2_selecionado}**.")
+        if col_ncm2_limpar.button("Limpar filtro NCM", key="btn_limpar_ncm2_733"):
+            st.session_state["ncm2_selecionado_733"] = None
+            ncm2_selecionado = None
+            st.rerun()
+
+    return ncm2_selecionado
+
+
+def render_consolidado_origens_733() -> None:
+    """Estágio 7.3.3 — Seleção Consolidada de Alvos (2026-08-03,
+    Solicitação Técnica): une Entradas/Saídas/Estoque (Estágio 4/5) numa
+    única tabela de consulta, pro auditor "cravar" alvos que não têm
+    divergência financeira aparente no 7.2/7.3, mas têm volume físico
+    (XML) ou estoque estagnado (Bloco H) suspeito. Ver
+    loader.gerar_consolidado_origens_733() pro raciocínio de agregação/
+    fontes. Chamada por render_pagina_consolidado_733() — botão PRÓPRIO
+    no Menu Principal desde 2026-08-03.
+
+    Upsert ADITIVO (loader.salvar_alvos_selecionados_733(), confirmado com
+    o usuário via AskUserQuestion): cravar aqui nunca cancela nada que já
+    estava ativo em produto_alvo_fiscalizacao (nem do 7.2, nem de uma
+    rodada anterior do 7.3.3) — diferente do "💾 Salvar Grupo de Produto
+    Alvo" do 7.3.2, que reconcilia a tela inteira (desmarcar cancela).
+    Alvo cravado aqui não tem RN1 calculado (DIVERGENCIA/TOTAL_DEBITO/
+    TOTAL_CREDITO=0, INFRACAO vazio, OBSERVACAO registra a origem) —
+    também confirmado com o usuário, em vez de calcular RN1 na hora.
+
+    Reestruturação 2026-08-15 (Solicitação Técnica "Reestruturação e
+    Performance"): ordem vertical mudou pra Setor (NCM) -> Filtro ->
+    Produto, espelhando a metodologia real de auditoria (materialidade
+    macro pro item específico).
+
+    Layout em 4 ABAS (2026-08-16, pedido do usuário — "crie tb aba para
+    tabela ncm que deverá ser a primeira"): Simulação NCM2 + Entradas/
+    Saídas/Estoque viraram uma ÚNICA barra de abas (`st.tabs(["📊
+    Simulação NCM2", "📥 Entradas", "📤 Saídas", "📦 Estoque"])`), NCM2
+    primeiro. Ordem de CRIAÇÃO/EXECUÇÃO no código (não a ordem visual
+    das abas) importa aqui: 1) gate "Gerar/Regerar Consolidado"
+    (necessário só pras 3 abas de origem, mas fica ANTES pra já
+    determinar se há dado); 2) container de Filtros (Busca por
+    Descrição + Ano — perdeu o selectbox de Origem em 2026-08-15,
+    redundante desde que as 3 abas já separam por origem); 3) as 4 abas
+    são CRIADAS; 4) o CONTEÚDO da aba NCM2 roda PRIMEIRO
+    (`_render_simulacao_ncm2_733()`, que pode atualizar `ncm2_
+    selecionado` a partir de um clique nesta mesma execução); 5) só
+    ENTÃO `filtrado_base` é montado (já com o `ncm2_selecionado`
+    possivelmente atualizado no passo 4) e passado pra `_render_grades_
+    produtos_733()`, que renderiza dentro das 3 abas de origem já
+    criadas no passo 3. Esse cuidado de ordem evita o filtro por
+    Capítulo NCM ficar "um clique atrasado" (só refletir na PRÓXIMA
+    interação em vez de imediatamente).
+
+    Sem `return` antecipado quando o Consolidado ainda não foi gerado
+    (2026-08-16, mudança da reestruturação anterior): a aba de
+    Simulação NCM2 não depende do Consolidado (fonte própria,
+    `simulacao_ncm2_733_base`), então precisa continuar acessível mesmo
+    sem ele — as 3 abas de origem simplesmente mostram "Nenhum item."
+    quando `filtrado_base` vem vazio.
+
+    Performance do filtro por Capítulo NCM (2026-08-15, mesma
+    Solicitação Técnica): antes, selecionar um Capítulo na Simulação
+    NCM2 refazia o JOIN contra `sped_produtos` em tempo de execução
+    (`loader.filtrar_por_ncm2_733()`), causando atraso perceptível a
+    cada troca. Agora a coluna `ncm2` já vem PRÉ-CALCULADA e persistida
+    em `estagio733_consolidado` (`loader.gerar_consolidado_origens_733()`
+    grava com `_resolver_ncm2_por_cod_item_concatenado()`), então o
+    filtro na tela é uma comparação de coluna, não um JOIN."""
+    st.markdown("**🔍 7.3.3: Seleção Consolidada (Estoque/XML)**")
+    st.caption(
+        "Une Entradas, Saídas (excluindo autoemissão) e Estoque (Bloco H, só anos já fechados) "
+        "numa única base — Qtde/Valor Total agregados por Ano+Descrição+Unidade+Origem. Fluxo: "
+        "localize o Capítulo NCM (setor) na aba Simulação NCM2, aplique os filtros de Busca/Ano e "
+        "escolha o produto alvo específico numa das 3 abas de origem (Entradas/Saídas/Estoque). "
+        "Alvo cravado aqui não passa pela régua de divergência do 7.2/7.3 (fica marcado na "
+        "Observação)."
+    )
 
     if "estagio733_gerado" not in st.session_state:
         st.session_state["estagio733_gerado"] = loader.estagio733_consolidado_ja_gerado()
@@ -2567,20 +2585,18 @@ def render_consolidado_origens_733() -> None:
             resultado = loader.persistir_consolidado_origens_733()
         if "erro" in resultado:
             st.error(f"Erro: {resultado['erro']}")
-            return
-        for erro in resultado.get("erros", []):
-            st.warning(erro)
-        st.session_state["estagio733_gerado"] = True
-        st.rerun()
-
-    if df_preview.empty:
-        if st.session_state["estagio733_gerado"]:
-            st.info("Nenhuma linha encontrada — confira se Entradas/Saídas/Estoque já foram gerados.")
+        else:
+            for erro in resultado.get("erros", []):
+                st.warning(erro)
+            st.session_state["estagio733_gerado"] = True
+            st.rerun()
         return
 
-    # Filtros — meio: container único (Busca + Ano), sem o antigo
-    # selectbox de Origem (redundante desde que as 3 grades abaixo já
-    # separam por origem, ver docstring da função).
+    if df_preview.empty and st.session_state["estagio733_gerado"]:
+        st.info("Nenhuma linha encontrada — confira se Entradas/Saídas/Estoque já foram gerados.")
+
+    # Filtros — Busca + Ano, aplicam-se às 4 abas (Simulação NCM2 e as 3
+    # de origem), por isso ficam ACIMA da barra de abas.
     with st.container(key="estagio733_filtros"):
         st.markdown("**Filtros**")
         col_busca, col_ano = st.columns(2)
@@ -2589,28 +2605,32 @@ def render_consolidado_origens_733() -> None:
             r"Dica: use '\*' como curinga. Ex.: 'mac\*' (inicia com mac), '\*mac' (termina com mac), "
             r"'\*mac\*' (contém mac), '\*mor\*mac\*' (contém mor e mac, em qualquer ordem)."
         )
-        anos_disponiveis = sorted(df_preview["ANO"].dropna().unique().tolist())
+        anos_disponiveis = sorted(df_preview["ANO"].dropna().unique().tolist()) if not df_preview.empty else []
         ano_selecionado = col_ano.selectbox("Ano", ["Todos"] + anos_disponiveis, key="filtro_ano_733")
 
+    aba_ncm2, aba_entrada, aba_saida, aba_estoque = st.tabs(
+        ["📊 Simulação NCM2", "📥 Entradas", "📤 Saídas", "📦 Estoque"]
+    )
+
+    ncm2_selecionado = st.session_state.get("ncm2_selecionado_733")
+    with aba_ncm2:
+        ncm2_selecionado = _render_simulacao_ncm2_733(busca_descricao, ano_selecionado, ncm2_selecionado)
+
     filtrado_base = df_preview
-    if busca_descricao.strip():
-        filtrado_base = filtrado_base[
-            filtrado_base["DESCR_PROD"].str.contains(
-                _padrao_busca_curinga(busca_descricao.strip()), case=False, na=False,
-            )
-        ]
-    if ano_selecionado != "Todos":
-        filtrado_base = filtrado_base[filtrado_base["ANO"] == ano_selecionado]
-    if ncm2_selecionado:
-        filtrado_base = loader.filtrar_por_ncm2_733(filtrado_base, ncm2_selecionado)
+    if not filtrado_base.empty:
+        if busca_descricao.strip():
+            filtrado_base = filtrado_base[
+                filtrado_base["DESCR_PROD"].str.contains(
+                    _padrao_busca_curinga(busca_descricao.strip()), case=False, na=False,
+                )
+            ]
+        if ano_selecionado != "Todos":
+            filtrado_base = filtrado_base[filtrado_base["ANO"] == ano_selecionado]
+        if ncm2_selecionado:
+            filtrado_base = loader.filtrar_por_ncm2_733(filtrado_base, ncm2_selecionado)
 
-    if ncm2_selecionado:
-        st.caption(f"Restrito ao Capítulo NCM **{ncm2_selecionado}** (selecionado na Simulação NCM2 acima).")
-    st.markdown(f"**{len(filtrado_base):,} linha(s)** após filtro.".replace(",", "."))
-
-    # Grades de Produtos — base.
-    st.divider()
-    _render_grades_produtos_733(filtrado_base)
+    abas_por_origem = {"entrada": aba_entrada, "saida": aba_saida, "estoque": aba_estoque}
+    _render_grades_produtos_733(filtrado_base, abas_por_origem, ncm2_selecionado)
 
 
 _COLUNAS_PREVIEW_DIVERGENCIA = [
