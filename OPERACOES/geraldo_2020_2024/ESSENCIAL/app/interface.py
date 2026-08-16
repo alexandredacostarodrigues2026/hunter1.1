@@ -2679,7 +2679,11 @@ def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | No
         linha_detalhe = tabela_ncm2[tabela_ncm2["ncm2"] == ncm2_selecionado]
         if not linha_detalhe.empty:
             st.markdown(f"**Detalhamento do Capítulo NCM {ncm2_selecionado}**")
-            detalhe_exibicao = linha_detalhe.copy()
+            # Sem a Descrição aqui (2026-08-16, pedido do usuário — "em
+            # Detalhamento do Capítulo NCM 19, não trazer descrição"): já
+            # apareceu na linha selecionada do resumo logo acima, repetir
+            # só ocuparia espaço numa tabela de 1 linha só.
+            detalhe_exibicao = linha_detalhe.drop(columns=["DESCRICAO_NCM2"]).copy()
             acima_30_detalhe = detalhe_exibicao["PCT_DIVERGENCIA"] > _LIMIAR_DESTAQUE_VERMELHO_PCT_DIVERG
             detalhe_exibicao["PCT_DIVERGENCIA"] = detalhe_exibicao["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
             for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
@@ -2695,10 +2699,6 @@ def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | No
                     _destacar_vermelho_grupo_alvo(detalhe_exibicao, acima_30_detalhe),
                     use_container_width=True,
                     hide_index=True,
-                    row_height=70,
-                    column_config={
-                        "Descricao do Capitulo": st.column_config.TextColumn(width="large"),
-                    },
                 )
 
     return ncm2_selecionado
