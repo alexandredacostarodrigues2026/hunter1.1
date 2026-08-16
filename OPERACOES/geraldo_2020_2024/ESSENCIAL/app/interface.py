@@ -2547,6 +2547,9 @@ def _render_eleitos_733() -> None:
             st.rerun()
 
 
+_COLUNAS_RESUMO_SIMULACAO_NCM2_733 = ["ncm2", "DESCRICAO_NCM2", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA"]
+
+
 def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | None") -> "str | None":
     """Estágio 7.3.3 — aba "📊 Simulação NCM2" (2026-08-16, extraída de
     `render_consolidado_origens_733()` pra virar conteúdo de uma aba
@@ -2557,6 +2560,15 @@ def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | No
     `busca_descricao` vem do container de Filtros (renderizado pelo
     chamador, ANTES das abas) — perdeu o seletor de Ano (2026-08-16,
     pedido do usuário: "retire o ano"), soma sempre TODOS os anos.
+    Tabela principal RESUMIDA a 5 colunas (2026-08-16, pedido do
+    usuário — "aqui deixar somente ncm2|descrição|divergencia|
+    infração|%divergencia"): EI/Compras/Total Débito/Vendas/EF/Total
+    Crédito saem da grade principal e só aparecem no "Detalhamento",
+    logo abaixo, DEPOIS de selecionar uma linha ("depois de selecionar
+    ai sim na tabela inferior explodir com demais campos") — filtra
+    `tabela_ncm2` (não reduzida, guarda TODAS as colunas) pelo Capítulo
+    selecionado e mostra 1 linha só, com todos os campos.
+
     Devolve o `ncm2_selecionado` (possivelmente atualizado por um clique
     nesta mesma execução) pro chamador usar no filtro das outras 3 abas
     — updates aqui precisam acontecer ANTES do chamador montar
@@ -2604,11 +2616,17 @@ def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | No
         st.info("Nenhum Capítulo NCM encontrado para os filtros atuais.")
         return ncm2_selecionado
 
-    exibicao_ncm2 = tabela_ncm2.copy()
+    # Tabela principal RESUMIDA (2026-08-16, pedido do usuário — "aqui
+    # deixar somente ncm2|descrição|divergencia|infração|%divergencia"):
+    # só as 5 colunas essenciais pra localizar o Capítulo de risco; os
+    # demais campos (EI/Compras/Total Débito/Vendas/EF/Total Crédito)
+    # saem daqui e passam a aparecer SÓ no detalhamento de baixo, depois
+    # de selecionar uma linha ("depois de selecionar ai sim na tabela
+    # inferior explodir com demais campos").
+    exibicao_ncm2 = tabela_ncm2[_COLUNAS_RESUMO_SIMULACAO_NCM2_733].copy()
     acima_30_ncm2 = exibicao_ncm2["PCT_DIVERGENCIA"] > _LIMIAR_DESTAQUE_VERMELHO_PCT_DIVERG
     exibicao_ncm2["PCT_DIVERGENCIA"] = exibicao_ncm2["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
-    for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
-        exibicao_ncm2[_col] = exibicao_ncm2[_col].apply(_formatar_moeda_br)
+    exibicao_ncm2["DIVERGENCIA"] = exibicao_ncm2["DIVERGENCIA"].apply(_formatar_moeda_br)
     exibicao_ncm2 = exibicao_ncm2.rename(columns=loader.carregar_dicionario_campos())
 
     with st.container(key="estagio733_ncm2_tabela"):
@@ -2649,6 +2667,39 @@ def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | No
             st.session_state["ncm2_selecionado_733"] = None
             ncm2_selecionado = None
             st.rerun()
+
+    # Detalhamento — "explode" com os demais campos (EI/Compras/Total
+    # Débito/Vendas/EF/Total Crédito) só depois de selecionar uma linha
+    # (2026-08-16, pedido do usuário: "depois de selecionar ai sim na
+    # tabela inferior explodir com demais campos") — esses campos saíram
+    # da tabela principal (resumida) acima. `tabela_ncm2` (não `exibicao_
+    # ncm2`, já reduzida às 5 colunas) ainda tem TODAS as colunas —
+    # filtra só a linha do Capítulo selecionado.
+    if ncm2_selecionado:
+        linha_detalhe = tabela_ncm2[tabela_ncm2["ncm2"] == ncm2_selecionado]
+        if not linha_detalhe.empty:
+            st.markdown(f"**Detalhamento do Capítulo NCM {ncm2_selecionado}**")
+            detalhe_exibicao = linha_detalhe.copy()
+            acima_30_detalhe = detalhe_exibicao["PCT_DIVERGENCIA"] > _LIMIAR_DESTAQUE_VERMELHO_PCT_DIVERG
+            detalhe_exibicao["PCT_DIVERGENCIA"] = detalhe_exibicao["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
+            for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
+                detalhe_exibicao[_col] = detalhe_exibicao[_col].apply(_formatar_moeda_br)
+            detalhe_exibicao = detalhe_exibicao.rename(columns=loader.carregar_dicionario_campos())
+            with st.container(key="estagio733_ncm2_detalhe"):
+                st.markdown(
+                    "<style>.st-key-estagio733_ncm2_detalhe [data-testid='stDataFrame'] "
+                    "* { font-size: 8px; }</style>",
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(
+                    _destacar_vermelho_grupo_alvo(detalhe_exibicao, acima_30_detalhe),
+                    use_container_width=True,
+                    hide_index=True,
+                    row_height=70,
+                    column_config={
+                        "Descricao do Capitulo": st.column_config.TextColumn(width="large"),
+                    },
+                )
 
     return ncm2_selecionado
 
