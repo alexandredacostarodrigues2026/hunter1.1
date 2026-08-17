@@ -403,9 +403,59 @@ def _render_alerta_base_dados_periodo() -> None:
         )
 
 
+def _render_checklist_arquivos_previstos() -> None:
+    """Checklist "previsto x encontrado" — Estágio 1 (2026-08-17, pedido
+    do usuário: "trocar por carregamento dos arquivos previstos" — substitui
+    a contagem simples de arquivos por pasta, que não dizia se os anos/
+    períodos CERTOS estavam presentes, só quantos arquivos havia no total).
+    Lê `loader.verificar_cobertura_bruta_detalhada()` (raw, sem depender de
+    carga já persistida) e mostra, por categoria, uma linha "ok"/"ausente"
+    por ano (ET/EP/Estoque) ou por período AAAA/MM (Declarações — SUPOSIÇÃO
+    de entrega mensal, sinalizada explicitamente na tela, ver docstring de
+    lá). Declarações fica dentro de um `st.expander` (pode chegar a
+    dezenas de linhas — 12 meses × N anos) — aberto por padrão só quando
+    há poucos períodos ausentes (≤ 12), pra não esconder um problema real
+    atrás de um clique extra. Silencioso (mostra só um aviso) se o Período
+    de Auditoria ainda não foi configurado."""
+    checklist = loader.verificar_cobertura_bruta_detalhada()
+    if not checklist.get("aplicavel"):
+        st.info("Configure o Período de Auditoria acima pra ver o checklist de arquivos previstos.")
+        return
+
+    def _linhas(itens: list, prefixo: str = "") -> None:
+        for rotulo, ok in itens:
+            simbolo = "✅" if ok else "❌"
+            texto = f"{prefixo}{rotulo}" if prefixo else rotulo
+            st.markdown(f"- {texto}: {'ok' if ok else 'ausente'} {simbolo}")
+
+    st.markdown("**Notas Fiscais (ET/EP) — por ano**")
+    col_et, col_ep = st.columns(2)
+    with col_et:
+        _linhas(checklist["et"], prefixo="ET ")
+    with col_ep:
+        _linhas(checklist["ep"], prefixo="EP ")
+
+    st.markdown("**Declarações (SPED) — por período**")
+    faltando_decl = [item for item in checklist["declaracao"] if not item[1]]
+    st.caption(
+        "Assume entrega mensal (12 meses/ano) — pode acusar \"ausente\" pra competências ainda "
+        "não vencidas ou pra periodicidade diferente da mensal."
+    )
+    with st.expander(
+        f"{len(faltando_decl)} período(s) ausente(s) de {len(checklist['declaracao'])} — ver detalhamento",
+        expanded=bool(faltando_decl) and len(faltando_decl) <= 12,
+    ):
+        _linhas(checklist["declaracao"], prefixo="Período ")
+
+    st.markdown("**Estoque Final (Bloco H) — por ano**")
+    _linhas(checklist["estoque"])
+
+
 def render_carga_operacao() -> None:
-    """Prévia + botão de carga: 4 barras de progresso independentes, a
-    última sendo o Matching (BC3) automático.
+    """Prévia (checklist "previsto x encontrado" — `_render_checklist_
+    arquivos_previstos()`, 2026-08-17, substitui a antiga contagem simples
+    de arquivos por pasta) + botão de carga: 4 barras de progresso
+    independentes, a última sendo o Matching (BC3) automático.
       1. XML pendentes  — classificação arquivo a arquivo
       2. NF-e           — nfe_entradas + nfe_saidas + nfe_analise_et/ep + nfe_situacao_et/ep
                            + xml_entradas_real/xml_saidas_real no DuckDB
@@ -439,12 +489,7 @@ def render_carga_operacao() -> None:
     with st.spinner("Verificando pastas..."):
         resumo = loader.pre_visualizar_carga()
 
-    st.markdown(f"- **{resumo['et']['quantidade']}** arquivo(s) em `ET`: `{resumo['et']['caminho']}`")
-    st.markdown(f"- **{resumo['ep']['quantidade']}** arquivo(s) em `EP`: `{resumo['ep']['caminho']}`")
-    st.markdown(
-        f"- **{resumo['declaracoes']['quantidade']}** arquivo(s) de declaração (SPED): "
-        f"`{resumo['declaracoes']['caminho']}`"
-    )
+    _render_checklist_arquivos_previstos()
 
     pend = resumo["pendentes"]
     if pend["quantidade"] == 0:
@@ -3569,13 +3614,24 @@ def render_menu_principal() -> None:
 
 
 def _botao_voltar_menu() -> None:
-    """Botão fixo no topo dos painéis Extração/Construção — volta pro Menu
+    """Botão fixo no FINAL de cada sub-página navegável — volta pro Menu
     Principal. Só mexe em st.session_state["pagina_ativa"], nunca em
-    dados_carregados nem em tabela nenhuma do DuckDB."""
+    dados_carregados nem em tabela nenhuma do DuckDB.
+
+    Movido do TOPO pro FINAL de cada página (2026-08-17, pedido do
+    usuário — "colocar sempre no final da página"): chamada agora
+    centralizada em `main.py`, UMA vez só, depois do if/elif de despacho
+    (não mais a 1ª linha de cada uma das 17 `render_pagina_X()` aqui em
+    interface.py) — evita quebrar a navegação de volta em qualquer
+    `return` antecipado de dentro dessas funções (ex.: "dados ainda não
+    carregados"), sem precisar duplicar a chamada em cada ponto de saída
+    de cada uma. `st.divider()` agora vem ANTES do botão (separa do
+    conteúdo da página ACIMA), não depois como antes (que separava do
+    conteúdo abaixo, quando o botão ficava no topo)."""
+    st.divider()
     if st.button("⬅️ Voltar ao Menu Principal", key="btn_voltar_menu"):
         st.session_state["pagina_ativa"] = None
         st.rerun()
-    st.divider()
 
 
 def _render_resultado_matching_inicial() -> None:
@@ -3659,7 +3715,6 @@ def render_pagina_extracao() -> None:
     auditor regerar manualmente se precisar (ex.: depois de corrigir
     algo na BC1/BC2) — esta tela só ganhou a exibição automática, não
     substituiu a manual."""
-    _botao_voltar_menu()
     render_configuracao_periodo()
     _render_alerta_base_dados_periodo()
     st.divider()
@@ -3687,7 +3742,6 @@ def render_pagina_matching() -> None:
     os estágios seguintes (Fluxos Físicos, Cronologia) — tratamento
     equivalente ao que "Segregados" já tinha ganhado no mesmo dia. Exige
     dados_carregados."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -3702,7 +3756,6 @@ def render_pagina_segregados() -> None:
     (Estágio 1 os desvia de propósito de nfe_entradas/nfe_saidas) — não são
     resultado de cruzamento, então não pertencem ao mesmo grupo de BC3/
     Fluxos Físicos/Estoque Anual. Exige dados_carregados."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -3731,7 +3784,6 @@ def render_pagina_construcao() -> None:
     5º nível próprio ("AUDITORIA1"). Exige dados_carregados — sem carga
     feita, não há nada pra mostrar (orienta o usuário a ir em "EXTRAÇÃO"
     primeiro)."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -3783,7 +3835,6 @@ def render_pagina_auditoria1() -> None:
     waterfall) porque a fonte Hunter (estoque_anual_consolidado, Estágio
     5) não tem os múltiplos afluentes que estoque_entradas/saidas têm —
     ver loader.auditar_divergencia_estoque()."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -3836,7 +3887,6 @@ def render_pagina_descricao_relevante() -> None:
     "oficial" pra padronizar relatórios e apoiar a seleção de produtos
     pra auditoria física. Exige dados_carregados (mesmo padrão das outras
     páginas — sem carga, as 3 tabelas fonte não existem)."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -3852,7 +3902,6 @@ def render_pagina_cruzamento_valor() -> None:
     dados_carregados (mesmo padrão das outras páginas — sem carga, as
     tabelas fonte não existem); depende também de produto_alvo (Estágio
     7.1) já gerada, checado dentro de render_cruzamento_valor()."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -3867,7 +3916,6 @@ def render_pagina_cruzamento_produto() -> None:
     dados_carregados (mesmo padrão das outras páginas); depende também
     de cruzamento_valor (Estágio 7.2) já gerada, checado dentro de
     render_cruzamento_produto()."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -3881,7 +3929,6 @@ def render_pagina_rn1_fisica() -> None:
     dados_carregados (mesmo padrão das outras páginas); depende também de
     cruzamento_valor (Estágio 7.2) já gerada, checado dentro de
     render_rn1_fisica()."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -3895,7 +3942,6 @@ def render_pagina_rn1_produto() -> None:
     dados_carregados (mesmo padrão das outras páginas); depende também de
     rn1_fisica (Estágio 7.3) já gerada, checado dentro de
     render_rn1_produto()."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -3911,7 +3957,6 @@ def render_pagina_rn1_simulada_30() -> None:
     render_rn1_simulada_30(). Estágio 7.3.3 (Seleção Consolidada de
     Alvos) teve seu próprio botão/página separados em 2026-08-03 (pedido
     do usuário) — ver render_pagina_consolidado_733()."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -3928,7 +3973,6 @@ def render_pagina_consolidado_733() -> None:
     Exige dados_carregados (mesmo padrão das outras páginas) — mas NÃO
     depende de nenhum outro estágio 7.x já gerado (lê estoque_entradas/
     estoque_saidas/estoque_anual_consolidado direto, Estágios 4/5)."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -4259,7 +4303,6 @@ def render_pagina_estagio_8() -> None:
     (mesmo padrão das outras páginas); depende também de estoque_
     entradas/estoque_saidas (Estágio 4) e estoque_anual_consolidado
     (Estágio 5) já gerados, checado dentro de render_estagio_8()."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -4722,7 +4765,6 @@ def render_pagina_estagio_9() -> None:
     (mesmo padrão das outras páginas); cada aba checa sua própria
     tabela de origem (estoque_entradas/estoque_saidas/estoque_anual_
     consolidado) dentro da respectiva render_curadoria_fm_*()."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -6524,7 +6566,6 @@ def render_pagina_produtos_alvo_salvos() -> None:
     Principal: ver loader.consultar_grupo_produto_alvo_fiscalizacao()/
     render_produtos_alvo_salvos(). Exige dados_carregados (mesmo
     padrão das outras páginas)."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -6655,7 +6696,6 @@ def render_pagina_consolidado_11() -> None:
     """Painel 'ESTÁGIO 11 - CONSOLIDADO GERAL (RN1)', botão da 2ª linha
     do Menu Principal: ver render_consolidado_cruzamento_11(). Exige
     dados_carregados (mesmo padrão das outras páginas)."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return
@@ -7098,7 +7138,6 @@ def render_pagina_relatorios() -> None:
     consolidado geral de todos os produtos, sem seletor individual —
     pedido explícito da Solicitação Técnica). Ver `_selecionar_produto_
     relatorio_12()`."""
-    _botao_voltar_menu()
     if not st.session_state.get("dados_carregados"):
         st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
         return

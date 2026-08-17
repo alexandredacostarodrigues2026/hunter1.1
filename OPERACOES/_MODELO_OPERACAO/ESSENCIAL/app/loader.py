@@ -2403,6 +2403,113 @@ def pre_visualizar_carga() -> dict:
     }
 
 
+def _anos_presentes_nfe_bruto(config: dict, subpasta: str) -> set:
+    """Anos presentes nos .txt de nfe_path/<subpasta> (ET ou EP), direto do
+    ARQUIVO BRUTO — sem depender de carga/persistência prévia (usada por
+    `verificar_cobertura_bruta_detalhada()`, pré-carga). Ano extraído da
+    chave de acesso (`fatonfe_infprot_chnfe`, dígitos 3-4 = AA, mesma
+    convenção já usada por `verificar_cobertura_granular()` sobre a tabela
+    já persistida — `CAST('20' || SUBSTR(chnfe, 3, 2) AS INTEGER)`, aqui
+    replicado em pandas: `chave.str.slice(2, 4)`). Arquivo sem essa coluna
+    ou ilegível é ignorado silenciosamente (mesmo padrão de tolerância de
+    `_read_txt_pipe()` — não quebra a pré-visualização por causa de 1
+    arquivo corrompido)."""
+    anos = set()
+    for arquivo in _localizar_arquivos_nfe_subpasta(config, subpasta):
+        try:
+            df = _read_txt_pipe(arquivo)
+        except Exception:
+            continue
+        if df.empty or "fatonfe_infprot_chnfe" not in df.columns:
+            continue
+        aa = df["fatonfe_infprot_chnfe"].astype(str).str.slice(2, 4)
+        for valor in aa.unique():
+            if valor.isdigit():
+                anos.add(2000 + int(valor))
+    return anos
+
+
+def verificar_cobertura_bruta_detalhada() -> dict:
+    """Estágio 1 — checklist DETALHADO de arquivos previstos x encontrados,
+    lido DIRETO DOS ARQUIVOS BRUTOS (ET/EP em 1-DOCFISCAIS/nf/, SPED em
+    2-DECLARACAO/SPED/) — 2026-08-17, pedido do usuário: substitui a
+    contagem simples de `pre_visualizar_carga()` ("N arquivo(s) em ET")
+    por um checklist "previsto x encontrado", ANTES de qualquer carga
+    (diferente de `verificar_cobertura_granular()`, que só funciona DEPOIS
+    de já ter persistido no DuckDB). Formato exato pedido pelo usuário:
+        notas fiscais: et 2020: ok / et 2022: ausente / ep 2025: ok
+        declarações: período 2020/03: ok / período 2024/04: ausente
+        estoque final: 2022: ok / 2023: ausente
+
+    3 categorias, granularidades DIFERENTES por categoria:
+    - **et**/**ep**: por ANO (`ano_inicial-1..ano_final`, mesmo intervalo
+      de `verificar_cobertura_granular()`) — ano extraído da chave de
+      acesso via `_anos_presentes_nfe_bruto()`.
+    - **declaracao**: por PERÍODO/MÊS ("AAAAMM", ex. "2020/03") —
+      GRANULARIDADE MAIS FINA que o resto do app (que só checa por ANO).
+      ASSUME entrega MENSAL (12 meses/ano, EFD ICMS/IPI padrão) pra
+      `ano_inicial..ano_final+1` — suposição simplificadora, pode gerar
+      falso "ausente" pra uma auditada com periodicidade diferente
+      (trimestral/etc.) ou pra competências ainda não vencidas; sinalizado
+      explicitamente na interface. Competência lida do registro 0000 via
+      `_competencia_arquivo()` (já existente, sem depender de persistência).
+    - **estoque**: por ANO (`ano_inicial..ano_final`, mesmo intervalo de
+      `verificar_cobertura_granular()`) — ano extraído de `DT_INV`
+      (Campo 02 do H005, herdado por cada H010) via
+      `_parse_estoque_h005_h010()` sobre os arquivos SPED brutos, SEM
+      persistir nada.
+
+    Devolve `{"aplicavel": False}` sem Período de Auditoria configurado.
+    Caso contrário, `{"aplicavel": True, "et": [(rotulo, ok), ...],
+    "ep": [...], "declaracao": [...], "estoque": [...]}` — cada lista já
+    ORDENADA cronologicamente, `rotulo` como string pronta pra exibir
+    (Regra R07)."""
+    periodo = obter_periodo_auditoria()
+    if not periodo:
+        return {"aplicavel": False}
+
+    ano_ini = int(periodo["ano_inicial"])
+    ano_fim = int(periodo["ano_final"])
+    config = load_config()
+
+    anos_xml_necessarios = list(range(ano_ini - 1, ano_fim + 1))
+    et_presentes = _anos_presentes_nfe_bruto(config, "ET")
+    ep_presentes = _anos_presentes_nfe_bruto(config, "EP")
+
+    arquivos_sped = _localizar_arquivos_sped(config)
+    competencias_presentes = set()
+    for arquivo in arquivos_sped:
+        try:
+            competencia = _competencia_arquivo(arquivo)
+        except Exception:
+            continue
+        if len(competencia) == 6:
+            competencias_presentes.add(competencia)
+    periodos_necessarios = [
+        f"{ano}{mes:02d}" for ano in range(ano_ini, ano_fim + 2) for mes in range(1, 13)
+    ]
+
+    anos_estoque_necessarios = list(range(ano_ini, ano_fim + 1))
+    try:
+        df_estoque = _parse_estoque_h005_h010(arquivos_sped)
+        anos_estoque_presentes = {
+            int(dt[4:8]) for dt in df_estoque["DT_INV"].astype(str) if len(dt) == 8 and dt[4:8].isdigit()
+        }
+    except Exception:
+        logger.exception("Erro ao verificar cobertura bruta de estoque")
+        anos_estoque_presentes = set()
+
+    return {
+        "aplicavel": True,
+        "et": [(str(a), a in et_presentes) for a in anos_xml_necessarios],
+        "ep": [(str(a), a in ep_presentes) for a in anos_xml_necessarios],
+        "declaracao": [
+            (f"{p[:4]}/{p[4:6]}", p in competencias_presentes) for p in periodos_necessarios
+        ],
+        "estoque": [(str(a), a in anos_estoque_presentes) for a in anos_estoque_necessarios],
+    }
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_declaracao_estoque() -> "tuple[pd.DataFrame, dict]":
     """Carrega o inventário da declaração (Bloco H — H005+H010, estoque

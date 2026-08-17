@@ -54,13 +54,22 @@ def main() -> None:
         # muito espaço"): antes apareciam ACIMA de toda página, inclusive
         # nas 17 sub-páginas navegáveis, empurrando o conteúdo real pra
         # baixo sem necessidade — o operador já sabe em qual operação
-        # está depois da primeira tela. Botão "⬅️ Voltar ao Menu
-        # Principal" (`_botao_voltar_menu()`, cada sub-página chama o
-        # seu) continua aparecendo normalmente nas sub-páginas — é
-        # navegação, não redundância visual.
+        # está depois da primeira tela.
         st.title("Hunter 1.1")
         st.subheader(f"Operação ativa: {loader.nome_operacao()}")
 
+    # Botão "⬅️ Voltar ao Menu Principal" (`interface._botao_voltar_menu()`)
+    # chamado UMA VEZ AQUI, depois de TODO o conteúdo da sub-página (2026-08-17,
+    # pedido do usuário — "colocar sempre no final da página"): antes cada uma
+    # das 17 render_pagina_X() chamava _botao_voltar_menu() como sua PRIMEIRA
+    # linha (botão no TOPO) — mover a chamada pra dentro de cada função e
+    # deixá-la como ÚLTIMA linha quebraria a navegação de volta em qualquer
+    # `return` antecipado (ex.: "dados ainda não carregados, volte pra
+    # Extração primeiro") — centralizar a chamada AQUI, fora do if/elif de
+    # despacho, garante que o botão sempre aparece no final de QUALQUER
+    # sub-página, com QUALQUER caminho de execução interno, sem precisar
+    # tocar em cada uma das 17 funções nem duplicar a chamada em cada
+    # `return` antecipado delas.
     if pagina == "extracao":
         interface.render_pagina_extracao()
     elif pagina == "matching":
@@ -97,6 +106,9 @@ def main() -> None:
         interface.render_pagina_relatorios()
     else:
         interface.render_menu_principal()
+
+    if pagina is not None:
+        interface._botao_voltar_menu()
 
 
 if __name__ == "__main__":
