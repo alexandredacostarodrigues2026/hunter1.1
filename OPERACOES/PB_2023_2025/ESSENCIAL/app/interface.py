@@ -2440,18 +2440,28 @@ def _render_eleitos_733() -> None:
     de limpar o eleito com aviso de que cruzamentos efetuados serão
     perdidos"): seleção de linha NATIVA (mesmo padrão `st.dataframe(
     on_select="rerun", selection_mode="single-row")` do resto do
-    7.3.3), com um botão "Remover Alvo Selecionado" logo abaixo.
-    `loader.cancelar_produto_alvo_733()` NÃO apaga a linha — só marca
-    STATUS='cancelado', preservando histórico. Antes de habilitar o
-    botão, checa se o alvo selecionado JÁ tem cruzamento EFETUADO no
-    Estágio 10 — é o `produto_cruzamento_escolhido` atual e/ou tem
-    item confirmado em `cruzamento_confirmado_detalhado` (Rubrica); se
-    sim, mostra `st.warning()` explícito e exige marcar um checkbox de
-    confirmação (key DINÂMICA por produto — mesmo raciocínio da Parte
-    5/2026-08-15, geração de key por identidade — evita que a
-    confirmação de um produto "vaze" pro próximo selecionado) antes do
-    botão ficar clicável. Sem cruzamento efetuado, o botão já vem
-    habilitado (menos fricção pra um cancelamento sem consequência).
+    7.3.3), com um botão de remoção logo abaixo. `loader.cancelar_
+    produto_alvo_733()` NÃO apaga a linha de `produto_alvo_
+    fiscalizacao` — só marca STATUS='cancelado', preservando histórico.
+
+    APAGAMENTO REAL do cruzamento (2026-08-17, escalado a pedido do
+    usuário — "aqui quero que remova tudo, todos os cruzamentos. o
+    aviso deve ser contundente"; a versão de 2026-08-16 só avisava de
+    desvinculação/órfão, sem apagar nada): checa se o alvo selecionado
+    JÁ tem cruzamento EFETUADO no Estágio 10/10.2 — é o `produto_
+    cruzamento_escolhido` atual, e/ou tem item confirmado em
+    `cruzamento_confirmado_detalhado` (Rubrica), e/ou tem ano salvo em
+    `cruzamento_final_produto` (Estágio 10.2). Com qualquer um desses,
+    mostra `st.warning()` CONTUNDENTE (⚠️ "AÇÃO IRREVERSÍVEL"/"não
+    existe desfazer") e exige marcar um checkbox de confirmação (key
+    DINÂMICA por produto — mesmo raciocínio da Parte 5/2026-08-15,
+    evita que a confirmação de um produto "vaze" pro próximo
+    selecionado) antes do botão ficar clicável; o clique chama `loader.
+    apagar_cruzamentos_produto_alvo_733()` (DELETE de verdade nas 3
+    tabelas) ANTES de `cancelar_produto_alvo_733()`. Sem cruzamento
+    efetuado, o botão já vem habilitado (menos fricção pra um
+    cancelamento sem consequência real).
+
     Limpeza de seleção ADIADA pro próximo rerun (`_733_limpar_selecao_
     eleitos`) depois de remover — mesma janela segura já usada em
     `_733_limpar_grades` (Parte 5/2026-08-15): a tabela ENCOLHE 1 linha
@@ -2515,34 +2525,55 @@ def _render_eleitos_733() -> None:
     escolhido_atual = loader.consultar_produto_cruzamento_escolhido()
     e_escolhido_atual = bool(escolhido_atual) and str(escolhido_atual.get("DESCR_ALVO", "")) == descr_selecionado
     _, total_confirmados = loader.consultar_cruzamento_confirmado_detalhado(descr_alvo=descr_selecionado, limite=0)
-    tem_cruzamento = e_escolhido_atual or total_confirmados > 0
+    _, total_final_produto = loader.consultar_cruzamento_final_produto(descr_alvo=descr_selecionado, limite=0)
+    tem_cruzamento = e_escolhido_atual or total_confirmados > 0 or total_final_produto > 0
 
     if tem_cruzamento:
+        # Aviso CONTUNDENTE (2026-08-17, pedido do usuário — "o aviso
+        # deve ser contundente"): reforça a versão anterior (2026-08-16),
+        # que avisava só de desvinculação (soft) — agora é apagamento
+        # DE VERDADE (loader.apagar_cruzamentos_produto_alvo_733()), com
+        # texto deixando isso explícito: PERMANENTE, sem desfazer.
         motivos = []
+        if total_confirmados > 0:
+            motivos.append(f"{total_confirmados} item(ns) confirmado(s) na Rubrica (Estágio 10)")
+        if total_final_produto > 0:
+            motivos.append(f"{total_final_produto} ano(s) com Cruzamento Final salvo (Estágio 10.2)")
         if e_escolhido_atual:
             motivos.append("é o produto ATUALMENTE escolhido pra cruzamento no Estágio 10")
-        if total_confirmados > 0:
-            motivos.append(f"tem {total_confirmados} item(ns) confirmado(s) na Rubrica (Estágio 10)")
         st.warning(
-            f"⚠️ **{descr_selecionado}** " + " e ".join(motivos) + ". Remover este alvo NÃO apaga os "
-            "dados do cruzamento do banco, mas o produto deixa de aparecer como Alvo ativo — o "
-            "trabalho de auditoria já feito em cima dele fica órfão/desvinculado."
+            f"🔴 **ATENÇÃO — AÇÃO IRREVERSÍVEL.** **{descr_selecionado}** tem " + ", ".join(motivos) + ". "
+            "Remover este alvo vai **APAGAR PERMANENTEMENTE** todo esse cruzamento do banco "
+            "(Rubrica + Cruzamento Final + escolha atual, se for o caso) — **não existe desfazer.** "
+            "Todo o trabalho de auditoria já feito nesse produto será perdido de vez."
         )
         confirmar = st.checkbox(
-            "Entendo que os cruzamentos já efetuados ficarão desvinculados e quero remover mesmo assim.",
+            "Li o aviso acima. Quero APAGAR PERMANENTEMENTE os cruzamentos deste produto e remover o alvo.",
             key=f"confirmar_remocao_eleito_733_{descr_selecionado}",
         )
     else:
         confirmar = True
 
-    if st.button(
-        "🗑️ Remover Alvo Selecionado", key="btn_remover_eleito_733", disabled=not confirmar,
-    ):
+    rotulo_botao = "🗑️ Apagar Cruzamentos e Remover Alvo" if tem_cruzamento else "🗑️ Remover Alvo Selecionado"
+    if st.button(rotulo_botao, key="btn_remover_eleito_733", disabled=not confirmar):
+        if tem_cruzamento:
+            resultado_apagar = loader.apagar_cruzamentos_produto_alvo_733(descr_selecionado)
+            if "erro" in resultado_apagar:
+                st.error(f"Erro ao apagar cruzamentos: {resultado_apagar['erro']}")
+                return
         resultado = loader.cancelar_produto_alvo_733(descr_selecionado)
         if "erro" in resultado:
             st.error(f"Erro: {resultado['erro']}")
         else:
-            st.success(f"✅ \"{descr_selecionado}\" removido dos Alvos ativos.")
+            if tem_cruzamento:
+                st.success(
+                    f"✅ \"{descr_selecionado}\" removido — "
+                    f"{resultado_apagar['total_confirmados_removidos']} item(ns) da Rubrica e "
+                    f"{resultado_apagar['total_final_produto_removido']} ano(s) do Cruzamento Final "
+                    "apagados permanentemente."
+                )
+            else:
+                st.success(f"✅ \"{descr_selecionado}\" removido dos Alvos ativos.")
             st.session_state["_733_limpar_selecao_eleitos"] = True
             st.rerun()
 

@@ -6756,10 +6756,12 @@ def cancelar_produto_alvo_733(descr_alvo: str) -> dict:
     fiscalizacao` a partir da "Relação de Produtos Alvo já Eleitos"
     (Estágio 7.3.3) — pedido do usuário (2026-08-16): "possibilidade de
     limpar o eleito com aviso de que cruzamentos efetuados serão
-    perdidos" (o aviso em si é responsabilidade da interface, ver
-    `interface._render_eleitos_733()` — checa `consultar_produto_
-    cruzamento_escolhido()`/`consultar_cruzamento_confirmado_
-    detalhado()` ANTES de chamar esta função).
+    perdidos". Só mexe em `produto_alvo_fiscalizacao` — o APAGAMENTO de
+    verdade dos cruzamentos já efetuados (Rubrica/Estágio 10.2) é
+    responsabilidade de `apagar_cruzamentos_produto_alvo_733()`
+    (2026-08-17, pedido do usuário: "quero que remova tudo, todos os
+    cruzamentos"), chamada PELO CHAMADOR (`interface._render_
+    eleitos_733()`) ANTES desta, quando houver cruzamento a apagar.
 
     NÃO apaga a linha — só marca `STATUS=STATUS_PRODUTO_ALVO_CANCELADO`
     e atualiza `TS`, preservando histórico (mesmo padrão já usado em
@@ -6793,6 +6795,84 @@ def cancelar_produto_alvo_733(descr_alvo: str) -> dict:
         resultado["ok"] = True
     except Exception as exc:
         logger.exception("Erro ao cancelar produto_alvo_fiscalizacao (%s): %s", descr_alvo, exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def apagar_cruzamentos_produto_alvo_733(descr_alvo: str) -> dict:
+    """APAGA DE VERDADE (DELETE, não soft-cancel) todo o cruzamento já
+    efetuado (Estágio 10/10.2) pra um `descr_alvo`, ao removê-lo da
+    "Relação de Produtos Alvo já Eleitos" (Estágio 7.3.3) — pedido
+    EXPLÍCITO do usuário (2026-08-17): "aqui quero que remova tudo,
+    todos os cruzamentos. o aviso deve ser contundente" — reforça a
+    versão anterior (2026-08-16), que só deixava o alvo cancelado com o
+    cruzamento intacto/órfão no banco; o usuário confirmou que quer
+    apagamento real, não só desvinculação.
+
+    Remove, nas 3 tabelas onde `DESCR_ALVO` aparece:
+    - `cruzamento_confirmado_detalhado` (Rubrica — itens confirmados
+      por ORIGEM, Estágio 10).
+    - `cruzamento_final_produto` (curadoria final por ANO, Estágio
+      10.2) — some junto do Estágio 11 (Consolidado Geral), que lê essa
+      MESMA tabela ao vivo (`consultar_consolidado_cruzamento_11()`),
+      sem tabela própria pra limpar.
+    - `produto_cruzamento_escolhido` — só se for ESTE `descr_alvo` o
+      produto atualmente escolhido (tabela de 1 linha só; preserva a
+      escolha se for de OUTRO produto).
+
+    Cada remoção é feita reconstruindo a tabela SEM as linhas do
+    `descr_alvo` (mesmo padrão `CREATE OR REPLACE TABLE` já usado em
+    todo o app — não há `DELETE` nativo simples pra tabela DuckDB
+    registrada a partir de DataFrame). Idempotente: chamar de novo pra
+    um `descr_alvo` sem cruzamento nenhum não dá erro, só devolve
+    contagens zeradas.
+
+    Devolve {'ok': True, 'total_confirmados_removidos': int,
+    'total_final_produto_removido': int, 'escolhido_limpo': bool} ou
+    {'erro': str}."""
+    resultado: dict = {}
+    try:
+        total_confirmados_removidos = 0
+        _, total_confirmados = consultar_cruzamento_confirmado_detalhado(descr_alvo=descr_alvo, limite=0)
+        if total_confirmados > 0:
+            todos_confirmados, _ = consultar_cruzamento_confirmado_detalhado(descr_alvo=None, limite=None)
+            restante_confirmados = todos_confirmados[todos_confirmados["DESCR_ALVO"] != descr_alvo]
+            with duckdb.connect(str(_BANCO_PATH)) as con:
+                con.register("_df_cruzamento_confirmado_detalhado", restante_confirmados)
+                con.execute(
+                    "CREATE OR REPLACE TABLE cruzamento_confirmado_detalhado AS "
+                    "SELECT * FROM _df_cruzamento_confirmado_detalhado"
+                )
+                con.unregister("_df_cruzamento_confirmado_detalhado")
+            total_confirmados_removidos = total_confirmados
+
+        total_final_removido = 0
+        _, total_final = consultar_cruzamento_final_produto(descr_alvo=descr_alvo, limite=0)
+        if total_final > 0:
+            todos_final, _ = consultar_cruzamento_final_produto(descr_alvo=None, limite=None)
+            restante_final = todos_final[todos_final["DESCR_ALVO"] != descr_alvo]
+            with duckdb.connect(str(_BANCO_PATH)) as con:
+                con.register("_df_cruzamento_final_produto", restante_final)
+                con.execute(
+                    "CREATE OR REPLACE TABLE cruzamento_final_produto AS "
+                    "SELECT * FROM _df_cruzamento_final_produto"
+                )
+                con.unregister("_df_cruzamento_final_produto")
+            total_final_removido = total_final
+
+        escolhido_limpo = False
+        escolhido_atual = consultar_produto_cruzamento_escolhido()
+        if escolhido_atual and str(escolhido_atual.get("DESCR_ALVO", "")) == descr_alvo:
+            with duckdb.connect(str(_BANCO_PATH)) as con:
+                con.execute("DROP TABLE IF EXISTS produto_cruzamento_escolhido")
+            escolhido_limpo = True
+
+        resultado["ok"] = True
+        resultado["total_confirmados_removidos"] = total_confirmados_removidos
+        resultado["total_final_produto_removido"] = total_final_removido
+        resultado["escolhido_limpo"] = escolhido_limpo
+    except Exception as exc:
+        logger.exception("Erro ao apagar cruzamentos de %s: %s", descr_alvo, exc)
         resultado["erro"] = str(exc)
     return resultado
 
