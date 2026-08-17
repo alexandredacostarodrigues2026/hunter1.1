@@ -1,0 +1,3 @@
+Critério primário: data do inventário (DT_INV) mais recente dentro do ano — continua escolhendo 31/12 como o fechamento do ano.
+
+Critério de desempate (novo): quando duas declarações trazem a mesma DT_INV (ex.: uma retificadora de abril corrigindo o mesmo fechamento de 31/12 que uma declaração de fevereiro já trouxe), agora comparo o timestamp real de transmissão do arquivo SPED (extraído do próprio nome do arquivo) — não a competência/período do nome, que não é confiável pra isso (achado real: uma retificadora do período 2020-02 foi transmitida só em 28/04/2021, mais de um ano depois).

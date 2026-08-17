@@ -1,0 +1,30 @@
+7.2 
+utilizar dados das declarações para entradas e estoques. para as saída, utilizar dados do xml(saídas enriquecidas)
+utilizar Descrição_relevante de 7.1
+métrica: valor total do produto
+
+ano|Descruiççao_relevante(7.1)|estoque_inicial(EI)|compras(C-entradas_enriquecidas)|total_débito(TD=EI+C)|vendas(saída_enriquecidas)|estoque_final(EF)|total_crédito(TC)|<>TD-TC
+
+Com base na sua solicitação de refinamento para o Estágio 7.2, a arquitetura do Hunter 1.1 será ajustada para elevar o cruzamento de dados a uma página independente no Menu Principal, alterando a métrica de análise de quantidade para Valor Total.
+Este painel permitirá identificar divergências financeiras no inventário, aplicando a fórmula da RN1 (EI+C=V+EF) sob uma perspectiva híbrida: compras e estoque pela visão da declaração e vendas pela visão física do XML.
+SOLICITAÇÃO TÉCNICA: PAINEL DE CRUZAMENTO POR VALOR (ESTÁGIO 7.2)
+1. Diagnóstico e Objetivo
+Criar um ponto de acesso exclusivo no sistema para a auditoria de valores por produto. O objetivo é confrontar o saldo financeiro declarado pela empresa com a movimentação real capturada pelos XMLs. A identidade de cada produto será garantida pela "Descrição Relevante" eleita no Estágio 7.1, eliminando duplicidades causadas por variações textuais
+.
+2. Regra de Negócio (Métrica: Valor Total)
+O motor de processamento no loader.py deve consolidar os valores financeiros (VL_ITEM) das três tabelas enriquecidas
+:
+Vínculo de Identidade: O cruzamento deve ser feito pelo COD_ITEM, trazendo a DESCR_ALVO da tabela produto_alvo
+.
+Compras (C): Somatório de VL_ITEM da tabela enriquecida entradas
+.
+Vendas (V): Somatório de VL_ITEM da tabela enriquecida saidas
+.
+Estoque Final (EF): Valor total declarado na tabela estoques para o ano de referência
+.
+Estoque Inicial (EI): Valor de EF do ano anterior (ANO - 1) na tabela estoques, respeitando a regra de continuidade
+.
+3. Cálculos do Relatório
+Total Débito (TD): EI+Compras
+Total Crédito (TC): Vendas+EF
+Divergência (<>): TD−TC

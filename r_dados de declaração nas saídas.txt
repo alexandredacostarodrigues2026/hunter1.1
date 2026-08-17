@@ -1,0 +1,8 @@
+
+xml emissão propria: descrição do produto e código de produto cosrespondem a dados da declaração.
+
+xml emissão de terceiros: descrição do produto e código de produto cosrespondem a dados da esxternos do fornecedor. por esse motivos aplica-se o bc3.
+
+
+
+

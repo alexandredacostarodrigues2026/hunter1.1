@@ -1,0 +1,17 @@
+quero que a tela de procedimentos iniciais seja colocada na linha abaixo do ultimo botao ja exsitente como nova linha de botões
+quero que a tela de procedimentos iniciais deva ser bem enxuta e intuitiva. 
+deve ser elaborada na forma de checklist.
+passo1: determinar o periodo de auditoria (botao 'gravar' - depois botão 'alterar')
+	nesse momento, deve ser gerada observação dos arquivos necessários à extração
+passo2: lançar auditores (botao 'gravar' - depois botão 'alterar')
+passo3: efetuar carga
+	 mostrar barra de progresso de carga dos arquivos
+	 gerar crítica de ausência de arquivo
+	 efetuar automaticamente bc3 (renomear para enriquecimento da emissao de terceiro)
+		mostrar barra de progresso do enriquecimento e ao final kpy de % atingido
+	possibilidade de enxergar segregados
+	possibilidade de enxergar entradas / saídas / estoques
+	mostrar botão 'carga', depois 'efetuar nova carga' e botão 'gravar'
+passo4:seleção de produtos (7.3.3)
+passo5: cruzar (1o)
+passo6: relatórios (12)

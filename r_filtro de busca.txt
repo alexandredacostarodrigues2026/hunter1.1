@@ -1,0 +1,2 @@
+_padrao_busca_curinga() agora suporta mac* (inicia), *mac (termina), *mac* (contém) e *mor*mac* (contém ambos, qualquer ordem, via lookahead) — validado exatamente contra os 4 exemplos da sua especificação.
+Texto sem asterisco continua funcionando como "contém" (comportamento atual, preservado por decisão sua) — evitei quebrar as buscas de palavra solta já em uso nas 7 telas.
