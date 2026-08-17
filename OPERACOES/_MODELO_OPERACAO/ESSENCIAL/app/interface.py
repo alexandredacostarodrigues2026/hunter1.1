@@ -503,8 +503,25 @@ def render_carga_operacao() -> None:
     Quando já carregado e sem pendentes, exibe "Carregar novamente" (KPIs de
     entradas/saídas reais ficam no painel dedicado, ver render_fluxos_fisicos()).
     Resultado (KPI de Taxa de Match) exibido por render_pagina_extracao(),
-    não aqui — ver _render_resultado_matching_inicial()."""
+    não aqui — ver _render_resultado_matching_inicial().
+
+    2026-08-17, 2 pedidos do usuário: "✅ Dados carregados." subiu pra
+    logo abaixo do `st.subheader("Carga de XML")` (antes só aparecia lá
+    embaixo, perto do botão "Carregar novamente" — não depende de mais
+    nada calculado depois, só de `dados_carregados`); o aviso "Nenhum
+    XML pendente..." foi RETIRADO (estado normal/esperado depois de uma
+    carga completa, virava ruído repetido a cada reload da tela) — o
+    caso COM pendência real (contagem + previsão de classificação)
+    continua aparecendo normalmente."""
     st.subheader("Carga de XML")
+
+    # "✅ Dados carregados." (2026-08-17, pedido do usuário — "colocar
+    # logo abaixo de Carga de XML"): antes só aparecia lá embaixo, perto
+    # do botão "Carregar novamente" — `dados_carregados` já é conhecido
+    # aqui em cima, então o aviso pode subir sem depender de mais nada
+    # calculado adiante (checklist, prévia de pendentes etc.).
+    if st.session_state.get("dados_carregados"):
+        st.success("✅ Dados carregados.")
 
     if st.session_state.pop("erro_bc3_automatico", None):
         st.error(
@@ -518,10 +535,12 @@ def render_carga_operacao() -> None:
 
     _render_checklist_arquivos_previstos()
 
+    # "Nenhum XML pendente..." retirado (2026-08-17, pedido do usuário —
+    # "retirar"): estado normal/esperado depois de uma carga completa,
+    # virava ruído repetido a cada vez que a tela recarrega — só o caso
+    # com pendência real (com contagem/previsão) continua aparecendo.
     pend = resumo["pendentes"]
-    if pend["quantidade"] == 0:
-        st.info("Nenhum XML pendente em 1-DOCFISCAIS/nf/ (fora de ET/EP).")
-    else:
+    if pend["quantidade"] > 0:
         st.markdown(
             f"- **{pend['quantidade']}** XML pendente(s) em `{pend['caminho']}` — previsão: "
             f"{pend['previsao_et']} para ET, {pend['previsao_ep']} para EP, "
@@ -532,7 +551,6 @@ def render_carga_operacao() -> None:
     sem_pendentes = pend["quantidade"] == 0
 
     if ja_carregado and sem_pendentes:
-        st.success("✅ Dados carregados.")
         _render_alerta_cobertura_granular(ocultar_se_completo=True)
         clicou = st.button(
             "Carregar novamente",
