@@ -329,73 +329,51 @@ def _lista_anos_pt(anos: list) -> str:
     return ", ".join(anos[:-1]) + " e " + anos[-1]
 
 
-def _render_alerta_base_xml_nfe() -> None:
-    """Verificação de Base de XML (NF-e modelo 55 / NFC-e modelo 65) —
-    Estágio 1 (2026-08-17, pedido do usuário: "traga tb de quais anos de
-    notas fiscais 55 e 65 deverão compor a base de dados"). Mesmo cálculo
-    já usado no `st.info` de `render_configuracao_periodo()` (Base XML:
-    pastas de {ano_inicial - 1} até {ano_final}) — só que aquele só
-    aparece durante a EDIÇÃO do período (sumia depois de confirmado/
-    recolhido); este fica sempre visível, junto da Verificação de
-    Âncoras de Estoque logo abaixo. XML cobre um ano a mais pra trás do
-    Ano Inicial (a virada de ano anterior ao início do período já
-    precisa da base de comparação pra `DATA_ELEITA`/continuidade EI-EF
-    do Estágio 4/5 — mesmo raciocínio documentado em `render_
-    configuracao_periodo()`). Modelo 55 (NF-e) e modelo 65 (NFC-e)
-    citados nominalmente pra deixar explícito que os DOIS modelos, não
-    só o 55, compõem a base de XML (pastas ET/EP) — silencioso se o
-    período ainda não foi configurado."""
-    periodo = loader.obter_periodo_auditoria()
-    if not periodo:
-        return
+def _render_alerta_base_dados_periodo() -> None:
+    """Verificação de Base de Dados Necessária — Estágio 1 (2026-08-17):
+    UNIFICA num único aviso o que antes eram 2 avisos separados
+    (Verificação de Base de XML + Verificação de Âncoras de Estoque,
+    ambas desta mesma data) — pedido do usuário: "UNIFIQUE OS DOIS: MOD
+    55: TAIS ANOS / MOD65: TAIS ANOS / DECLARAÇÕES: TAIS PERÍODOS"
+    (formato exato pedido, 3 linhas). MOD 55 (NF-e) e MOD 65 (NFC-e) têm
+    o MESMO intervalo de anos — o app não separa a base de XML por
+    modelo (ambos vêm juntos das pastas ET/EP, ver `loader.
+    pre_visualizar_carga()`), só o rótulo é diferente pra deixar
+    explícito que os dois modelos compõem a base; mostradas em linhas
+    SEPARADAS mesmo assim, por pedido explícito. Cálculos:
+    - MOD 55/MOD 65 (XML): {ano_inicial - 1} até {ano_final} — 1 ano a
+      mais pra trás (a virada de ano anterior ao início do período já
+      precisa da base de comparação pra `DATA_ELEITA`/continuidade EI-EF
+      do Estágio 4/5, mesmo raciocínio de `render_configuracao_
+      periodo()`).
+    - DECLARAÇÕES (SPED): {ano_inicial + 1} até {ano_final + 1} — 1 ano
+      a mais pra frente, porque o estoque final de um exercício (saldo
+      em 31/12) é declarado no SPED de competência do início do
+      exercício SEGUINTE (geralmente jan/fev) — sem a declaração do ano
+      seguinte, o Estágio 5 (Tabela de Estoque) não fecha o último ano
+      do período.
 
-    ano_ini = int(periodo["ano_inicial"])
-    ano_fim = int(periodo["ano_final"])
-    anos_xml = [str(a) for a in range(ano_ini - 1, ano_fim + 1)]
-
-    st.markdown("**Verificação de Base de XML (NF-e/NFC-e)**")
-    st.info(
-        f"Para auditar o período de {periodo['ano_inicial']} a {periodo['ano_final']}, a base de "
-        f"XML — Nota Fiscal Eletrônica **modelo 55** e Nota Fiscal de Consumidor Eletrônica "
-        f"**modelo 65** — deve conter as notas de {_lista_anos_pt(anos_xml)}.  \n"
-        f"Nota: o ano de {ano_ini - 1} (1 ano antes do início do período) é necessário pra "
-        f"comparação na virada do exercício anterior (Entradas/Saídas do Estágio 4)."
-    )
-
-
-def _render_alerta_ancoragem_estoque() -> None:
-    """Verificação de Âncoras de Estoque (Bloco H) — Estágio 1: por regra
-    fiscal, o estoque final de um exercício (saldo em 31/12) é declarado no
-    SPED de competência do início do exercício seguinte (geralmente
-    jan/fev). Para o Estágio 5 (Tabela de Estoque) fechar sem lacunas, cada
-    ano do Período de Auditoria precisa da declaração do ano seguinte como
-    âncora de saldo. Checa direto nos arquivos brutos de 2-DECLARACAO/SPED
-    (`loader.anos_declaracao_disponiveis()`), sem depender de carga já
-    persistida — silencioso se o período ainda não foi configurado.
-
+    Checa direto nos arquivos brutos de 2-DECLARACAO/SPED (`loader.
+    anos_declaracao_disponiveis()`), sem depender de carga já
+    persistida — silenciosa se o período ainda não foi configurado.
     Chamada logo após `render_configuracao_periodo()`, ANTES da Equipe/
-    Carga (2026-08-17, pedido do usuário — "abaixo do período de
+    Carga (2026-08-17, pedido anterior — "abaixo do período de
     auditoria, trazer obs dos arquivos necessários para extração
-    correta"): antes ficava dentro de `render_carga_operacao()`, depois
-    da prévia de arquivos (ET/EP/Declarações) — o auditor só via quais
-    declarações precisava DEPOIS de rolar a tela toda. Como só depende
-    do período (não de nada carregado ainda), fazia mais sentido logo
-    abaixo dele."""
+    correta")."""
     periodo = loader.obter_periodo_auditoria()
     if not periodo:
         return
 
     ano_ini = int(periodo["ano_inicial"])
     ano_fim = int(periodo["ano_final"])
-    anos_estoque = [str(a) for a in range(ano_ini, ano_fim + 1)]
-    anos_declaracao = [str(a + 1) for a in range(ano_ini, ano_fim + 1)]
+    anos_xml = _lista_anos_pt([str(a) for a in range(ano_ini - 1, ano_fim + 1)])
+    anos_declaracao = _lista_anos_pt([str(a) for a in range(ano_ini + 1, ano_fim + 2)])
 
-    st.markdown("**Verificação de Âncoras de Estoque (Bloco H)**")
+    st.markdown("**Base de Dados Necessária para o Período**")
     st.info(
-        f"Para auditar o período de {periodo['ano_inicial']} a {periodo['ano_final']}, "
-        f"o sistema processará os estoques finais de {_lista_anos_pt(anos_estoque)}, "
-        f"que são extraídos respectivamente das declarações de {_lista_anos_pt(anos_declaracao)}.  \n"
-        f"Nota: o estoque final refere-se ao saldo em 31 de dezembro de cada exercício."
+        f"**MOD 55** (NF-e): {anos_xml}.  \n"
+        f"**MOD 65** (NFC-e): {anos_xml}.  \n"
+        f"**DECLARAÇÕES** (SPED): {anos_declaracao}."
     )
 
     ano_ancora_final = str(ano_fim + 1)
@@ -3636,14 +3614,16 @@ def render_pagina_extracao() -> None:
     """Painel '🛠️ 1: PROCEDIMENTOS INICIAIS' (Solicitação Técnica
     2026-08-14 "PAINEL 1"; antes chamado só de "Extração", Estágio 6) —
     ponto de entrada oficial de qualquer nova auditoria: Configuração de
-    Período de Auditoria (com a Verificação de Base de XML e a
-    Verificação de Âncoras de Estoque logo abaixo — 2026-08-17, pedidos
-    do usuário: "abaixo do período de auditoria, trazer obs dos arquivos
-    necessários para extração correta" e "traga tb de quais anos de
-    notas fiscais 55 e 65 deverão compor a base de dados"; a de Âncoras
-    de Estoque antes ficava dentro de render_carga_operacao(), depois da
-    prévia de arquivos), Equipe de Fiscalização, Carga de XML/SPED (com
-    o alerta de cobertura já embutido), Entidade Auditada e, por fim, o Resultado
+    Período de Auditoria (com a Verificação de Base de Dados Necessária
+    logo abaixo — 2026-08-17, pedidos do usuário: "abaixo do período de
+    auditoria, trazer obs dos arquivos necessários para extração
+    correta", "traga tb de quais anos de notas fiscais 55 e 65 deverão
+    compor a base de dados" e, por fim, "UNIFIQUE OS DOIS" — os 2 avisos
+    separados de XML/Declarações viraram 1 só, `_render_alerta_base_
+    dados_periodo()`; a parte de Declarações antes ficava dentro de
+    render_carga_operacao(), depois da prévia de arquivos), Equipe de
+    Fiscalização, Carga de XML/SPED (com o alerta de cobertura já
+    embutido), Entidade Auditada e, por fim, o Resultado
     do Matching Inicial (BC3) — que agora roda AUTOMATICAMENTE ao final
     de toda carga bem-sucedida (ver render_carga_operacao()), sem
     precisar navegar até "🧩 MATCHING (BC3)" e clicar em "Gerar" à parte.
@@ -3653,8 +3633,7 @@ def render_pagina_extracao() -> None:
     substituiu a manual."""
     _botao_voltar_menu()
     render_configuracao_periodo()
-    _render_alerta_base_xml_nfe()
-    _render_alerta_ancoragem_estoque()
+    _render_alerta_base_dados_periodo()
     st.divider()
     render_equipe_auditoria()
     st.divider()
