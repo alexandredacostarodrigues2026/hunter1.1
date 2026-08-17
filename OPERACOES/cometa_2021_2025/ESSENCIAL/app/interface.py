@@ -409,46 +409,73 @@ def _render_checklist_arquivos_previstos() -> None:
     a contagem simples de arquivos por pasta, que não dizia se os anos/
     períodos CERTOS estavam presentes, só quantos arquivos havia no total).
     Lê `loader.verificar_cobertura_bruta_detalhada()` (raw, sem depender de
-    carga já persistida) e mostra, por categoria, uma linha "ok"/"ausente"
-    por ano (ET/EP/Estoque) ou por período AAAA/MM (Declarações — SUPOSIÇÃO
-    de entrega mensal, sinalizada explicitamente na tela, ver docstring de
-    lá). Declarações fica dentro de um `st.expander` (pode chegar a
-    dezenas de linhas — 12 meses × N anos) — aberto por padrão só quando
-    há poucos períodos ausentes (≤ 12), pra não esconder um problema real
-    atrás de um clique extra. Silencioso (mostra só um aviso) se o Período
-    de Auditoria ainda não foi configurado."""
+    carga já persistida) — categorias ET/EP/Estoque por ano, Declarações
+    por período AAAA/MM (SUPOSIÇÃO de entrega mensal, sinalizada no
+    `st.caption()` dentro do detalhamento). Silencioso (mostra só um aviso)
+    se o Período de Auditoria ainda não foi configurado.
+
+    Resumo + detalhamento recolhível (2026-08-17, pedido do usuário —
+    "recolha todo esse resultado e traga somente o resultado sumarizado...
+    crie botão para enxergar todo o resultado de forma que expanda e
+    recolha, mantendo a tela principal enxuta"): a tela SEMPRE mostra só
+    uma linha de resumo (✅ tudo ok, ou ⚠️ com a lista curta de categorias
+    com pendência — "falta(m) ano(s) X de ET", "falta(m) N declaração(ões)"
+    etc.) e um ÚNICO `st.expander` (fechado por padrão) com o detalhamento
+    completo ano a ano / período a período das 4 categorias — antes cada
+    categoria aparecia sempre expandida na tela principal (só Declarações
+    tinha expander próprio), agora fica tudo atrás de 1 clique só."""
     checklist = loader.verificar_cobertura_bruta_detalhada()
     if not checklist.get("aplicavel"):
         st.info("Configure o Período de Auditoria acima pra ver o checklist de arquivos previstos.")
         return
 
-    def _linhas(itens: list, prefixo: str = "") -> None:
-        for rotulo, ok in itens:
-            simbolo = "✅" if ok else "❌"
-            texto = f"{prefixo}{rotulo}" if prefixo else rotulo
-            st.markdown(f"- {texto}: {'ok' if ok else 'ausente'} {simbolo}")
+    et_faltando = [r for r, ok in checklist["et"] if not ok]
+    ep_faltando = [r for r, ok in checklist["ep"] if not ok]
+    declaracao_faltando = [r for r, ok in checklist["declaracao"] if not ok]
+    estoque_faltando = [r for r, ok in checklist["estoque"] if not ok]
 
-    st.markdown("**Notas Fiscais (ET/EP) — por ano**")
-    col_et, col_ep = st.columns(2)
-    with col_et:
-        _linhas(checklist["et"], prefixo="ET ")
-    with col_ep:
-        _linhas(checklist["ep"], prefixo="EP ")
+    partes_resumo = []
+    if et_faltando:
+        partes_resumo.append(f"falta(m) ano(s) {', '.join(et_faltando)} de ET")
+    if ep_faltando:
+        partes_resumo.append(f"falta(m) ano(s) {', '.join(ep_faltando)} de EP")
+    if declaracao_faltando:
+        partes_resumo.append(f"falta(m) {len(declaracao_faltando)} declaração(ões)")
+    if estoque_faltando:
+        partes_resumo.append(f"falta(m) ano(s) {', '.join(estoque_faltando)} de Estoque Final")
 
-    st.markdown("**Declarações (SPED) — por período**")
-    faltando_decl = [item for item in checklist["declaracao"] if not item[1]]
-    st.caption(
-        "Assume entrega mensal (12 meses/ano) — pode acusar \"ausente\" pra competências ainda "
-        "não vencidas ou pra periodicidade diferente da mensal."
+    total_itens = (
+        len(checklist["et"]) + len(checklist["ep"])
+        + len(checklist["declaracao"]) + len(checklist["estoque"])
     )
-    with st.expander(
-        f"{len(faltando_decl)} período(s) ausente(s) de {len(checklist['declaracao'])} — ver detalhamento",
-        expanded=bool(faltando_decl) and len(faltando_decl) <= 12,
-    ):
+    if not partes_resumo:
+        st.success("✅ Todos os arquivos previstos (ET/EP/Declarações/Estoque Final) foram encontrados.")
+    else:
+        st.warning("⚠️ " + "; ".join(partes_resumo) + ".")
+
+    with st.expander(f"Ver detalhamento completo ({total_itens} item(ns))", expanded=False):
+        def _linhas(itens: list, prefixo: str = "") -> None:
+            for rotulo, ok in itens:
+                simbolo = "✅" if ok else "❌"
+                texto = f"{prefixo}{rotulo}" if prefixo else rotulo
+                st.markdown(f"- {texto}: {'ok' if ok else 'ausente'} {simbolo}")
+
+        st.markdown("**Notas Fiscais (ET/EP) — por ano**")
+        col_et, col_ep = st.columns(2)
+        with col_et:
+            _linhas(checklist["et"], prefixo="ET ")
+        with col_ep:
+            _linhas(checklist["ep"], prefixo="EP ")
+
+        st.markdown("**Declarações (SPED) — por período**")
+        st.caption(
+            "Assume entrega mensal (12 meses/ano) — pode acusar \"ausente\" pra competências ainda "
+            "não vencidas ou pra periodicidade diferente da mensal."
+        )
         _linhas(checklist["declaracao"], prefixo="Período ")
 
-    st.markdown("**Estoque Final (Bloco H) — por ano**")
-    _linhas(checklist["estoque"])
+        st.markdown("**Estoque Final (Bloco H) — por ano**")
+        _linhas(checklist["estoque"])
 
 
 def render_carga_operacao() -> None:
