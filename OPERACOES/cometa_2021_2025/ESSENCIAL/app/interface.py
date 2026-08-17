@@ -140,7 +140,13 @@ def render_equipe_auditoria() -> None:
 
 def render_entidade_auditada() -> None:
     """Mostra os dados da entidade auditada. Só é chamada por main.py quando
-    st.session_state['dados_carregados'] é True."""
+    st.session_state['dados_carregados'] é True.
+
+    KPI "Ocorrências" retirado (2026-08-17, pedido do usuário — "retirar
+    kpi de ocorrencias"): `info['ocorrencias']` continua calculado em
+    `loader.garantir_entidade_auditada()` (usado na resolução de qual
+    CNPJ é a entidade auditada, por maior contagem), só não é mais
+    exibido na tela."""
     st.subheader("Entidade auditada")
     with st.spinner("Identificando entidade auditada (CNPJ/Razão Social)..."):
         info = loader.garantir_entidade_auditada()
@@ -149,9 +155,7 @@ def render_entidade_auditada() -> None:
         st.warning("Entidade auditada não pôde ser identificada: " + "; ".join(info.get("erros", [])))
         return
 
-    col1, col2 = st.columns(2)
-    col1.metric("CNPJ", info["cnpj"])
-    col2.metric("Ocorrências", f"{info['ocorrencias']:,}".replace(",", "."))
+    st.metric("CNPJ", info["cnpj"])
     st.markdown(f"**Razão Social:** {info['razao_social']}")
 
     fonte = info.get("por_fonte") or {}
@@ -3578,12 +3582,19 @@ def _render_resultado_matching_inicial() -> None:
     """KPI único do Matching (BC3) dentro de "🛠️ 1: PROCEDIMENTOS
     INICIAIS" (Solicitação Técnica 2026-08-14 — simplificação do painel
     anterior, que mostrava as 14 métricas D1-D6/A1-A5/ND/NM): mostra só
-    a Taxa de Match, como `st.metric` + `st.progress()` (barra visual do
-    percentual), com legenda explicando o que a taxa representa. O
-    detalhamento por tipo continua disponível, sem nenhuma mudança, no
-    painel manual "🧩 MATCHING (BC3)" (Estágio 2/render_bc3()) — esta
-    tela é só o resumo rápido de "a base está com boa cobertura de
-    código?", não o diagnóstico fino por tipo de match.
+    a Taxa de Match, como `st.metric`, com legenda explicando o que a
+    taxa representa. O detalhamento por tipo continua disponível, sem
+    nenhuma mudança, no painel manual "🧩 MATCHING (BC3)" (Estágio 2/
+    render_bc3()) — esta tela é só o resumo rápido de "a base está com
+    boa cobertura de código?", não o diagnóstico fino por tipo de match.
+
+    Rótulo do `st.metric` e barra de progresso (2026-08-17, pedido do
+    usuário — "2-mudar título para 'Taxa de inclusão de código de
+    produto no dado do fornecedor'. retirar barra de progresso"):
+    rótulo trocado de "Taxa de Match" pro nome completo já usado na
+    legenda logo abaixo (deixa explícito o que o número significa sem
+    precisar ler a legenda); `st.progress()` removido — o `st.metric`
+    já mostra o percentual, a barra era redundante.
 
     Significado da Taxa de Match (pedido explícito do usuário pra
     deixar explícito na tela): é a taxa de INCLUSÃO DE CÓDIGO DE PRODUTO
@@ -3613,8 +3624,10 @@ def _render_resultado_matching_inicial() -> None:
     )
     taxa_match = (total_casados / total_bc2 * 100) if total_bc2 else 0.0
 
-    st.metric("Taxa de Match", f"{taxa_match:.1f}%".replace(".", ","))
-    st.progress(min(taxa_match / 100, 1.0))
+    st.metric(
+        "Taxa de inclusão de código de produto no dado do fornecedor",
+        f"{taxa_match:.1f}%".replace(".", ","),
+    )
     st.caption(
         "Taxa de inclusão de código de produto no dado do fornecedor: a BC2 (XML de Entradas de "
         "Terceiros) chega do fornecedor SEM o código de produto da auditada — o Matching (BC3) "
