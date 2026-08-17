@@ -552,7 +552,13 @@ def render_carga_operacao() -> None:
 
     if ja_carregado and sem_pendentes:
         _render_alerta_cobertura_granular(ocultar_se_completo=True)
-        clicou = st.button(
+        # Alinhado à direita (2026-08-17, pedido do usuário — "coloque à
+        # direita, alinha com os botões 'alterar'"): mesmo padrão
+        # `st.columns([6, 1])` já usado pros botões "Alterar" do Período
+        # de Auditoria/Equipe de Fiscalização, aqui só com a col1 vazia
+        # (não tem texto pra por ao lado, diferente do Período/Equipe).
+        _col_vazia, col_recarregar = st.columns([6, 1])
+        clicou = col_recarregar.button(
             "Carregar novamente",
             key="btn_recarregar",
             help="Reprocessa toda a base (NF-e + SPED) e atualiza o banco de dados.",
