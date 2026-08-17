@@ -89,9 +89,32 @@ def render_equipe_auditoria() -> None:
     (nome + matrícula), persistido em `equipe_auditoria`
     (`loader.salvar_equipe_auditoria()`/`obter_equipe_auditoria()`).
     Alimenta automaticamente o rodapé de assinatura do Relatório Final
-    (Estágio 12.1), eliminando a edição manual do PDF depois de gerado."""
-    st.markdown("**Equipe de Fiscalização**")
+    (Estágio 12.1), eliminando a edição manual do PDF depois de gerado.
+
+    Recolhe em resumo após confirmar (2026-08-17, pedido do usuário —
+    "depois de confirmar equipe, recolher na forma de período"): mesmo
+    padrão do `render_configuracao_periodo()` logo acima — uma vez que
+    existe pelo menos 1 auditor com nome preenchido, mostra uma linha
+    fixa ("👥 Equipe de Fiscalização: N auditor(es) — nomes") com botão
+    "Alterar" em vez da tabela editável, até o usuário clicar em
+    "Alterar". Critério de "já confirmada" é o PRÓPRIO dado persistido
+    (`NOME_AUDITOR` preenchido em `equipe_auditoria`), não uma flag de
+    sessão — igual ao Período, sobrevive a um reload de página."""
     equipe = loader.obter_equipe_auditoria()
+    equipe_preenchida = equipe[equipe["NOME_AUDITOR"].astype(str).str.strip() != ""]
+
+    if not equipe_preenchida.empty and not st.session_state.get("editando_equipe_auditoria"):
+        col1, col2 = st.columns([6, 1])
+        nomes = ", ".join(equipe_preenchida["NOME_AUDITOR"].astype(str).str.strip().tolist())
+        col1.markdown(
+            f"👥 **Equipe de Fiscalização:** {len(equipe_preenchida)} auditor(es) — {nomes}"
+        )
+        if col2.button("Alterar", key="btn_alterar_equipe_auditoria"):
+            st.session_state["editando_equipe_auditoria"] = True
+            st.rerun()
+        return
+
+    st.markdown("**Equipe de Fiscalização**")
     df_edicao = pd.DataFrame({
         "Nome do Auditor": equipe["NOME_AUDITOR"].tolist(),
         "Matrícula": equipe["MATRICULA"].tolist(),
@@ -110,6 +133,7 @@ def render_equipe_auditoria() -> None:
             "MATRICULA": df_editado["Matrícula"].tolist(),
         })
         loader.salvar_equipe_auditoria(df_salvar)
+        st.session_state["editando_equipe_auditoria"] = False
         st.success("✅ Equipe de Auditoria gravada.")
         st.rerun()
 
