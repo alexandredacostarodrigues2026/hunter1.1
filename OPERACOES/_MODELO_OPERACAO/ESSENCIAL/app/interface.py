@@ -276,7 +276,7 @@ _MENSAGENS_FALTANTE_COBERTURA_GRANULAR = {
 }
 
 
-def _render_alerta_cobertura_granular() -> None:
+def _render_alerta_cobertura_granular(ocultar_se_completo: bool = False) -> None:
     """Alerta de Carga GRANULAR (Estágio 1, 2026-08-11, Solicitação
     Técnica "MONITORAMENTO DE CARGA E EQUIPE DE AUDITORIA") — confere
     separadamente ET/EP/Declaração(C100/C170)/Estoque(H010) contra o
@@ -294,13 +294,29 @@ def _render_alerta_cobertura_granular() -> None:
     `st.warning` específico por ano faltando naquela categoria — mesma
     redação do exemplo da Solicitação Técnica ("⚠️ Atenção: Estoque de
     2022 não localizado nas declarações."). Silencioso se nenhum período
-    estiver configurado ainda (nada a checar)."""
+    estiver configurado ainda (nada a checar).
+
+    `ocultar_se_completo` (2026-08-17, pedido do usuário — "OCULTAR APÓS
+    A CARGA", print mostrando as 4 barras 100% completas toda vez que a
+    tela recarrega depois de uma carga bem-sucedida): quando True, não
+    mostra NADA (nem título "Cobertura por Categoria", nem as 4 barras,
+    nem "✅ Cobertura completa") se todas as categorias já estiverem
+    100% cobertas — vira ruído visual repetido depois que os dados já
+    estão carregados (a Verificação de Base de Dados Necessária, Parte
+    7/2026-08-17, já mostra os anos exigidos logo abaixo do Período).
+    Os `st.warning()` de categoria com lacuna REAL continuam aparecendo
+    mesmo com `ocultar_se_completo=True` — informação acionável, não
+    decorativa. `render_carga_operacao()` passa True na chamada feita
+    depois de uma carga já concluída."""
     cobertura = loader.verificar_cobertura_granular()
     if not cobertura.get("aplicavel"):
         return
 
+    algo_faltando = any(cobertura[categoria]["faltando"] for categoria in _ROTULOS_COBERTURA_GRANULAR)
+    if ocultar_se_completo and not algo_faltando:
+        return
+
     st.markdown("**Cobertura por Categoria**")
-    algo_faltando = False
     for categoria, rotulo in _ROTULOS_COBERTURA_GRANULAR.items():
         bloco = cobertura[categoria]
         necessarios, faltando = bloco["necessarios"], bloco["faltando"]
@@ -309,7 +325,6 @@ def _render_alerta_cobertura_granular() -> None:
         frac = presentes / total if total else 1.0
         st.progress(frac, text=f"{rotulo}: {presentes}/{total} ano(s)")
         if faltando:
-            algo_faltando = True
             anos_str = ", ".join(str(a) for a in faltando)
             st.warning("⚠️ Atenção: " + _MENSAGENS_FALTANTE_COBERTURA_GRANULAR[categoria].format(anos=anos_str))
 
@@ -442,7 +457,7 @@ def render_carga_operacao() -> None:
 
     if ja_carregado and sem_pendentes:
         st.success("✅ Dados carregados.")
-        _render_alerta_cobertura_granular()
+        _render_alerta_cobertura_granular(ocultar_se_completo=True)
         clicou = st.button(
             "Carregar novamente",
             key="btn_recarregar",
