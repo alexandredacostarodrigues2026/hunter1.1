@@ -337,7 +337,16 @@ def _render_alerta_ancoragem_estoque() -> None:
     ano do Período de Auditoria precisa da declaração do ano seguinte como
     âncora de saldo. Checa direto nos arquivos brutos de 2-DECLARACAO/SPED
     (`loader.anos_declaracao_disponiveis()`), sem depender de carga já
-    persistida — silencioso se o período ainda não foi configurado."""
+    persistida — silencioso se o período ainda não foi configurado.
+
+    Chamada logo após `render_configuracao_periodo()`, ANTES da Equipe/
+    Carga (2026-08-17, pedido do usuário — "abaixo do período de
+    auditoria, trazer obs dos arquivos necessários para extração
+    correta"): antes ficava dentro de `render_carga_operacao()`, depois
+    da prévia de arquivos (ET/EP/Declarações) — o auditor só via quais
+    declarações precisava DEPOIS de rolar a tela toda. Como só depende
+    do período (não de nada carregado ainda), fazia mais sentido logo
+    abaixo dele."""
     periodo = loader.obter_periodo_auditoria()
     if not periodo:
         return
@@ -418,8 +427,6 @@ def render_carga_operacao() -> None:
 
     ja_carregado = st.session_state.get("dados_carregados", False)
     sem_pendentes = pend["quantidade"] == 0
-
-    _render_alerta_ancoragem_estoque()
 
     if ja_carregado and sem_pendentes:
         st.success("✅ Dados carregados.")
@@ -3595,9 +3602,12 @@ def render_pagina_extracao() -> None:
     """Painel '🛠️ 1: PROCEDIMENTOS INICIAIS' (Solicitação Técnica
     2026-08-14 "PAINEL 1"; antes chamado só de "Extração", Estágio 6) —
     ponto de entrada oficial de qualquer nova auditoria: Configuração de
-    Período de Auditoria, Equipe de Fiscalização, Carga de XML/SPED (com
-    os alertas de cobertura e de Ancoragem de Estoque já embutidos em
-    render_carga_operacao()), Entidade Auditada e, por fim, o Resultado
+    Período de Auditoria (com a Verificação de Âncoras de Estoque logo
+    abaixo — 2026-08-17, pedido do usuário: "abaixo do período de
+    auditoria, trazer obs dos arquivos necessários para extração
+    correta"; antes ficava dentro de render_carga_operacao(), depois da
+    prévia de arquivos), Equipe de Fiscalização, Carga de XML/SPED (com
+    o alerta de cobertura já embutido), Entidade Auditada e, por fim, o Resultado
     do Matching Inicial (BC3) — que agora roda AUTOMATICAMENTE ao final
     de toda carga bem-sucedida (ver render_carga_operacao()), sem
     precisar navegar até "🧩 MATCHING (BC3)" e clicar em "Gerar" à parte.
@@ -3607,6 +3617,7 @@ def render_pagina_extracao() -> None:
     substituiu a manual."""
     _botao_voltar_menu()
     render_configuracao_periodo()
+    _render_alerta_ancoragem_estoque()
     st.divider()
     render_equipe_auditoria()
     st.divider()
