@@ -243,3 +243,6 @@ DESCRICAO_NCM2;Descricao do Capitulo
 
 # Novos campos - 2026-08-17 (Estagio 7.3.3 - Relacao de Eleitos, coluna de marcacao p/ remocao)
 EXCLUIR;Excluir
+
+# Novos campos - 2026-08-17 (Estagio 7.3.3 - Grades de Produtos, ncm completo alem do capitulo)
+COD_NCM_COMPLETO;NCM Completo

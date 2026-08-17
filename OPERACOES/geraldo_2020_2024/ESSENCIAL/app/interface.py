@@ -2129,12 +2129,18 @@ def render_rn1_simulada_30() -> None:
     st.rerun()
 
 
-_COLUNAS_CONSOLIDADO_733 = ["ANO", "DESCR_PROD", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL", "ORIGEM", "ncm2"]
-# "ncm2" incluído 2026-08-17 (pedido do usuário — "colocar ncm em
-# entradas, saidas, estoques"): já vem baked em `sub` (ver `loader.
-# unificar_por_produto_733()`, coluna assumida igual entre os anos do
+_COLUNAS_CONSOLIDADO_733 = [
+    "ANO", "DESCR_PROD", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL", "ORIGEM", "ncm2", "COD_NCM_COMPLETO",
+]
+# "ncm2"/"COD_NCM_COMPLETO" incluídos 2026-08-17 (pedido do usuário —
+# "colocar ncm em entradas, saidas, estoques"; "COD_NCM_COMPLETO"
+# acrescentado no mesmo dia — "preciso do ncm completo", ncm2 sozinho só
+# traz o Capítulo/2 dígitos): já vêm baked em `sub` (ver `loader.
+# unificar_por_produto_733()`, colunas assumidas iguais entre os anos do
 # mesmo produto), só faltava aparecer na grade.
-_COLUNAS_EXIBICAO_GRADE_733 = ["DESCR_PROD", "ncm2", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL"]
+_COLUNAS_EXIBICAO_GRADE_733 = [
+    "DESCR_PROD", "ncm2", "COD_NCM_COMPLETO", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL",
+]
 _CHAVES_GRADE_733 = {"entrada": "grade_733_entrada", "saida": "grade_733_saida", "estoque": "grade_733_estoque"}
 _TITULOS_GRADE_733 = {
     "entrada": "📥 Itens de Entrada (XML)",
@@ -2738,6 +2744,16 @@ def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | No
     # acima, sem uma linha de título curta como as demais tabelas do
     # 7.3.3 (Grades de Produtos, Relação de Eleitos) já têm.
     st.markdown(f"**Simulação NCM2 — Divergência por Capítulo** — {len(exibicao_ncm2):,} linha(s)".replace(",", "."))
+    # Rótulo "Selecionar" acima da coluna de checkbox (2026-08-17,
+    # pedido do usuário — não trocar de mecanismo aqui, ver docstring):
+    # a coluna de seleção do `st.dataframe` nativo é desenhada num
+    # <canvas> (glide-data-grid), sem elemento de DOM próprio — não dá
+    # pra injetar texto DENTRO do header dela via CSS, só um rótulo
+    # LOGO ACIMA da tabela inteira (mais próximo possível do pedido
+    # "sobre as caixas" sem trocar pro `st.data_editor`, que perderia o
+    # destaque vermelho de %Diverg>30% e ficaria sujeito ao reset ao
+    # mexer em outro campo da tela).
+    st.caption("☑️ Selecionar")
     with st.container(key="estagio733_ncm2_tabela"):
         st.markdown(
             "<style>.st-key-estagio733_ncm2_tabela [data-testid='stDataFrame'] "

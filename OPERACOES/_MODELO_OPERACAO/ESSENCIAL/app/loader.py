@@ -5713,18 +5713,21 @@ def _padrao_busca_curinga_ncm2(texto: str) -> str:
 
 def _mapa_cod_item_ncm2() -> pd.DataFrame:
     """COD_ITEM (normalizado, `_normalizar_cod_item_flexivel()`) -> ncm2
-    (2 primeiros dígitos do COD_NCM) + DESCR_ITEM (descrição do
+    (2 primeiros dígitos do COD_NCM) + COD_NCM (código completo, sem
+    truncar — 2026-08-17, pedido do usuário: "preciso do ncm completo",
+    ver `gerar_consolidado_origens_733()`) + DESCR_ITEM (descrição do
     cadastro), a partir de `sped_produtos` (Registro 0200, já persistida
     pelo Estágio 3) — usado só por `gerar_base_simulacao_ncm2_733()` e
     `filtrar_por_ncm2_733()` pra juntar Capítulo NCM/descrição aos
     valores de EI/Compras/Vendas/EF e ao consolidado do 7.3.3 (nenhum dos
     dois carrega NCM). `ncm2` vazio quando `COD_NCM` não tem pelo menos 2
-    dígitos numéricos (cadastro incompleto). Regra R07: COD_ITEM/ncm2/
-    DESCR_ITEM sempre string. Colisão rara de normalização (dois COD_ITEM
-    crus virando o mesmo normalizado) resolvida por `keep='first'` —
-    mesmo raciocínio já aceito em `produto_alvo`/`gerar_cruzamento_
-    valor()`."""
-    colunas = ["COD_ITEM", "ncm2", "DESCR_ITEM"]
+    dígitos numéricos (cadastro incompleto); `COD_NCM` (completo) vazio
+    só quando o cadastro não tiver o campo preenchido. Regra R07:
+    COD_ITEM/ncm2/COD_NCM/DESCR_ITEM sempre string. Colisão rara de
+    normalização (dois COD_ITEM crus virando o mesmo normalizado)
+    resolvida por `keep='first'` — mesmo raciocínio já aceito em
+    `produto_alvo`/`gerar_cruzamento_valor()`."""
+    colunas = ["COD_ITEM", "ncm2", "COD_NCM", "DESCR_ITEM"]
     if not _BANCO_PATH.exists():
         return pd.DataFrame(columns=colunas)
     try:
@@ -5739,7 +5742,8 @@ def _mapa_cod_item_ncm2() -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=colunas)
     df["COD_ITEM"] = _normalizar_cod_item_flexivel(df["COD_ITEM"])
-    ncm2 = df["COD_NCM"].astype(str).str.strip().str.slice(0, 2)
+    df["COD_NCM"] = df["COD_NCM"].astype(str).str.strip()
+    ncm2 = df["COD_NCM"].str.slice(0, 2)
     df["ncm2"] = ncm2.where(ncm2.str.fullmatch(r"\d{2}"), "")
     df["DESCR_ITEM"] = df["DESCR_ITEM"].astype(str)
     return df[colunas].drop_duplicates("COD_ITEM", keep="first").reset_index(drop=True)
@@ -6235,7 +6239,7 @@ def salvar_edicoes_produto_alvo_salvos(atualizacoes: pd.DataFrame) -> dict:
 # têm volume físico (XML) ou estoque estagnado (Bloco H) suspeito.
 _COLUNAS_CONSOLIDADO_733 = [
     "ANO", "DESCR_PROD", "COD_ITEM", "COD_ITEM_OCORRENCIAS", "UNID_PROD", "QTDE", "VALOR_TOTAL",
-    "ORIGEM", "ncm2",
+    "ORIGEM", "ncm2", "COD_NCM_COMPLETO",
 ]
 _MARCADOR_COD_ITEM_AUSENTE_733 = "nc"
 
@@ -6278,20 +6282,24 @@ GROUP BY ANO_REFERENCIA, DESCR_ITEM_DECLARACAO, UNIDADE
 """
 
 
-def _resolver_ncm2_por_cod_item_concatenado(serie_cod_item: pd.Series, mapa_ncm2: pd.DataFrame) -> pd.Series:
+def _resolver_ncm2_por_cod_item_concatenado(
+    serie_cod_item: pd.Series, mapa_ncm2: pd.DataFrame, coluna: str = "ncm2",
+) -> pd.Series:
     """Resolve, pra cada valor de `serie_cod_item` (podendo trazer
     MÚLTIPLOS códigos concatenados por ", " — `STRING_AGG DISTINCT`, ver
-    `gerar_consolidado_origens_733()`), o Capítulo NCM (`ncm2`) do
-    PRIMEIRO código que tiver NCM cadastrado em `mapa_ncm2` (`_mapa_
-    cod_item_ncm2()`) — mesma tolerância já documentada lá (raro mais de
-    um código por linha, mais raro ainda de capítulos diferentes entre
-    eles). `""` quando nenhum código da linha tem NCM cadastrado, ou
-    `mapa_ncm2` vier vazio. Usada só na GERAÇÃO/REGERAÇÃO do consolidado
-    (uma vez por clique em "Gerar/Regerar Consolidado") — não em toda
-    troca de filtro na tela, ver `filtrar_por_ncm2_733()`."""
+    `gerar_consolidado_origens_733()`), o valor de `coluna` (`ncm2` —
+    Capítulo, 2 dígitos — ou `COD_NCM` — código completo, 2026-08-17,
+    pedido do usuário: "preciso do ncm completo") do PRIMEIRO código que
+    tiver NCM cadastrado em `mapa_ncm2` (`_mapa_cod_item_ncm2()`) — mesma
+    tolerância já documentada lá (raro mais de um código por linha, mais
+    raro ainda de capítulos diferentes entre eles). `""` quando nenhum
+    código da linha tem NCM cadastrado, ou `mapa_ncm2` vier vazio. Usada
+    só na GERAÇÃO/REGERAÇÃO do consolidado (uma vez por clique em
+    "Gerar/Regerar Consolidado") — não em toda troca de filtro na tela,
+    ver `filtrar_por_ncm2_733()`."""
     if mapa_ncm2.empty:
         return pd.Series([""] * len(serie_cod_item), index=serie_cod_item.index, dtype="object")
-    ncm2_por_cod = pd.Series(mapa_ncm2["ncm2"].to_numpy(), index=mapa_ncm2["COD_ITEM"].to_numpy())
+    valor_por_cod = pd.Series(mapa_ncm2[coluna].to_numpy(), index=mapa_ncm2["COD_ITEM"].to_numpy())
 
     def _resolver(cod_item_concat: str) -> str:
         for cod in str(cod_item_concat).split(", "):
@@ -6299,7 +6307,7 @@ def _resolver_ncm2_por_cod_item_concatenado(serie_cod_item: pd.Series, mapa_ncm2
             if not cod or cod == _MARCADOR_COD_ITEM_AUSENTE_733:
                 continue
             cod_norm = _normalizar_cod_item_flexivel(pd.Series([cod])).iloc[0]
-            valor = ncm2_por_cod.get(cod_norm, "")
+            valor = valor_por_cod.get(cod_norm, "")
             if valor:
                 return valor
         return ""
@@ -6430,7 +6438,14 @@ def gerar_consolidado_origens_733() -> dict:
     consolidado = _forcar_colunas_string(
         consolidado, ["ANO", "DESCR_PROD", "COD_ITEM", "COD_ITEM_OCORRENCIAS", "UNID_PROD", "ORIGEM"],
     )
-    consolidado["ncm2"] = _resolver_ncm2_por_cod_item_concatenado(consolidado["COD_ITEM"], _mapa_cod_item_ncm2())
+    mapa_ncm2 = _mapa_cod_item_ncm2()
+    consolidado["ncm2"] = _resolver_ncm2_por_cod_item_concatenado(consolidado["COD_ITEM"], mapa_ncm2)
+    # COD_NCM_COMPLETO (2026-08-17, pedido do usuário — "preciso do ncm
+    # completo": ncm2 só traz o Capítulo, 2 dígitos; esta coluna traz o
+    # código NCM completo do cadastro, sem truncar).
+    consolidado["COD_NCM_COMPLETO"] = _resolver_ncm2_por_cod_item_concatenado(
+        consolidado["COD_ITEM"], mapa_ncm2, coluna="COD_NCM",
+    )
     consolidado = (
         consolidado[colunas]
         .sort_values(["ORIGEM", "ANO", "DESCR_PROD"])
@@ -6545,9 +6560,11 @@ def unificar_por_produto_733(df: pd.DataFrame) -> pd.DataFrame:
     pedido do usuário: "quero que a maior ocorrência já apareça antes" —
     antes vinha em ordem ALFABÉTICA simples, sem relação com frequência
     real). `_MARCADOR_COD_ITEM_AUSENTE_733` ('nc') só quando NENHUM ano
-    tiver código. `ncm2` (Capítulo NCM) assumido igual entre os anos do
-    mesmo produto (o mesmo item físico não muda de Capítulo NCM ano a
-    ano) — usa o primeiro valor não vazio encontrado.
+    tiver código. `ncm2` (Capítulo NCM) e `COD_NCM_COMPLETO` (código NCM
+    completo, 2026-08-17, pedido do usuário — "preciso do ncm completo")
+    assumidos iguais entre os anos do mesmo produto (o mesmo item físico
+    não muda de NCM ano a ano) — usa o primeiro valor não vazio
+    encontrado, mesmo raciocínio pros dois.
 
     `COD_ITEM_FREQUENTE` (2026-08-16, pedido do usuário — "em caso de
     mais de um cod prod, cravar o cód de maior ocorrência"): quando um
@@ -6604,6 +6621,8 @@ def unificar_por_produto_733(df: pd.DataFrame) -> pd.DataFrame:
         agregacao["COD_ITEM_OCORRENCIAS"] = _concat_cod_item_ocorrencias
     if "ncm2" in df.columns:
         agregacao["ncm2"] = _primeiro_nao_vazio
+    if "COD_NCM_COMPLETO" in df.columns:
+        agregacao["COD_NCM_COMPLETO"] = _primeiro_nao_vazio
 
     unificado = df.groupby(["DESCR_PROD", "UNID_PROD", "ORIGEM"], as_index=False).agg(agregacao)
     if "COD_ITEM_OCORRENCIAS" in unificado.columns:
