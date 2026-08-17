@@ -329,6 +329,40 @@ def _lista_anos_pt(anos: list) -> str:
     return ", ".join(anos[:-1]) + " e " + anos[-1]
 
 
+def _render_alerta_base_xml_nfe() -> None:
+    """Verificação de Base de XML (NF-e modelo 55 / NFC-e modelo 65) —
+    Estágio 1 (2026-08-17, pedido do usuário: "traga tb de quais anos de
+    notas fiscais 55 e 65 deverão compor a base de dados"). Mesmo cálculo
+    já usado no `st.info` de `render_configuracao_periodo()` (Base XML:
+    pastas de {ano_inicial - 1} até {ano_final}) — só que aquele só
+    aparece durante a EDIÇÃO do período (sumia depois de confirmado/
+    recolhido); este fica sempre visível, junto da Verificação de
+    Âncoras de Estoque logo abaixo. XML cobre um ano a mais pra trás do
+    Ano Inicial (a virada de ano anterior ao início do período já
+    precisa da base de comparação pra `DATA_ELEITA`/continuidade EI-EF
+    do Estágio 4/5 — mesmo raciocínio documentado em `render_
+    configuracao_periodo()`). Modelo 55 (NF-e) e modelo 65 (NFC-e)
+    citados nominalmente pra deixar explícito que os DOIS modelos, não
+    só o 55, compõem a base de XML (pastas ET/EP) — silencioso se o
+    período ainda não foi configurado."""
+    periodo = loader.obter_periodo_auditoria()
+    if not periodo:
+        return
+
+    ano_ini = int(periodo["ano_inicial"])
+    ano_fim = int(periodo["ano_final"])
+    anos_xml = [str(a) for a in range(ano_ini - 1, ano_fim + 1)]
+
+    st.markdown("**Verificação de Base de XML (NF-e/NFC-e)**")
+    st.info(
+        f"Para auditar o período de {periodo['ano_inicial']} a {periodo['ano_final']}, a base de "
+        f"XML — Nota Fiscal Eletrônica **modelo 55** e Nota Fiscal de Consumidor Eletrônica "
+        f"**modelo 65** — deve conter as notas de {_lista_anos_pt(anos_xml)}.  \n"
+        f"Nota: o ano de {ano_ini - 1} (1 ano antes do início do período) é necessário pra "
+        f"comparação na virada do exercício anterior (Entradas/Saídas do Estágio 4)."
+    )
+
+
 def _render_alerta_ancoragem_estoque() -> None:
     """Verificação de Âncoras de Estoque (Bloco H) — Estágio 1: por regra
     fiscal, o estoque final de um exercício (saldo em 31/12) é declarado no
@@ -3602,10 +3636,12 @@ def render_pagina_extracao() -> None:
     """Painel '🛠️ 1: PROCEDIMENTOS INICIAIS' (Solicitação Técnica
     2026-08-14 "PAINEL 1"; antes chamado só de "Extração", Estágio 6) —
     ponto de entrada oficial de qualquer nova auditoria: Configuração de
-    Período de Auditoria (com a Verificação de Âncoras de Estoque logo
-    abaixo — 2026-08-17, pedido do usuário: "abaixo do período de
-    auditoria, trazer obs dos arquivos necessários para extração
-    correta"; antes ficava dentro de render_carga_operacao(), depois da
+    Período de Auditoria (com a Verificação de Base de XML e a
+    Verificação de Âncoras de Estoque logo abaixo — 2026-08-17, pedidos
+    do usuário: "abaixo do período de auditoria, trazer obs dos arquivos
+    necessários para extração correta" e "traga tb de quais anos de
+    notas fiscais 55 e 65 deverão compor a base de dados"; a de Âncoras
+    de Estoque antes ficava dentro de render_carga_operacao(), depois da
     prévia de arquivos), Equipe de Fiscalização, Carga de XML/SPED (com
     o alerta de cobertura já embutido), Entidade Auditada e, por fim, o Resultado
     do Matching Inicial (BC3) — que agora roda AUTOMATICAMENTE ao final
@@ -3617,6 +3653,7 @@ def render_pagina_extracao() -> None:
     substituiu a manual."""
     _botao_voltar_menu()
     render_configuracao_periodo()
+    _render_alerta_base_xml_nfe()
     _render_alerta_ancoragem_estoque()
     st.divider()
     render_equipe_auditoria()
