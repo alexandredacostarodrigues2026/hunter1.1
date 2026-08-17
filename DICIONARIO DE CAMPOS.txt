@@ -240,3 +240,6 @@ JA_ELEITO_733;Ja Eleito
 
 # Novos campos - 2026-08-16 (Estagio 7.3.3 - Simulacao NCM2, descricao oficial do Capitulo)
 DESCRICAO_NCM2;Descricao do Capitulo
+
+# Novos campos - 2026-08-17 (Estagio 7.3.3 - Relacao de Eleitos, coluna de marcacao p/ remocao)
+EXCLUIR;Excluir

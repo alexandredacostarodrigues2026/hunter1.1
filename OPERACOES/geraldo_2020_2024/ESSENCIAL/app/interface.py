@@ -2130,7 +2130,11 @@ def render_rn1_simulada_30() -> None:
 
 
 _COLUNAS_CONSOLIDADO_733 = ["ANO", "DESCR_PROD", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL", "ORIGEM", "ncm2"]
-_COLUNAS_EXIBICAO_GRADE_733 = ["DESCR_PROD", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL"]
+# "ncm2" incluído 2026-08-17 (pedido do usuário — "colocar ncm em
+# entradas, saidas, estoques"): já vem baked em `sub` (ver `loader.
+# unificar_por_produto_733()`, coluna assumida igual entre os anos do
+# mesmo produto), só faltava aparecer na grade.
+_COLUNAS_EXIBICAO_GRADE_733 = ["DESCR_PROD", "ncm2", "COD_ITEM", "UNID_PROD", "QTDE", "VALOR_TOTAL"]
 _CHAVES_GRADE_733 = {"entrada": "grade_733_entrada", "saida": "grade_733_saida", "estoque": "grade_733_estoque"}
 _TITULOS_GRADE_733 = {
     "entrada": "📥 Itens de Entrada (XML)",
@@ -2288,7 +2292,12 @@ def _render_grades_produtos_733(
                 eventos[origem] = None
                 continue
 
-            exibicao = sub[_COLUNAS_EXIBICAO_GRADE_733].copy()
+            # Filtra pra colunas realmente presentes em `sub` — cache
+            # persistida ANTES de "ncm2" existir (2026-08-15) não tem
+            # essa coluna; evita KeyError, some sozinha até "Regerar
+            # Consolidado".
+            colunas_grade_presentes = [c for c in _COLUNAS_EXIBICAO_GRADE_733 if c in sub.columns]
+            exibicao = sub[colunas_grade_presentes].copy()
             exibicao.insert(0, "JA_ELEITO_733", sub["DESCR_PROD"].isin(descricoes_ja_eleitas))
             exibicao = exibicao.rename(columns=loader.carregar_dicionario_campos())
             chave_tabela = _CHAVES_GRADE_733[origem]
@@ -2436,47 +2445,83 @@ def _render_eleitos_733() -> None:
     salvar_alvos_selecionados_733(); mostrar essas colunas aqui só
     poluiria a tela sem informação real).
 
-    Remoção de alvo (2026-08-16, pedido do usuário — "aqui possibilidade
-    de limpar o eleito com aviso de que cruzamentos efetuados serão
-    perdidos"): seleção de linha NATIVA (mesmo padrão `st.dataframe(
-    on_select="rerun", selection_mode="single-row")` do resto do
-    7.3.3), com um botão de remoção logo abaixo. `loader.cancelar_
-    produto_alvo_733()` NÃO apaga a linha de `produto_alvo_
-    fiscalizacao` — só marca STATUS='cancelado', preservando histórico.
+    Remoção de alvo — coluna "Excluir" via `st.data_editor` (2026-08-17,
+    pedido do usuário: "colocar nome na primeira coluna 'Excluir'"):
+    ANTES a 1ª coluna era o checkbox de seleção NATIVO do `st.dataframe`
+    (`on_select="rerun", selection_mode="single-row"`) — esse checkbox
+    não tem header customizável (limitação do próprio componente,
+    renderizado sem texto pelo grid do Streamlit), então não dava pra
+    simplesmente "nomear" a coluna existente. Trocado por um `st.
+    data_editor` com uma coluna booleana própria de verdade, "Excluir"
+    (`CheckboxColumn`), as outras 4 colunas travadas (`disabled=`).
+    Consequência natural da troca: passou a suportar marcar e remover
+    VÁRIOS produtos de uma vez (antes só 1 por vez, limite do
+    `selection_mode="single-row")`.
 
     APAGAMENTO REAL do cruzamento (2026-08-17, escalado a pedido do
     usuário — "aqui quero que remova tudo, todos os cruzamentos. o
     aviso deve ser contundente"; a versão de 2026-08-16 só avisava de
-    desvinculação/órfão, sem apagar nada): checa se o alvo selecionado
-    JÁ tem cruzamento EFETUADO no Estágio 10/10.2 — é o `produto_
-    cruzamento_escolhido` atual, e/ou tem item confirmado em
+    desvinculação/órfão, sem apagar nada): pra CADA produto marcado,
+    checa se já tem cruzamento EFETUADO no Estágio 10/10.2 — é o
+    `produto_cruzamento_escolhido` atual, e/ou tem item confirmado em
     `cruzamento_confirmado_detalhado` (Rubrica), e/ou tem ano salvo em
-    `cruzamento_final_produto` (Estágio 10.2). Com qualquer um desses,
-    mostra `st.warning()` CONTUNDENTE (⚠️ "AÇÃO IRREVERSÍVEL"/"não
-    existe desfazer") e exige marcar um checkbox de confirmação (key
-    DINÂMICA por produto — mesmo raciocínio da Parte 5/2026-08-15,
-    evita que a confirmação de um produto "vaze" pro próximo
-    selecionado) antes do botão ficar clicável; o clique chama `loader.
-    apagar_cruzamentos_produto_alvo_733()` (DELETE de verdade nas 3
-    tabelas) ANTES de `cancelar_produto_alvo_733()`. Sem cruzamento
-    efetuado, o botão já vem habilitado (menos fricção pra um
-    cancelamento sem consequência real).
+    `cruzamento_final_produto` (Estágio 10.2). Se QUALQUER um dos
+    marcados tiver, mostra `st.warning()` CONTUNDENTE (🔴 "AÇÃO
+    IRREVERSÍVEL"/"não existe desfazer"), um item de lista por produto
+    com seus motivos, e exige marcar um checkbox de confirmação (key
+    dinâmica pela combinação de produtos marcados) antes do botão ficar
+    clicável; o clique chama `loader.apagar_cruzamentos_produto_
+    alvo_733()` (DELETE de verdade nas 3 tabelas) ANTES de `loader.
+    cancelar_produto_alvo_733()`, produto a produto. Sem cruzamento
+    efetuado em NENHUM dos marcados, o botão já vem habilitado (menos
+    fricção pra um cancelamento sem consequência real).
 
-    Limpeza de seleção ADIADA pro próximo rerun (`_733_limpar_selecao_
+    Limpeza de marcação ADIADA pro próximo rerun (`_733_limpar_selecao_
     eleitos`) depois de remover — mesma janela segura já usada em
-    `_733_limpar_grades` (Parte 5/2026-08-15): a tabela ENCOLHE 1 linha
-    após remover, então o índice antigo da seleção ficaria inválido/
-    apontando pro produto errado se não fosse limpo."""
-    limpar_selecao_eleitos = st.session_state.pop("_733_limpar_selecao_eleitos", False)
-    if limpar_selecao_eleitos:
-        st.session_state["tabela_eleitos_733"] = {"selection": {"rows": []}}
-        st.session_state["alvo_733_para_remover"] = None
+    `_733_limpar_grades` (Parte 5/2026-08-15): a tabela ENCOLHE após
+    remover, então o `edited_rows` antigo do `data_editor` ficaria
+    apontando pro(s) índice(s) errado(s) se não fosse limpo. Formato do
+    reset (`{"edited_rows": {}, "added_rows": [], "deleted_rows": []}`)
+    confirmado via `streamlit.testing.v1.AppTest` — é a forma interna
+    completa do session_state de um `st.data_editor`, diferente do
+    `{"selection": {"rows": []}}` usado pelo `st.dataframe` nativo.
 
+    `_733_eleitos_marcados` (session_state PRÓPRIO, não lido direto do
+    widget a cada render — mesmo achado real de 2026-08-16 já documentado
+    pra `alvo_733_para_remover`, agora TAMBÉM confirmado pro `st.
+    data_editor`, não só pro `st.dataframe` nativo: interagir com OUTRO
+    widget da mesma seção — inclusive o PRÓPRIO checkbox de confirmação
+    do aviso — zera `edited_rows` inteiro no rerun seguinte, mesmo sem o
+    usuário ter desmarcado nada, confirmado via `AppTest`). Por isso a
+    lista de marcados só é ATUALIZADA quando a leitura do widget vem
+    NÃO-VAZIA (substitui a lista anterior inteira, permite reduzir a
+    marcação removendo alguns); leitura vazia é IGNORADA (indistinguível
+    entre "zerou por causa do quirk" e "usuário desmarcou tudo") — por
+    isso o botão "Limpar marcação" existe como via EXPLÍCITA de zerar,
+    já que desmarcar manualmente até chegar a zero não é confiável.
+
+    Reset via `key` DINÂMICA, não via `st.session_state[chave] = ...`
+    (2026-08-17, erro real capturado em teste — `StreamlitValueAssignment
+    NotAllowedError: Values for the widget with key 'tabela_eleitos_733'
+    cannot be set using st.session_state`): diferente do `st.dataframe`
+    nativo (seleção) e de outros widgets simples deste módulo, o `st.
+    data_editor` roda com `writes_allowed=False` internamente (`streamlit
+    /elements/widgets/data_editor.py`) — NUNCA aceita reset programático
+    do seu `session_state`, nem antes do widget ser instanciado no run.
+    Mesmo raciocínio já usado pros campos de edição de Nome/Código/
+    Unidade nas Grades (Parte 5/2026-08-15): `_733_eleitos_geracao`
+    (contador, incrementado só quando queremos forçar reset — remoção
+    bem-sucedida ou "Limpar marcação") vira sufixo da `key` (`f"tabela_
+    eleitos_733_{geracao}"`), garantindo uma instância de widget
+    genuinamente NOVA a cada reset, sem precisar mexer no session_state
+    do widget antigo."""
+    geracao_eleitos = st.session_state.get("_733_eleitos_geracao", 0)
     grupo_atual, total_grupo = loader.consultar_grupo_produto_alvo_fiscalizacao(limite=None, apenas_ativos=True)
+    st.markdown("**Relação de Produtos Alvo já Eleitos**")
     st.caption(
         "Lista completa de produtos já eleitos como Alvo de Fiscalização (ativos), cravados em "
-        "qualquer estágio (7.2, 7.3.2 ou aqui) — sem filtro de Busca/Ano/Capítulo NCM. Selecione "
-        "uma linha pra remover (cancelar) um alvo."
+        "qualquer estágio (7.2, 7.3.2 ou aqui) — sem filtro de Busca/Ano/Capítulo NCM. Marque a "
+        "coluna \"Excluir\" de um ou mais produtos pra removê-los (cancelar)."
     )
     st.markdown(f"**{total_grupo:,} produto(s) eleito(s)**".replace(",", "."))
     if grupo_atual.empty:
@@ -2488,94 +2533,122 @@ def _render_eleitos_733() -> None:
         .sort_values("TS", ascending=False)
         .reset_index(drop=True)
     )
-    exibicao_renomeada = exibicao_eleitos.rename(columns=loader.carregar_dicionario_campos())
+    exibicao_editor = exibicao_eleitos.rename(columns=loader.carregar_dicionario_campos())
+    exibicao_editor.insert(0, "Excluir", False)
     with st.container(key="estagio733_eleitos"):
         st.markdown(
             "<style>.st-key-estagio733_eleitos [data-testid='stDataFrame'] "
             "* { font-size: 9px; }</style>",
             unsafe_allow_html=True,
         )
-        evento_eleitos = st.dataframe(
-            exibicao_renomeada,
+        editado_eleitos = st.data_editor(
+            exibicao_editor,
             use_container_width=True,
             hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row",
-            key="tabela_eleitos_733",
+            disabled=[coluna for coluna in exibicao_editor.columns if coluna != "Excluir"],
+            key=f"tabela_eleitos_733_{geracao_eleitos}",
+            column_config={"Excluir": st.column_config.CheckboxColumn(default=False)},
         )
 
-    # `alvo_733_para_remover` (session_state PRÓPRIO, não lido direto do
-    # widget a cada render — achado real, 2026-08-16): interagir com
-    # OUTRO widget da mesma seção (ex.: o checkbox de confirmação
-    # abaixo) pode fazer o `evento_eleitos.selection.rows` deste
-    # `st.dataframe` voltar vazio no rerun seguinte, mesmo sem o
-    # usuário ter clicado numa linha diferente — mesmo raciocínio já
-    # usado pra `alvo_733_ativo` nas grades (Parte 5/2026-08-15):
-    # atualiza a variável persistente só quando uma seleção NOVA
-    # aparece, e usa essa variável (não o widget) daqui pra frente.
-    linhas_marcadas = evento_eleitos.selection.rows if evento_eleitos and evento_eleitos.selection else []
+    # Índice do `data_editor` preserva o índice ORIGINAL de `exibicao_
+    # eleitos` (linhas fixas, sem add/delete de linha habilitado) — dá
+    # pra usar `.loc` direto pra recuperar o DESCR_ALVO real (não
+    # renomeado) de cada linha marcada. Só ATUALIZA `_733_eleitos_
+    # marcados` quando a leitura vem não-vazia (ver docstring).
+    linhas_marcadas = editado_eleitos.index[editado_eleitos["Excluir"] == True].tolist()  # noqa: E712
     if linhas_marcadas:
-        st.session_state["alvo_733_para_remover"] = str(exibicao_eleitos.iloc[linhas_marcadas[0]]["DESCR_ALVO"])
+        st.session_state["_733_eleitos_marcados"] = (
+            exibicao_eleitos.loc[linhas_marcadas, "DESCR_ALVO"].astype(str).tolist()
+        )
 
-    descr_selecionado = st.session_state.get("alvo_733_para_remover")
-    if not descr_selecionado:
+    descricoes_selecionadas = st.session_state.get("_733_eleitos_marcados") or []
+    if not descricoes_selecionadas:
         return
     st.divider()
+    st.caption(f"{len(descricoes_selecionadas)} produto(s) marcado(s) pra excluir.")
+    if st.button("Limpar marcação", key="btn_limpar_marcacao_eleitos_733"):
+        st.session_state["_733_eleitos_geracao"] = geracao_eleitos + 1
+        st.session_state["_733_eleitos_marcados"] = None
+        st.rerun()
 
     escolhido_atual = loader.consultar_produto_cruzamento_escolhido()
-    e_escolhido_atual = bool(escolhido_atual) and str(escolhido_atual.get("DESCR_ALVO", "")) == descr_selecionado
-    _, total_confirmados = loader.consultar_cruzamento_confirmado_detalhado(descr_alvo=descr_selecionado, limite=0)
-    _, total_final_produto = loader.consultar_cruzamento_final_produto(descr_alvo=descr_selecionado, limite=0)
-    tem_cruzamento = e_escolhido_atual or total_confirmados > 0 or total_final_produto > 0
+    descr_escolhido_atual = str(escolhido_atual.get("DESCR_ALVO", "")) if escolhido_atual else None
 
-    if tem_cruzamento:
+    detalhes_por_alvo: dict = {}
+    tem_cruzamento_algum = False
+    for descr in descricoes_selecionadas:
+        e_escolhido = descr_escolhido_atual == descr
+        _, total_confirmados = loader.consultar_cruzamento_confirmado_detalhado(descr_alvo=descr, limite=0)
+        _, total_final_produto = loader.consultar_cruzamento_final_produto(descr_alvo=descr, limite=0)
+        tem = e_escolhido or total_confirmados > 0 or total_final_produto > 0
+        detalhes_por_alvo[descr] = (e_escolhido, total_confirmados, total_final_produto, tem)
+        tem_cruzamento_algum = tem_cruzamento_algum or tem
+
+    if tem_cruzamento_algum:
         # Aviso CONTUNDENTE (2026-08-17, pedido do usuário — "o aviso
         # deve ser contundente"): reforça a versão anterior (2026-08-16),
         # que avisava só de desvinculação (soft) — agora é apagamento
         # DE VERDADE (loader.apagar_cruzamentos_produto_alvo_733()), com
-        # texto deixando isso explícito: PERMANENTE, sem desfazer.
-        motivos = []
-        if total_confirmados > 0:
-            motivos.append(f"{total_confirmados} item(ns) confirmado(s) na Rubrica (Estágio 10)")
-        if total_final_produto > 0:
-            motivos.append(f"{total_final_produto} ano(s) com Cruzamento Final salvo (Estágio 10.2)")
-        if e_escolhido_atual:
-            motivos.append("é o produto ATUALMENTE escolhido pra cruzamento no Estágio 10")
+        # texto deixando isso explícito: PERMANENTE, sem desfazer. Um
+        # item de lista por produto MARCADO que tem cruzamento (produtos
+        # marcados sem cruzamento nenhum não entram na lista de motivos,
+        # mas são removidos junto, sem aviso extra pra eles).
+        linhas_aviso = []
+        for descr, (e_escolhido, total_confirmados, total_final_produto, tem) in detalhes_por_alvo.items():
+            if not tem:
+                continue
+            motivos = []
+            if total_confirmados > 0:
+                motivos.append(f"{total_confirmados} item(ns) confirmado(s) na Rubrica (Estágio 10)")
+            if total_final_produto > 0:
+                motivos.append(f"{total_final_produto} ano(s) com Cruzamento Final salvo (Estágio 10.2)")
+            if e_escolhido:
+                motivos.append("é o produto ATUALMENTE escolhido pra cruzamento no Estágio 10")
+            linhas_aviso.append(f"**{descr}** — " + ", ".join(motivos))
         st.warning(
-            f"🔴 **ATENÇÃO — AÇÃO IRREVERSÍVEL.** **{descr_selecionado}** tem " + ", ".join(motivos) + ". "
-            "Remover este alvo vai **APAGAR PERMANENTEMENTE** todo esse cruzamento do banco "
+            "🔴 **ATENÇÃO — AÇÃO IRREVERSÍVEL.** Produto(s) marcado(s) com cruzamento já efetuado:\n\n"
+            + "\n".join(f"- {linha}" for linha in linhas_aviso)
+            + "\n\nRemover esses alvos vai **APAGAR PERMANENTEMENTE** todo esse cruzamento do banco "
             "(Rubrica + Cruzamento Final + escolha atual, se for o caso) — **não existe desfazer.** "
-            "Todo o trabalho de auditoria já feito nesse produto será perdido de vez."
+            "Todo o trabalho de auditoria já feito nesses produtos será perdido de vez."
         )
         confirmar = st.checkbox(
-            "Li o aviso acima. Quero APAGAR PERMANENTEMENTE os cruzamentos deste produto e remover o alvo.",
-            key=f"confirmar_remocao_eleito_733_{descr_selecionado}",
+            "Li o aviso acima. Quero APAGAR PERMANENTEMENTE os cruzamentos destes produtos e remover os alvos.",
+            key="confirmar_remocao_eleitos_733_" + "|".join(sorted(descricoes_selecionadas)),
         )
     else:
         confirmar = True
 
-    rotulo_botao = "🗑️ Apagar Cruzamentos e Remover Alvo" if tem_cruzamento else "🗑️ Remover Alvo Selecionado"
-    if st.button(rotulo_botao, key="btn_remover_eleito_733", disabled=not confirmar):
-        if tem_cruzamento:
-            resultado_apagar = loader.apagar_cruzamentos_produto_alvo_733(descr_selecionado)
-            if "erro" in resultado_apagar:
-                st.error(f"Erro ao apagar cruzamentos: {resultado_apagar['erro']}")
+    rotulo_botao = (
+        f"🗑️ Apagar Cruzamentos e Remover {len(descricoes_selecionadas)} Alvo(s)" if tem_cruzamento_algum
+        else f"🗑️ Remover {len(descricoes_selecionadas)} Alvo(s) Selecionado(s)"
+    )
+    if st.button(rotulo_botao, key="btn_remover_eleitos_733", disabled=not confirmar):
+        total_confirmados_removidos = 0
+        total_final_removido = 0
+        for descr in descricoes_selecionadas:
+            if detalhes_por_alvo[descr][3]:
+                resultado_apagar = loader.apagar_cruzamentos_produto_alvo_733(descr)
+                if "erro" in resultado_apagar:
+                    st.error(f"Erro ao apagar cruzamentos de \"{descr}\": {resultado_apagar['erro']}")
+                    return
+                total_confirmados_removidos += resultado_apagar["total_confirmados_removidos"]
+                total_final_removido += resultado_apagar["total_final_produto_removido"]
+            resultado = loader.cancelar_produto_alvo_733(descr)
+            if "erro" in resultado:
+                st.error(f"Erro ao remover \"{descr}\": {resultado['erro']}")
                 return
-        resultado = loader.cancelar_produto_alvo_733(descr_selecionado)
-        if "erro" in resultado:
-            st.error(f"Erro: {resultado['erro']}")
+        if tem_cruzamento_algum:
+            st.success(
+                f"✅ {len(descricoes_selecionadas)} alvo(s) removido(s) — "
+                f"{total_confirmados_removidos} item(ns) da Rubrica e "
+                f"{total_final_removido} ano(s) do Cruzamento Final apagados permanentemente."
+            )
         else:
-            if tem_cruzamento:
-                st.success(
-                    f"✅ \"{descr_selecionado}\" removido — "
-                    f"{resultado_apagar['total_confirmados_removidos']} item(ns) da Rubrica e "
-                    f"{resultado_apagar['total_final_produto_removido']} ano(s) do Cruzamento Final "
-                    "apagados permanentemente."
-                )
-            else:
-                st.success(f"✅ \"{descr_selecionado}\" removido dos Alvos ativos.")
-            st.session_state["_733_limpar_selecao_eleitos"] = True
-            st.rerun()
+            st.success(f"✅ {len(descricoes_selecionadas)} alvo(s) removido(s) dos Alvos ativos.")
+        st.session_state["_733_eleitos_geracao"] = geracao_eleitos + 1
+        st.session_state["_733_eleitos_marcados"] = None
+        st.rerun()
 
 
 _COLUNAS_RESUMO_SIMULACAO_NCM2_733 = ["ncm2", "DESCRICAO_NCM2", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA"]
@@ -2660,6 +2733,11 @@ def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | No
     exibicao_ncm2["DIVERGENCIA"] = exibicao_ncm2["DIVERGENCIA"].apply(_formatar_moeda_br)
     exibicao_ncm2 = exibicao_ncm2.rename(columns=loader.carregar_dicionario_campos())
 
+    # Título (2026-08-17, pedido do usuário — "nomear todas as tabelas,
+    # caso não haja nome"): antes só tinha o `st.caption()` explicativo
+    # acima, sem uma linha de título curta como as demais tabelas do
+    # 7.3.3 (Grades de Produtos, Relação de Eleitos) já têm.
+    st.markdown(f"**Simulação NCM2 — Divergência por Capítulo** — {len(exibicao_ncm2):,} linha(s)".replace(",", "."))
     with st.container(key="estagio733_ncm2_tabela"):
         st.markdown(
             "<style>.st-key-estagio733_ncm2_tabela [data-testid='stDataFrame'] "
