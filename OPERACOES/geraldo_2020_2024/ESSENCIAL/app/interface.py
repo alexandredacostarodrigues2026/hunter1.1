@@ -3012,19 +3012,20 @@ def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | No
     # Detalhamento — "explode" com os demais campos (EI/Compras/Total
     # Débito/Vendas/EF/Total Crédito) só depois de selecionar uma linha
     # (2026-08-16, pedido do usuário: "depois de selecionar ai sim na
-    # tabela inferior explodir com demais campos") — esses campos saíram
-    # da tabela principal (resumida) acima. `tabela_ncm2` (não `exibicao_
-    # ncm2`, já reduzida às 5 colunas) ainda tem TODAS as colunas —
-    # filtra só a linha do Capítulo selecionado.
+    # tabela inferior explodir com demais campos"). "Explode" também POR
+    # ANO (2026-08-18, pedido do usuário: "gostaria que aqui explodisse
+    # por ano") — antes mostrava 1 linha só, com todos os anos já
+    # somados; agora usa `loader.simular_ncm2_733_por_ano()` (mesmo
+    # padrão de "drill-down por ano" já usado no 7.3.2 por produto,
+    # `simular_rn1_fisica_30()`), 1 linha por ANO do Capítulo.
     if ncm2_selecionado:
-        linha_detalhe = tabela_ncm2[tabela_ncm2["ncm2"] == ncm2_selecionado]
-        if not linha_detalhe.empty:
-            st.markdown(f"**Detalhamento do Capítulo NCM {ncm2_selecionado}**")
+        detalhe_por_ano = loader.simular_ncm2_733_por_ano(ncm2_selecionado, busca_descricao)
+        if not detalhe_por_ano.empty:
+            st.markdown(f"**Detalhamento do Capítulo NCM {ncm2_selecionado} — por ano**")
             # Sem a Descrição aqui (2026-08-16, pedido do usuário — "em
             # Detalhamento do Capítulo NCM 19, não trazer descrição"): já
-            # apareceu na linha selecionada do resumo logo acima, repetir
-            # só ocuparia espaço numa tabela de 1 linha só.
-            detalhe_exibicao = linha_detalhe.drop(columns=["DESCRICAO_NCM2"]).copy()
+            # apareceu na linha selecionada do resumo logo acima.
+            detalhe_exibicao = detalhe_por_ano.copy()
             acima_30_detalhe = detalhe_exibicao["PCT_DIVERGENCIA"] > _LIMIAR_DESTAQUE_VERMELHO_PCT_DIVERG
             detalhe_exibicao["PCT_DIVERGENCIA"] = detalhe_exibicao["PCT_DIVERGENCIA"].apply(_formatar_pct_br)
             for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:

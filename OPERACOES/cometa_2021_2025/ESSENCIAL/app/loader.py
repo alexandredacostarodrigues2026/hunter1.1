@@ -5815,6 +5815,10 @@ _COLUNAS_SIMULACAO_NCM2_733 = [
     "ncm2", "DESCRICAO_NCM2", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
     "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
 ]
+_COLUNAS_SIMULACAO_NCM2_733_POR_ANO = [
+    "ANO", "ncm2", "EI", "COMPRAS", "TOTAL_DEBITO", "VENDAS", "EF",
+    "TOTAL_CREDITO", "DIVERGENCIA", "INFRACAO", "PCT_DIVERGENCIA",
+]
 
 
 def _padrao_busca_curinga_ncm2(texto: str) -> str:
@@ -6068,6 +6072,45 @@ def gerar_simulacao_ncm2_733(busca_descricao: str = "", ano_selecionado: str = "
         "total_divergencia_acumulada": float(simulacao["DIVERGENCIA"].sum()),
     }
     return {"resumo": resumo, "simulacao": simulacao, "erros": []}
+
+
+def simular_ncm2_733_por_ano(ncm2: str, busca_descricao: str = "") -> pd.DataFrame:
+    """Estágio 7.3.3 (NCM2) — drill-down por ano: filtra `simulacao_
+    ncm2_733_base` (ANO+COD_ITEM+ncm2, ver `gerar_base_simulacao_
+    ncm2_733()`) pelo Capítulo NCM clicado e aplica a mesma simulação
+    +30% de `gerar_simulacao_ncm2_733()` (`_aplicar_simulacao_30()`),
+    linha a linha por ANO — sem condensar. Mesmo raciocínio de
+    `simular_rn1_fisica_30()` (Estágio 7.3.2, drill-down por ano de um
+    produto), aqui aplicado ao Capítulo NCM em vez de Descrição
+    Relevante. 2026-08-18, pedido do usuário: "gostaria que aqui
+    explodisse por ano" (na tabela de Detalhamento do Capítulo, que
+    antes só mostrava 1 linha com todos os anos já somados).
+    `busca_descricao` — MESMO filtro de `gerar_simulacao_ncm2_733()`,
+    aplicado antes de agrupar por ano (mantém coerência com o recorte já
+    visível na tela). Devolve DataFrame vazio se a base ainda não foi
+    gerada ou o Capítulo não tiver nenhuma linha. Ordenação: por ANO
+    crescente."""
+    base, _ = consultar_base_simulacao_ncm2_733(limite=None)
+    if base.empty:
+        return pd.DataFrame(columns=_COLUNAS_SIMULACAO_NCM2_733_POR_ANO)
+
+    filtrado = base[base["ncm2"] == ncm2]
+    if busca_descricao and busca_descricao.strip():
+        filtrado = filtrado[
+            filtrado["DESCR_ITEM"].str.contains(
+                _padrao_busca_curinga_ncm2(busca_descricao.strip()), case=False, na=False,
+            )
+        ]
+    if filtrado.empty:
+        return pd.DataFrame(columns=_COLUNAS_SIMULACAO_NCM2_733_POR_ANO)
+
+    agrupado = filtrado.groupby(["ANO", "ncm2"], as_index=False)[["EI", "COMPRAS", "VENDAS", "EF"]].sum()
+    simulado = _aplicar_simulacao_30(agrupado)
+    return (
+        _forcar_colunas_string(simulado, ["ANO", "ncm2"])[_COLUNAS_SIMULACAO_NCM2_733_POR_ANO]
+        .sort_values("ANO")
+        .reset_index(drop=True)
+    )
 
 
 def filtrar_por_ncm2_733(df: pd.DataFrame, ncm2: "str | None") -> pd.DataFrame:
