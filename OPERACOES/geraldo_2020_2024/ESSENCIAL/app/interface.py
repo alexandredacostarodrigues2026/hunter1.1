@@ -5221,16 +5221,23 @@ def _render_itens_individuais(detalhado: pd.DataFrame, colunas_preview: list, su
     campos ORIGINAIS (brutos do XML, nunca sobrescritos) lado a lado
     com os campos "utilizados" (efetivos após tratamento, ou iguais aos
     originais quando não há tratamento — ver _aplicar_tratamento_fm_
-    detalhado())."""
+    detalhado()).
+
+    Recolhida atrás de um `st.expander` (2026-08-18, pedido do usuário —
+    "no estágio 10, recolher as tabelas de entradas/saidas e estoques e
+    criar botão para expandí-las"): as 3 abas (Entradas/Saídas/Estoque)
+    chamam esta MESMA função, com `sufixo_key` diferente — o expander
+    aqui cobre as 3 automaticamente, sem precisar mexer em cada aba."""
     preview = _preparar_preview(detalhado, colunas_preview)
-    chave_container = f"cruzamento_{sufixo_key}_detalhado_tabela"
-    with st.container(key=chave_container):
-        st.markdown(
-            f"<style>.st-key-{chave_container} [data-testid='stDataFrame'] "
-            "* { font-size: 12px; }</style>",
-            unsafe_allow_html=True,
-        )
-        st.dataframe(preview, use_container_width=True, hide_index=True)
+    with st.expander(f"Ver Itens Individuais ({len(preview):,} item(ns))".replace(",", "."), expanded=False):
+        chave_container = f"cruzamento_{sufixo_key}_detalhado_tabela"
+        with st.container(key=chave_container):
+            st.markdown(
+                f"<style>.st-key-{chave_container} [data-testid='stDataFrame'] "
+                "* { font-size: 12px; }</style>",
+                unsafe_allow_html=True,
+            )
+            st.dataframe(preview, use_container_width=True, hide_index=True)
 
 
 def _render_cruzamento_entradas(escolhido: dict) -> None:
