@@ -5240,6 +5240,44 @@ def _render_itens_individuais(detalhado: pd.DataFrame, colunas_preview: list, su
             st.dataframe(preview, use_container_width=True, hide_index=True)
 
 
+def _input_busca_xml_compartilhado(aba: str) -> str:
+    """Campo "🔎 Buscar por descrição do XML" — Estágio 10 (Rubrica do
+    Produto Alvo), compartilhado entre as 3 abas (Entradas/Saídas/
+    Estoque, `aba` só identifica QUAL está chamando, pra montar uma
+    `key` própria). 2026-08-18, pedido do usuário — "persistir para
+    entradas, saidas e estoques": antes cada aba (e cada Critério de
+    busca dentro da mesma aba) tinha sua PRÓPRIA `key` independente
+    (`busca_xml_entradas_{sufixo_criterio}` etc.) — digitar numa aba não
+    aparecia nas outras. Já era case-insensitive nas 3 (`str.contains(
+    ..., case=False, ...)`, sem mudança aí) — o pedido era sobre
+    COMPARTILHAR o termo, não sobre a comparação em si.
+
+    Não dá pra usar a MESMA `key` literal nas 3 chamadas — `st.tabs()`
+    roda o conteúdo das 3 abas no MESMO script run (só a exibição é
+    client-side), então as 3 chamadas de `st.text_input()` acontecem
+    sempre juntas — `key` repetida vira `StreamlitDuplicateElementKey`
+    (erro real capturado em teste). Resolvido com o mesmo truque de `key`
+    DINÂMICA já usado noutros pontos deste módulo (geração incrementada
+    quando o termo muda, key = f"..._{aba}_{geracao}" — única POR ABA
+    mas sincronizada entre as 3 pela MESMA geração compartilhada):
+    quando o usuário edita numa aba, a geração incrementa e todas as
+    3 próximas instâncias (inclusive as que ainda vão rodar NESTE MESMO
+    script run, se a aba editada veio antes das outras na ordem de
+    chamada) nascem com o `value=` já sincronizado."""
+    termo_atual = st.session_state.get("_termo_busca_xml_estagio10", "")
+    geracao = st.session_state.get("_termo_busca_xml_estagio10_geracao", 0)
+    termo_busca_xml = st.text_input(
+        "🔎 Buscar por descrição do XML",
+        value=termo_atual,
+        key=f"busca_xml_estagio10_rubrica_{aba}_{geracao}",
+        placeholder="Filtrar as combinações abaixo pela descrição do XML...",
+    )
+    if termo_busca_xml != termo_atual:
+        st.session_state["_termo_busca_xml_estagio10"] = termo_busca_xml
+        st.session_state["_termo_busca_xml_estagio10_geracao"] = geracao + 1
+    return termo_busca_xml
+
+
 def _render_cruzamento_entradas(escolhido: dict) -> None:
     """Aba 'Entradas' do cruzamento (Estágio 10): compara o produto
     escolhido com estagio8_agrupado (Entradas) usando o critério
@@ -5310,19 +5348,20 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     que a escolha do critério é o que DEFINE qual comparação roda — ver
     _obter_criterios_cruzamento_entradas() pro despacho.
 
-    Descrição/Unidade EFETIVAS (2026-08-04): todos os textos desta tela
-    (captions/avisos) usam `descr_efetiva`/`unid_efetiva` —
-    loader.descricao_efetiva_escolhido()/unidade_efetiva_escolhido() —
-    em vez de `escolhido['DESCR_ALVO']`/`escolhido['UNID_ALVO']` puros:
-    usam DESCR_EDITADA/UNID_EDITADA (Estágio 10) quando preenchidos,
-    senão caem pro original. Achado real do usuário: editou a descrição
-    no Estágio 10 e viu que o texto/comparação daqui continuava usando
-    a original ("mas o produto alvo ainda é o descrição origina").
-    Identidade/chave (loader.cruzar_produto_escolhido_*(),
-    consultar_cruzamento_confirmado(), salvar_cruzamento_confirmado())
-    continua SEMPRE por `escolhido['DESCR_ALVO']` puro — só o TEXTO/
-    COMPARAÇÃO DE SIMILARIDADE usa a versão efetiva (ver
-    loader.descricao_efetiva_escolhido() pro raciocínio completo)."""
+    Descrição EFETIVA (2026-08-04): os avisos desta tela (`st.warning`
+    de "nenhuma combinação encontrada") usam `descr_efetiva` —
+    loader.descricao_efetiva_escolhido() — em vez de
+    `escolhido['DESCR_ALVO']` puro: usa DESCR_EDITADA (Estágio 10)
+    quando preenchida, senão cai pra original. Achado real do usuário:
+    editou a descrição no Estágio 10 e viu que o texto/comparação daqui
+    continuava usando a original ("mas o produto alvo ainda é o
+    descrição origina"). Identidade/chave (loader.cruzar_produto_
+    escolhido_*(), consultar_cruzamento_confirmado(), salvar_
+    cruzamento_confirmado()) continua SEMPRE por `escolhido['DESCR_
+    ALVO']` puro — só o TEXTO usa a versão efetiva. As legendas
+    explicativas por critério de busca (que também usavam `unid_
+    efetiva`) foram retiradas em 2026-08-18 (pedido do usuário —
+    "retirar o texto")."""
     criterios = _obter_criterios_cruzamento_entradas()
     criterio_busca = st.selectbox(
         "Critério de busca",
@@ -5332,46 +5371,8 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     fn_agrupado, fn_detalhado = criterios[criterio_busca]
     sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
     descr_efetiva = loader.descricao_efetiva_escolhido(escolhido)
-    unid_efetiva = loader.unidade_efetiva_escolhido(escolhido)
     if escolhido.get("IS_ST"):
         st.caption(f"🏷️ **{descr_efetiva}** é **ST** (Substituição Tributária).")
-
-    if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
-        st.caption(
-            f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com o MESMO código de produto "
-            f"de **{descr_efetiva}** ({escolhido['COD_ITEM']}) — Unidade: **{unid_efetiva or '—'}** — "
-            "comparação normalizada (zero à esquerda em código numérico não conta como diferença) — "
-            "ordenadas por similaridade de descrição (overlap de tokens) entre o produto do XML e a "
-            "descrição do alvo."
-        )
-    elif criterio_busca == loader.CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL:
-        st.caption(
-            f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) cujo nome de declaração "
-            f"(`descrição_decl` — como a própria auditada chama o item) é IGUAL (normalizado — "
-            f"maiúsculas/espaços) ao de **{descr_efetiva}** ({escolhido['COD_ITEM']}), "
-            "sem exigir nenhuma relação de código. Ordenadas por similaridade de descrição (overlap "
-            "de tokens) entre o produto do XML e a descrição do alvo — aqui informativa, não filtra."
-        )
-    elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
-        st.caption(
-            f"Pesquisa livre em `estagio8_agrupado` (Entradas, Estágio 8) pra comparar com "
-            f"**{descr_efetiva}** ({escolhido['COD_ITEM']}) — SEM filtro de código "
-            "(nem igual, nem divergente) e SEM piso de similaridade. Útil quando o candidato certo "
-            "tem pouca ou nenhuma semelhança de texto com o alvo (nomenclatura muito diferente), "
-            "caso em que o Critério 3 nunca o encontraria. Digite um termo na busca abaixo (ex.: "
-            "parte do nome do alvo) pra ver candidatos, incluindo o próprio produto alvo se ele "
-            "aparecer em `estagio8_agrupado` — sem termo, a tabela fica oculta (evita carregar "
-            "milhares de grupos de uma vez)."
-        )
-    else:
-        st.caption(
-            f"Combinações em `estagio8_agrupado` (Entradas, Estágio 8) com código DIVERGENTE (diferente) "
-            f"do de **{descr_efetiva}** ({escolhido['COD_ITEM']}) — cobre o caso em que o "
-            "produto é o mesmo fisicamente, mas o código na declaração/XML diverge do código oficial do "
-            f"alvo. Só entram candidatos com similaridade de descrição ≥ "
-            f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% (aqui a similaridade FILTRA, não é só ordenação, "
-            "já que o código não serve de evidência), ordenados por similaridade (desc)."
-        )
 
     correspondentes, _ = fn_agrupado()
     if correspondentes.empty:
@@ -5471,11 +5472,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     # máscara pra manter os índices alinhados — o botão "Salvar na
     # Rubrica" usa editor_base.index como referência pro que veio do
     # st.data_editor.
-    termo_busca_xml = st.text_input(
-        "🔎 Buscar por descrição do XML",
-        key=f"busca_xml_entradas_{sufixo_criterio}",
-        placeholder="Filtrar as combinações abaixo pela descrição do XML...",
-    )
+    termo_busca_xml = _input_busca_xml_compartilhado("entradas")
     if termo_busca_xml:
         mask_busca = editor_base["desc_xml"].str.contains(termo_busca_xml, case=False, na=False, regex=False)
         editor_base = editor_base[mask_busca]
@@ -5496,9 +5493,16 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
 
     colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
     with st.container(key="cruzamento_entradas_tabela"):
+        # Fonte reduzida de 10px pra 8px (2026-08-18, pedido do usuário —
+        # "diminua a fonte, quero ver todas as colunas") — mesmo menor
+        # tamanho já usado nas tabelas de alta densidade do 7.3.3 (NCM2).
+        # As 7 colunas exibidas (Salvar/Desfazer/Observação/Cod. Produto
+        # Declaração/Descrição XML/Qtde. Ocorrências/Similaridade
+        # Descrição) já eram TODAS as colunas disponíveis — nenhuma
+        # estava sendo omitida, o corte era só de largura de tela.
         st.markdown(
             "<style>.st-key-cruzamento_entradas_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 10px; }</style>",
+            "* { font-size: 8px; }</style>",
             unsafe_allow_html=True,
         )
         editado = st.data_editor(
@@ -5795,13 +5799,7 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
         for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
     ])
 
-    # Busca por descrição do XML — ver comentário equivalente em
-    # _render_cruzamento_entradas().
-    termo_busca_xml = st.text_input(
-        "🔎 Buscar por descrição do XML",
-        key=f"busca_xml_saidas_{sufixo_criterio}",
-        placeholder="Filtrar as combinações abaixo pela descrição do XML...",
-    )
+    termo_busca_xml = _input_busca_xml_compartilhado("saidas")
     if termo_busca_xml:
         mask_busca = editor_base["desc_xml"].str.contains(termo_busca_xml, case=False, na=False, regex=False)
         editor_base = editor_base[mask_busca]
@@ -6104,11 +6102,7 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     # ver cruzar_produto_escolhido_estoque() em loader.py) — o filtro
     # funciona igual, mesmo com a coluna "Descricao XML" oculta na
     # exibição.
-    termo_busca_xml = st.text_input(
-        "🔎 Buscar por descrição do XML",
-        key=f"busca_xml_estoque_{sufixo_criterio}",
-        placeholder="Filtrar as combinações abaixo pela descrição do XML...",
-    )
+    termo_busca_xml = _input_busca_xml_compartilhado("estoque")
     if termo_busca_xml:
         mask_busca = editor_base["desc_xml"].str.contains(termo_busca_xml, case=False, na=False, regex=False)
         editor_base = editor_base[mask_busca]
@@ -6241,7 +6235,9 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
 
 
 _COLUNAS_PRODUTOS_ALVO_SALVOS = [
-    "DESCR_ALVO", "COD_ITEM", "UNID_ALVO", "UNID_EDITADA", "DESCR_EDITADA", "IS_ST",
+    # DESCR_EDITADA antes de UNID_EDITADA (2026-08-18, pedido do usuário —
+    # "colocar descrição editada na frente de unid editada").
+    "DESCR_ALVO", "COD_ITEM", "UNID_ALVO", "DESCR_EDITADA", "UNID_EDITADA", "IS_ST",
 ]
 _COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS = "🎯 Escolher p/ Cruzamento"
 # Rótulos de exibição (ver DICIONARIO DE CAMPOS.txt) — usados pra achar
@@ -6473,9 +6469,16 @@ def render_produtos_alvo_salvos() -> None:
                 unsafe_allow_html=True,
             )
             with st.container(key=chave_botao):
+                # Rótulo (2026-08-18, pedido do usuário — "mudar o nome para
+                # equalização automática de descrição do produtos e unidade
+                # de medida"): antes "Execução Automática (Crit. 1-3 |
+                # Confiança > 60% | + FM)" — detalhe técnico movido pro
+                # `help=` (tooltip), não perdido, só deixou de poluir o
+                # rótulo do botão.
                 clicou_automatico = st.button(
-                    "⚡ Execução Automática (Crit. 1-3 | Confiança > 60% | + FM)",
+                    "⚡ Equalização Automática de Descrição do Produto e Unidade de Medida",
                     key="btn_execucao_automatica_rubrica",
+                    help="Critérios 1-3, Confiança > 60%, + Fator Multiplicador (FM)",
                 )
             # Barras de progresso (2026-07-30, pedido do usuário: "ao
             # pressionar equalização automática, criar barra de progresso
