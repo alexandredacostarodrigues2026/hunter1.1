@@ -3623,7 +3623,9 @@ def render_menu_principal() -> None:
     # containers/tabelas de alta densidade no resto do app; aqui aplicado
     # ao próprio <button>, com !important pra sobrepor o tema padrão do
     # Streamlit. Cor semitransparente (não sólida) pra continuar legível
-    # tanto no tema claro quanto no escuro.
+    # tanto no tema claro quanto no escuro. Estágio 8/Estágio 9/11
+    # (Consolidado Geral) adicionados 2026-08-18 (pedido do usuário —
+    # "deixe cinza como 7.2").
     st.markdown(
         "<style>"
         + "".join(
@@ -3631,6 +3633,7 @@ def render_menu_principal() -> None:
             for chave in (
                 "btn_menu_cruzamento_valor", "btn_menu_cruzamento_produto",
                 "btn_menu_rn1_fisica", "btn_menu_rn1_produto",
+                "btn_menu_estagio_8", "btn_menu_estagio_9", "btn_menu_consolidado_11",
             )
         )
         + "</style>",
