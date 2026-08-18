@@ -3625,12 +3625,14 @@ def render_menu_principal() -> None:
     # Streamlit. Cor semitransparente (não sólida) pra continuar legível
     # tanto no tema claro quanto no escuro. Estágio 8/Estágio 9/11
     # (Consolidado Geral) adicionados 2026-08-18 (pedido do usuário —
-    # "deixe cinza como 7.2").
+    # "deixe cinza como 7.2"); Auditoria1/Descrição Relevante adicionados
+    # no mesmo dia, em seguida ("tb").
     st.markdown(
         "<style>"
         + "".join(
             f".st-key-{chave} button {{ background-color: rgba(128, 128, 128, 0.35) !important; }}"
             for chave in (
+                "btn_menu_auditoria1", "btn_menu_descricao_relevante",
                 "btn_menu_cruzamento_valor", "btn_menu_cruzamento_produto",
                 "btn_menu_rn1_fisica", "btn_menu_rn1_produto",
                 "btn_menu_estagio_8", "btn_menu_estagio_9", "btn_menu_consolidado_11",
