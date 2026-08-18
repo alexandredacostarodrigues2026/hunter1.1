@@ -769,6 +769,40 @@ _COLUNAS_PREVIEW_SITUACAO = [
 ]
 
 
+def _aplicar_fonte_dataframe(chave_container: str, tamanho_px: int) -> None:
+    """Reduz o tamanho de fonte de um `st.dataframe`/`st.data_editor` dentro
+    de um `st.container(key=chave_container)` — 2026-08-18, ACHADO REAL
+    (pedido do usuário: "fonte grande ainda. diminua", numa tabela que já
+    tinha a CSS antiga aplicada, sem efeito visual nenhum): `st.dataframe`/
+    `st.data_editor` (Streamlit 1.58) renderizam via glide-data-grid, que
+    desenha TUDO — cabeçalho e células — dentro de um `<canvas>`, não como
+    texto de DOM comum. A regra CSS genérica `* { font-size: Npx }`, usada
+    em TODA tabela deste app até esta data, NUNCA teve efeito real no
+    conteúdo das células (só talvez em algum elemento de DOM residual do
+    widget) — confirmado inspecionando o bundle JS do Streamlit
+    (`static/js/DataFrame.*.js`): o glide-data-grid lê o tamanho de fonte
+    via CSS CUSTOM PROPERTIES próprias, setadas via `style` inline pelo
+    componente React a partir do tema (`--gdg-base-font-style` pras
+    células, `--gdg-header-font-style` pro cabeçalho, formato "{peso}
+    {tamanho}px" — "400 13px"/"600 13px" são os padrões visuais). Só um
+    override dessas variáveis específicas, com `!important` (pra vencer o
+    `style` inline do React), muda o tamanho de verdade desenhado no
+    canvas. Mantém a regra `font-size` antiga também (não atrapalha, só
+    nunca fazia nada sozinha). Centralizado aqui — antes cada uma das ~30
+    tabelas do app tinha sua própria cópia da CSS antiga (incorreta),
+    reescrever cada uma na mão seria repetir o mesmo bug 30 vezes."""
+    st.markdown(
+        f"<style>.st-key-{chave_container} [data-testid='stDataFrame'] * {{ "
+        f"font-size: {tamanho_px}px !important; "
+        f"--gdg-base-font-style: 400 {tamanho_px}px !important; "
+        f"--gdg-header-font-style: 600 {tamanho_px}px !important; "
+        f"--gdg-marker-font-style: 400 {tamanho_px}px !important; "
+        f"--gdg-editor-font-size: {tamanho_px}px !important; "
+        f"}}</style>",
+        unsafe_allow_html=True,
+    )
+
+
 def _preparar_preview(df: pd.DataFrame, colunas: list) -> pd.DataFrame:
     """Seleciona as colunas relevantes e as renomeia para os nomes amigáveis
     do DICIONARIO DE CAMPOS.txt antes de exibir."""
@@ -1616,11 +1650,7 @@ def render_cruzamento_valor() -> None:
             for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
                 amostra[_col] = amostra[_col].apply(_formatar_moeda_br)
             with st.container(key="cruzamento_valor_tabela"):
-                st.markdown(
-                    "<style>.st-key-cruzamento_valor_tabela [data-testid='stDataFrame'] "
-                    "* { font-size: 12px; }</style>",
-                    unsafe_allow_html=True,
-                )
+                _aplicar_fonte_dataframe("cruzamento_valor_tabela", 12)
                 st.dataframe(
                     _preparar_preview(amostra, _COLUNAS_PREVIEW_CRUZAMENTO_VALOR),
                     use_container_width=True,
@@ -1709,11 +1739,7 @@ def render_cruzamento_produto() -> None:
             for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
                 amostra[_col] = amostra[_col].apply(_formatar_moeda_br)
             with st.container(key="cruzamento_produto_tabela"):
-                st.markdown(
-                    "<style>.st-key-cruzamento_produto_tabela [data-testid='stDataFrame'] "
-                    "* { font-size: 12px; }</style>",
-                    unsafe_allow_html=True,
-                )
+                _aplicar_fonte_dataframe("cruzamento_produto_tabela", 12)
                 st.dataframe(
                     _preparar_preview(amostra, _COLUNAS_PREVIEW_CRUZAMENTO_PRODUTO),
                     use_container_width=True,
@@ -1738,11 +1764,7 @@ def render_cruzamento_produto() -> None:
                     for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
                         detalhe[_col] = detalhe[_col].apply(_formatar_moeda_br)
                     with st.container(key="cruzamento_produto_drilldown_tabela"):
-                        st.markdown(
-                            "<style>.st-key-cruzamento_produto_drilldown_tabela "
-                            "[data-testid='stDataFrame'] * { font-size: 12px; }</style>",
-                            unsafe_allow_html=True,
-                        )
+                        _aplicar_fonte_dataframe("cruzamento_produto_drilldown_tabela", 12)
                         st.dataframe(
                             _preparar_preview(detalhe, _COLUNAS_PREVIEW_CRUZAMENTO_VALOR),
                             use_container_width=True,
@@ -1865,11 +1887,7 @@ def render_rn1_fisica() -> None:
             for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
                 amostra[_col] = amostra[_col].apply(_formatar_moeda_br)
             with st.container(key="rn1_fisica_tabela"):
-                st.markdown(
-                    "<style>.st-key-rn1_fisica_tabela [data-testid='stDataFrame'] "
-                    "* { font-size: 12px; }</style>",
-                    unsafe_allow_html=True,
-                )
+                _aplicar_fonte_dataframe("rn1_fisica_tabela", 12)
                 st.dataframe(
                     _preparar_preview_rn1_fisica(amostra),
                     use_container_width=True,
@@ -1973,11 +1991,7 @@ def render_rn1_produto() -> None:
             for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
                 amostra[_col] = amostra[_col].apply(_formatar_moeda_br)
             with st.container(key="rn1_produto_tabela"):
-                st.markdown(
-                    "<style>.st-key-rn1_produto_tabela [data-testid='stDataFrame'] "
-                    "* { font-size: 12px; }</style>",
-                    unsafe_allow_html=True,
-                )
+                _aplicar_fonte_dataframe("rn1_produto_tabela", 12)
                 st.dataframe(
                     _preparar_preview_rn1_produto(amostra),
                     use_container_width=True,
@@ -2002,11 +2016,7 @@ def render_rn1_produto() -> None:
                     for _col in _COLUNAS_MONETARIAS_CRUZAMENTO_VALOR:
                         detalhe[_col] = detalhe[_col].apply(_formatar_moeda_br)
                     with st.container(key="rn1_produto_drilldown_tabela"):
-                        st.markdown(
-                            "<style>.st-key-rn1_produto_drilldown_tabela "
-                            "[data-testid='stDataFrame'] * { font-size: 12px; }</style>",
-                            unsafe_allow_html=True,
-                        )
+                        _aplicar_fonte_dataframe("rn1_produto_drilldown_tabela", 12)
                         st.dataframe(
                             _preparar_preview_rn1_fisica(detalhe),
                             use_container_width=True,
@@ -2204,11 +2214,7 @@ def _render_grupo_produto_alvo_fiscalizacao(amostra_raw: pd.DataFrame) -> None:
         if c not in (_COLUNA_CHECKBOX_GRUPO_PRODUTO_ALVO, _COLUNA_CHECKBOX_VER_ANOS)
     ]
     with st.container(key="rn1_simulada_30_editor_grupo_alvo"):
-        st.markdown(
-            "<style>.st-key-rn1_simulada_30_editor_grupo_alvo [data-testid='stDataFrame'] "
-            "* { font-size: 12px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("rn1_simulada_30_editor_grupo_alvo", 12)
         editado = st.data_editor(
             editor_exibicao,
             use_container_width=True,
@@ -2524,11 +2530,7 @@ def _render_grades_produtos_733(
             exibicao = exibicao.rename(columns=loader.carregar_dicionario_campos())
             chave_tabela = _CHAVES_GRADE_733[origem]
             with st.container(key=f"estagio733_grade_container_{origem}"):
-                st.markdown(
-                    f"<style>.st-key-estagio733_grade_container_{origem} [data-testid='stDataFrame'] "
-                    "* { font-size: 9px; }</style>",
-                    unsafe_allow_html=True,
-                )
+                _aplicar_fonte_dataframe(f"estagio733_grade_container_{origem}", 9)
                 eventos[origem] = st.dataframe(
                     exibicao,
                     use_container_width=True,
@@ -2758,11 +2760,7 @@ def _render_eleitos_733() -> None:
     exibicao_editor = exibicao_eleitos.rename(columns=loader.carregar_dicionario_campos())
     exibicao_editor.insert(0, "Excluir", False)
     with st.container(key="estagio733_eleitos"):
-        st.markdown(
-            "<style>.st-key-estagio733_eleitos [data-testid='stDataFrame'] "
-            "* { font-size: 9px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("estagio733_eleitos", 9)
         editado_eleitos = st.data_editor(
             exibicao_editor,
             use_container_width=True,
@@ -2971,11 +2969,7 @@ def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | No
     # mexer em outro campo da tela).
     st.caption("☑️ Selecionar")
     with st.container(key="estagio733_ncm2_tabela"):
-        st.markdown(
-            "<style>.st-key-estagio733_ncm2_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 8px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("estagio733_ncm2_tabela", 8)
         evento_ncm2 = st.dataframe(
             _destacar_vermelho_grupo_alvo(exibicao_ncm2, acima_30_ncm2),
             use_container_width=True,
@@ -3032,11 +3026,7 @@ def _render_simulacao_ncm2_733(busca_descricao: str, ncm2_selecionado: "str | No
                 detalhe_exibicao[_col] = detalhe_exibicao[_col].apply(_formatar_moeda_br)
             detalhe_exibicao = detalhe_exibicao.rename(columns=loader.carregar_dicionario_campos())
             with st.container(key="estagio733_ncm2_detalhe"):
-                st.markdown(
-                    "<style>.st-key-estagio733_ncm2_detalhe [data-testid='stDataFrame'] "
-                    "* { font-size: 8px; }</style>",
-                    unsafe_allow_html=True,
-                )
+                _aplicar_fonte_dataframe("estagio733_ncm2_detalhe", 8)
                 st.dataframe(
                     _destacar_vermelho_grupo_alvo(detalhe_exibicao, acima_30_detalhe),
                     use_container_width=True,
@@ -4254,11 +4244,7 @@ def _render_bloco_estagio8(
             st.markdown(f"Prévia limitada a 200 linhas de {total:,}".replace(",", "."))
             chave_container = f"{chave_widget}_detalhado_tabela"
             with st.container(key=chave_container):
-                st.markdown(
-                    f"<style>.st-key-{chave_container} [data-testid='stDataFrame'] "
-                    "* { font-size: 12px; }</style>",
-                    unsafe_allow_html=True,
-                )
+                _aplicar_fonte_dataframe(chave_container, 12)
                 st.dataframe(
                     _preparar_preview(df_preview, colunas_preview_detalhado),
                     use_container_width=True,
@@ -4297,11 +4283,7 @@ def _render_bloco_estagio8(
             st.markdown(f"Prévia limitada a 200 linhas de {total:,}".replace(",", "."))
             chave_container = f"{chave_widget}_agrupado_tabela"
             with st.container(key=chave_container):
-                st.markdown(
-                    f"<style>.st-key-{chave_container} [data-testid='stDataFrame'] "
-                    "* { font-size: 12px; }</style>",
-                    unsafe_allow_html=True,
-                )
+                _aplicar_fonte_dataframe(chave_container, 12)
                 st.dataframe(
                     _preparar_preview(df_preview, colunas_preview_agrupado),
                     use_container_width=True,
@@ -4582,11 +4564,7 @@ def render_curadoria_fm_entradas() -> None:
     )
     colunas_travadas = [c for c in editor_exibicao.columns if c not in ("FM Sugerido", "Nova UP")]
     with st.container(key="curadoria_fm_entradas_tabela"):
-        st.markdown(
-            "<style>.st-key-curadoria_fm_entradas_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 10px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("curadoria_fm_entradas_tabela", 10)
         editado = st.data_editor(
             editor_exibicao,
             use_container_width=True,
@@ -4633,11 +4611,7 @@ def render_curadoria_fm_entradas() -> None:
         return
     st.markdown(f"Prévia limitada a 200 linhas de {total_detalhado:,}".replace(",", "."))
     with st.container(key="curadoria_fm_entradas_detalhado_tabela"):
-        st.markdown(
-            "<style>.st-key-curadoria_fm_entradas_detalhado_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 12px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("curadoria_fm_entradas_detalhado_tabela", 12)
         st.dataframe(
             _preparar_preview(detalhado, _COLUNAS_PREVIEW_FM_ENTRADAS_DETALHADO),
             use_container_width=True,
@@ -4729,11 +4703,7 @@ def render_curadoria_fm_saidas() -> None:
     )
     colunas_travadas = [c for c in editor_exibicao.columns if c not in ("FM Sugerido", "Nova UP")]
     with st.container(key="curadoria_fm_saidas_tabela"):
-        st.markdown(
-            "<style>.st-key-curadoria_fm_saidas_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 10px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("curadoria_fm_saidas_tabela", 10)
         editado = st.data_editor(
             editor_exibicao,
             use_container_width=True,
@@ -4769,11 +4739,7 @@ def render_curadoria_fm_saidas() -> None:
         return
     st.markdown(f"Prévia limitada a 200 linhas de {total_detalhado:,}".replace(",", "."))
     with st.container(key="curadoria_fm_saidas_detalhado_tabela"):
-        st.markdown(
-            "<style>.st-key-curadoria_fm_saidas_detalhado_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 12px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("curadoria_fm_saidas_detalhado_tabela", 12)
         st.dataframe(
             _preparar_preview(detalhado, _COLUNAS_PREVIEW_FM_SAIDAS_DETALHADO),
             use_container_width=True,
@@ -4863,11 +4829,7 @@ def render_curadoria_fm_estoque() -> None:
     editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
     colunas_travadas = [c for c in editor_exibicao.columns if c not in ("FM Sugerido", "Nova UP")]
     with st.container(key="curadoria_fm_estoque_tabela"):
-        st.markdown(
-            "<style>.st-key-curadoria_fm_estoque_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 10px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("curadoria_fm_estoque_tabela", 10)
         editado = st.data_editor(
             editor_exibicao,
             use_container_width=True,
@@ -4899,11 +4861,7 @@ def render_curadoria_fm_estoque() -> None:
         return
     st.markdown(f"Prévia limitada a 200 linhas de {total_detalhado:,}".replace(",", "."))
     with st.container(key="curadoria_fm_estoque_detalhado_tabela"):
-        st.markdown(
-            "<style>.st-key-curadoria_fm_estoque_detalhado_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 12px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("curadoria_fm_estoque_detalhado_tabela", 12)
         st.dataframe(
             _preparar_preview(detalhado, _COLUNAS_PREVIEW_FM_ESTOQUE_DETALHADO),
             use_container_width=True,
@@ -5114,11 +5072,7 @@ def _render_sumario_unidades_com_aplicar(
     ]
     chave_container = f"sumario_unidades_alvo_tabela_{sufixo_key}"
     with st.container(key=chave_container):
-        st.markdown(
-            f"<style>.st-key-{chave_container} [data-testid='stDataFrame'] "
-            "* { font-size: 10px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe(chave_container, 10)
         sumario_editado = st.data_editor(
             sumario_exibicao,
             use_container_width=True,
@@ -5232,11 +5186,7 @@ def _render_itens_individuais(detalhado: pd.DataFrame, colunas_preview: list, su
     with st.expander(f"Ver Itens Individuais ({len(preview):,} item(ns))".replace(",", "."), expanded=False):
         chave_container = f"cruzamento_{sufixo_key}_detalhado_tabela"
         with st.container(key=chave_container):
-            st.markdown(
-                f"<style>.st-key-{chave_container} [data-testid='stDataFrame'] "
-                "* { font-size: 12px; }</style>",
-                unsafe_allow_html=True,
-            )
+            _aplicar_fonte_dataframe(chave_container, 12)
             st.dataframe(preview, use_container_width=True, hide_index=True)
 
 
@@ -5500,11 +5450,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         # Declaração/Descrição XML/Qtde. Ocorrências/Similaridade
         # Descrição) já eram TODAS as colunas disponíveis — nenhuma
         # estava sendo omitida, o corte era só de largura de tela.
-        st.markdown(
-            "<style>.st-key-cruzamento_entradas_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 8px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("cruzamento_entradas_tabela", 8)
         editado = st.data_editor(
             editor_exibicao,
             use_container_width=True,
@@ -5816,11 +5762,7 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
 
     colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
     with st.container(key="cruzamento_saidas_tabela"):
-        st.markdown(
-            "<style>.st-key-cruzamento_saidas_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 10px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("cruzamento_saidas_tabela", 10)
         editado = st.data_editor(
             editor_exibicao,
             use_container_width=True,
@@ -6119,11 +6061,7 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
 
     colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
     with st.container(key="cruzamento_estoque_tabela"):
-        st.markdown(
-            "<style>.st-key-cruzamento_estoque_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 10px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("cruzamento_estoque_tabela", 10)
         editado = st.data_editor(
             editor_exibicao,
             use_container_width=True,
@@ -6370,11 +6308,7 @@ def render_produtos_alvo_salvos() -> None:
     )
     colunas_travadas = [c for c in editor_exibicao.columns if c not in colunas_editaveis]
     with st.container(key="produtos_alvo_salvos_tabela"):
-        st.markdown(
-            "<style>.st-key-produtos_alvo_salvos_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 12px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("produtos_alvo_salvos_tabela", 12)
         editado = st.data_editor(
             editor_exibicao,
             use_container_width=True,
@@ -6684,11 +6618,7 @@ def _render_cruzamento_final_produto(escolhido: dict) -> None:
     rotulos = {c: loader.carregar_dicionario_campos().get(c, c) for c in _COLUNAS_EXIBICAO_CRUZAMENTO_FINAL_PRODUTO}
     grade_exibicao = grade_atual[_COLUNAS_EXIBICAO_CRUZAMENTO_FINAL_PRODUTO].rename(columns=rotulos)
     with st.container(key="cruzamento_final_produto_tabela"):
-        st.markdown(
-            "<style>.st-key-cruzamento_final_produto_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 10px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("cruzamento_final_produto_tabela", 10)
         grade_editada = st.data_editor(
             grade_exibicao,
             use_container_width=True,
@@ -6833,11 +6763,7 @@ def render_consolidado_cruzamento_11() -> None:
 
     exibicao = _preparar_preview(formatado, _COLUNAS_CONSOLIDADO_11)
     with st.container(key="consolidado_11_tabela"):
-        st.markdown(
-            "<style>.st-key-consolidado_11_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 10px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("consolidado_11_tabela", 10)
         st.dataframe(exibicao, use_container_width=True, hide_index=True)
 
     preparar = st.button("Preparar exportação completa (CSV)", key="btn_preparar_export_consolidado_11")
@@ -6938,11 +6864,7 @@ def _render_relatorio_final() -> None:
         formatado[col] = formatado[col].apply(_formatar_moeda_br)
     exibicao = _preparar_preview(formatado, _COLUNAS_EXIBICAO_RELATORIO_FINAL)
     with st.container(key="relatorio_final_tabela"):
-        st.markdown(
-            "<style>.st-key-relatorio_final_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 10px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("relatorio_final_tabela", 10)
         st.dataframe(exibicao, use_container_width=True, hide_index=True)
 
     st.divider()
@@ -7016,11 +6938,7 @@ def _render_relatorio_itens_cruzados(escolhido: dict) -> None:
         _ROTULOS_COLUNAS_RELATORIO_ITENS_CRUZADOS["QTDE_ITENS"]
     ].apply(_formatar_moeda_br)
     with st.container(key="relatorio_itens_cruzados_tabela"):
-        st.markdown(
-            "<style>.st-key-relatorio_itens_cruzados_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 10px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("relatorio_itens_cruzados_tabela", 10)
         st.dataframe(exibicao, use_container_width=True, hide_index=True)
 
     st.divider()
@@ -7109,11 +7027,7 @@ def _render_relatorio_mc_quantidades(escolhido: dict) -> None:
         rotulo = _ROTULOS_COLUNAS_RELATORIO_MC_QUANTIDADES[col]
         exibicao[rotulo] = exibicao[rotulo].apply(_formatar_moeda_br)
     with st.container(key="relatorio_mc_quantidades_tabela"):
-        st.markdown(
-            "<style>.st-key-relatorio_mc_quantidades_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 10px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("relatorio_mc_quantidades_tabela", 10)
         st.data_editor(exibicao, use_container_width=True, hide_index=True, disabled=True)
 
     st.divider()
@@ -7193,11 +7107,7 @@ def _render_relatorio_mc_pu(escolhido: dict) -> None:
         rotulo = _ROTULOS_COLUNAS_RELATORIO_MC_PU[col]
         exibicao[rotulo] = exibicao[rotulo].apply(_formatar_moeda_br)
     with st.container(key="relatorio_mc_pu_tabela"):
-        st.markdown(
-            "<style>.st-key-relatorio_mc_pu_tabela [data-testid='stDataFrame'] "
-            "* { font-size: 10px; }</style>",
-            unsafe_allow_html=True,
-        )
+        _aplicar_fonte_dataframe("relatorio_mc_pu_tabela", 10)
         st.data_editor(exibicao, use_container_width=True, hide_index=True, disabled=True)
 
     st.divider()
