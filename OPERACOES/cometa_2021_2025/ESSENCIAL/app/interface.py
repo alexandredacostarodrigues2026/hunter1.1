@@ -154,11 +154,23 @@ def render_entidade_auditada() -> None:
     fluxos_fisicos"]`, consumida no TOPO de `render_pagina_extracao()`
     (chamadora desta função) — troca a visão normal do Painel 1 pelo
     sub-painel do Estágio 3 (Fluxos Físicos), com seu próprio botão de
+    volta.
+
+    Botão "Registros Segregados" logo ABAIXO do de Fluxos Físicos
+    (2026-08-18, pedido do usuário — "abaixo do botão de fluxos
+    físicos, inserir botão para acesso aos segregados, nos moldes
+    anteriores"): mesmo padrão exato — `st.session_state["mostrar_
+    segregados"]`, também consumida no topo de `render_pagina_
+    extracao()`, abre `render_painel_analise()` (Painel de
+    Monitoramento — Registros Segregados) com seu próprio botão de
     volta."""
     col_titulo, col_btn_fluxos = st.columns([6, 1])
     col_titulo.subheader("Entidade auditada")
     if col_btn_fluxos.button("📊 Fluxos Físicos", key="btn_abrir_fluxos_fisicos"):
         st.session_state["mostrar_fluxos_fisicos"] = True
+        st.rerun()
+    if col_btn_fluxos.button("🔎 Registros Segregados", key="btn_abrir_segregados"):
+        st.session_state["mostrar_segregados"] = True
         st.rerun()
 
     with st.spinner("Identificando entidade auditada (CNPJ/Razão Social)..."):
@@ -3825,12 +3837,30 @@ def render_pagina_extracao() -> None:
     ao Menu Principal" (chamado por `main.py`, sempre no final —
     continua aparecendo do mesmo jeito, mesmo dentro deste sub-painel):
     este é específico pra voltar À VISÃO NORMAL do Painel 1, não ao Menu
-    Principal."""
+    Principal.
+
+    Sub-painel "Registros Segregados" acessível do mesmo jeito
+    (2026-08-18, pedido do usuário — "abaixo do botão de fluxos
+    físicos, inserir botão para acesso aos segregados, nos moldes
+    anteriores"): `st.session_state["mostrar_segregados"]`, botão em
+    `render_entidade_auditada()` logo abaixo do de Fluxos Físicos,
+    mesmo mecanismo de troca de visão + botão de volta dedicado.
+    `render_pagina_segregados()` (botão de 1º nível "Segregados" do
+    Menu Principal) continua existindo — este é um SEGUNDO caminho de
+    acesso à mesma `render_painel_analise()`, não substitui o antigo."""
     if st.session_state.get("mostrar_fluxos_fisicos"):
         render_fluxos_fisicos()
         st.divider()
         if st.button("⬅️ Voltar ao Painel 1", key="btn_voltar_painel1_fluxos_fisicos"):
             st.session_state["mostrar_fluxos_fisicos"] = False
+            st.rerun()
+        return
+
+    if st.session_state.get("mostrar_segregados"):
+        render_painel_analise()
+        st.divider()
+        if st.button("⬅️ Voltar ao Painel 1", key="btn_voltar_painel1_segregados"):
+            st.session_state["mostrar_segregados"] = False
             st.rerun()
         return
 
