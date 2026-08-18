@@ -146,8 +146,21 @@ def render_entidade_auditada() -> None:
     kpi de ocorrencias"): `info['ocorrencias']` continua calculado em
     `loader.garantir_entidade_auditada()` (usado na resolução de qual
     CNPJ é a entidade auditada, por maior contagem), só não é mais
-    exibido na tela."""
-    st.subheader("Entidade auditada")
+    exibido na tela.
+
+    Botão "Fluxos Físicos" à direita do subtítulo (2026-08-18, pedido do
+    usuário — "esse painel será aberto por botão a ser criado no lado
+    direito dos dados da empresa"): liga `st.session_state["mostrar_
+    fluxos_fisicos"]`, consumida no TOPO de `render_pagina_extracao()`
+    (chamadora desta função) — troca a visão normal do Painel 1 pelo
+    sub-painel do Estágio 3 (Fluxos Físicos), com seu próprio botão de
+    volta."""
+    col_titulo, col_btn_fluxos = st.columns([6, 1])
+    col_titulo.subheader("Entidade auditada")
+    if col_btn_fluxos.button("📊 Fluxos Físicos", key="btn_abrir_fluxos_fisicos"):
+        st.session_state["mostrar_fluxos_fisicos"] = True
+        st.rerun()
+
     with st.spinner("Identificando entidade auditada (CNPJ/Razão Social)..."):
         info = loader.garantir_entidade_auditada()
 
@@ -1074,6 +1087,12 @@ _COLUNAS_PREVIEW_FLUXOS_REAIS = [
     "COD_ITEM_DECLARACAO", "FATOR_MULTIPLICADOR_SUGERIDO",
     "ID_UNICO",
 ]
+# Estoque (SPED, Bloco H) — 2026-08-18, pedido do usuário: "faça o mesmo
+# para o estoque" (mesmo painel de Fluxos Físicos, Entradas/Saídas Reais).
+_COLUNAS_PREVIEW_SPED_ESTOQUE = [
+    "COD_ITEM", "UNID", "QTD", "VL_UNIT", "VL_ITEM", "IND_PROP",
+    "DT_INV", "MOT_INV", "ARQUIVO_ORIGEM",
+]
 
 
 def render_fluxos_fisicos() -> None:
@@ -1086,9 +1105,20 @@ def render_fluxos_fisicos() -> None:
     FATOR_MULTIPLICADOR_SUGERIDO da bc3 (Estágio 2 — Matching, ver
     loader.consultar_fluxo_real()) — produto da auditada (declaração) lado a
     lado com o produto do fornecedor (XML), só populado em "Entradas"
-    (bc3 não cobre saídas). Visualização exclusiva: só uma prévia (entradas
-    OU saídas) fica visível por vez, controlada por
-    st.session_state["fluxo_fisico_ativo"]."""
+    (bc3 não cobre saídas). Visualização exclusiva: só uma prévia (entradas,
+    saídas OU estoque) fica visível por vez, controlada por
+    st.session_state["fluxo_fisico_ativo"] — nenhuma abre sozinha, só quando
+    o respectivo botão "Visualizar..." é clicado (2026-08-18, pedido do
+    usuário: "recolha todas as tabelas. somente as abra caso acione o
+    botão" — já era o comportamento de Entradas/Saídas, replicado agora
+    também pra Estoque).
+
+    Terceira coluna "Estoque (SPED)" (2026-08-18, pedido do usuário: "faça
+    o mesmo para o estoque"): mostra `sped_estoque` (H010/Bloco H) BRUTO,
+    direto do que foi carregado — não é o `estoque_anual_consolidado`
+    (Estágio 5, já processado com continuidade EI/EF); é a prévia sob
+    demanda mais crua possível, simétrica a Entradas/Saídas Reais (também
+    XML bruto, sem o enriquecimento do Estágio 4)."""
     st.subheader("Estágio 3 — Fluxos Físicos (Lado XML)")
     st.caption(
         "Reclassificação da movimentação física real da auditada: cruza o tpnf da nota com "
@@ -1098,9 +1128,11 @@ def render_fluxos_fisicos() -> None:
     )
 
     totais = loader.consultar_totais_entradas_saidas_real()
-    col1, col2 = st.columns(2)
+    total_estoque = loader.contar_linhas_sped_estoque()
+    col1, col2, col3 = st.columns(3)
     col1.metric("Entradas Reais (XML)", f"{totais['xml_entradas_real']:,}".replace(",", "."))
     col2.metric("Saídas Reais (XML)", f"{totais['xml_saidas_real']:,}".replace(",", "."))
+    col3.metric("Estoque (SPED, Bloco H)", f"{total_estoque:,}".replace(",", "."))
 
     if not sum(totais.values()) and not loader.obter_entidade_auditada():
         st.info(
@@ -1111,14 +1143,28 @@ def render_fluxos_fisicos() -> None:
     if "fluxo_fisico_ativo" not in st.session_state:
         st.session_state["fluxo_fisico_ativo"] = None
 
-    col_btn1, col_btn2 = st.columns(2)
+    col_btn1, col_btn2, col_btn3 = st.columns(3)
     if col_btn1.button("Visualizar Entradas", key="btn_ver_entradas_real"):
         st.session_state["fluxo_fisico_ativo"] = "entradas"
     if col_btn2.button("Visualizar Saídas", key="btn_ver_saidas_real"):
         st.session_state["fluxo_fisico_ativo"] = "saidas"
+    if col_btn3.button("Visualizar Estoque", key="btn_ver_estoque_real"):
+        st.session_state["fluxo_fisico_ativo"] = "estoque"
 
     ativo = st.session_state["fluxo_fisico_ativo"]
     if ativo is None:
+        return
+
+    if ativo == "estoque":
+        df_preview, total = loader.consultar_sped_estoque(limite=200)
+        st.markdown(
+            f"**Prévia — Estoque (SPED, Bloco H)** — {total:,} registro(s) no total "
+            "(limitada a 200 linhas)".replace(",", ".")
+        )
+        if df_preview.empty:
+            st.info("Nenhum registro em sped_estoque.")
+        else:
+            st.dataframe(_preparar_preview(df_preview, _COLUNAS_PREVIEW_SPED_ESTOQUE), use_container_width=True)
         return
 
     rotulo = "Entradas Reais" if ativo == "entradas" else "Saídas Reais"
@@ -3765,7 +3811,29 @@ def render_pagina_extracao() -> None:
     O painel de Matching (Estágio 2) continua existindo separado, pro
     auditor regerar manualmente se precisar (ex.: depois de corrigir
     algo na BC1/BC2) — esta tela só ganhou a exibição automática, não
-    substituiu a manual."""
+    substituiu a manual.
+
+    Sub-painel "Fluxos Físicos" (Estágio 3) acessível daqui (2026-08-18,
+    pedidos do usuário: "esse painel será aberto por botão a ser criado
+    no lado direito dos dados da empresa" + "esse painel deve ter botão
+    para retornar ao painel1"): botão dedicado em `render_entidade_
+    auditada()`, ao lado do subtítulo "Entidade auditada", liga
+    `st.session_state["mostrar_fluxos_fisicos"]` — quando True, ESTE
+    método mostra SÓ `render_fluxos_fisicos()` + um botão "⬅️ Voltar ao
+    Painel 1" (desliga a flag e `return` antecipado, sem renderizar o
+    resto do Painel 1 nesse ciclo). Diferente do botão genérico "Voltar
+    ao Menu Principal" (chamado por `main.py`, sempre no final —
+    continua aparecendo do mesmo jeito, mesmo dentro deste sub-painel):
+    este é específico pra voltar À VISÃO NORMAL do Painel 1, não ao Menu
+    Principal."""
+    if st.session_state.get("mostrar_fluxos_fisicos"):
+        render_fluxos_fisicos()
+        st.divider()
+        if st.button("⬅️ Voltar ao Painel 1", key="btn_voltar_painel1_fluxos_fisicos"):
+            st.session_state["mostrar_fluxos_fisicos"] = False
+            st.rerun()
+        return
+
     render_configuracao_periodo()
     _render_alerta_base_dados_periodo()
     st.divider()

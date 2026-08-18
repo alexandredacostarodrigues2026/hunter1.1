@@ -246,3 +246,12 @@ EXCLUIR;Excluir
 
 # Novos campos - 2026-08-17 (Estagio 7.3.3 - Grades de Produtos, ncm completo alem do capitulo)
 COD_NCM_COMPLETO;NCM Completo
+
+# Novos campos - 2026-08-18 (Estagio 3 - Fluxos Fisicos, previa do Estoque SPED/Bloco H)
+DT_INV;Data do Inventario
+MOT_INV;Motivo do Inventario
+VL_ITEM;Valor do Item
+VL_UNIT;Valor Unitario
+IND_PROP;Indicador de Propriedade
+QTD;Quantidade
+UNID;Unidade

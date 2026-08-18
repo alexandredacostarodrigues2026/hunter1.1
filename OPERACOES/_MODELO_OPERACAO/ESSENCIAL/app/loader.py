@@ -1579,6 +1579,30 @@ def consultar_fluxo_real(direcao: str, limite: "int | None" = 200) -> "tuple[pd.
         return pd.DataFrame(), 0
 
 
+def consultar_sped_estoque(limite: "int | None" = 200) -> "tuple[pd.DataFrame, int]":
+    """Lê `sped_estoque` (H010/Bloco H) já persistida (sem reprocessar) —
+    2026-08-18, pedido do usuário: "faça o mesmo para o estoque" (no painel
+    de Fluxos Físicos, Estágio 3, que já tinha prévia sob demanda pra
+    Entradas/Saídas Reais). Mesmo padrão de `consultar_fluxo_real()`: devolve
+    uma amostra (até 'limite' linhas) e o total real; limite=None devolve a
+    tabela inteira. `[]`/vazio se `sped_estoque` ainda não existe (carga não
+    rodou)."""
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "sped_estoque" not in tabelas:
+                return pd.DataFrame(), 0
+            total = con.execute("SELECT COUNT(*) FROM sped_estoque").fetchone()[0]
+            query = "SELECT * FROM sped_estoque" if limite is None else f"SELECT * FROM sped_estoque LIMIT {limite}"
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar sped_estoque em %s", _BANCO_PATH)
+        return pd.DataFrame(), 0
+
+
 # ── Estágio 4 — Cronologia e Ano Eleito (estoque_entradas/estoque_saidas) ───
 # DATA_ELEITA/ANO_ELEITO: hierarquia de datas por cenário ("Figura 1"),
 # aplicada sobre xml_entradas_real/xml_saidas_real (Estágio 3) enriquecidos
