@@ -5451,12 +5451,46 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         # Descrição) já eram TODAS as colunas disponíveis — nenhuma
         # estava sendo omitida, o corte era só de largura de tela.
         _aplicar_fonte_dataframe("cruzamento_entradas_tabela", 8)
+        # Larguras estreitas + quebra de texto (2026-08-18, pedido do
+        # usuário — "continua [grande]. pode diminuir as colunas e
+        # permitir quebra de texto"): a fonte menor sozinha não bastou
+        # pra caber as 7 colunas sem cortar/rolar. `st.column_config.
+        # Column(width="small")` força cada coluna curta (checkbox/
+        # código/número) a ocupar só o espaço que precisa; "Descrição
+        # XML" (a mais longa) fica "large" — `row_height` acima do
+        # padrão de 1 linha (~35px) habilita quebra automática de texto
+        # nela (mesmo mecanismo já usado na Simulação NCM2, 2026-08-16).
         editado = st.data_editor(
             editor_exibicao,
-            use_container_width=True,
+            use_container_width=False,
             hide_index=True,
             disabled=colunas_travadas,
             key=f"editor_cruzamento_entradas_{sufixo_criterio}",
+            row_height=50,
+            column_config={
+                # Largura em PIXELS + rótulo ABREVIADO (2026-08-18,
+                # confirmado por screenshot real via CDP — ver
+                # feedback_verificacao_streamlit_ui.md): largura sozinha
+                # (mesmo em px, não só "small"/"medium"/"large") não
+                # bastou — o Streamlit redistribui o espaço sobrando
+                # entre as colunas quando a soma configurada é menor que
+                # a largura da tabela ("If the total width of all
+                # columns is less than the width of the dataframe, the
+                # remaining space will be distributed evenly among all
+                # columns" — docstring de `column_config.Column()`),
+                # then o cabeçalho LONGO continuava sem caber mesmo com
+                # a coluna maior. `label=` encurta o texto do cabeçalho
+                # (não muda o nome real da coluna, usado em `disabled=`
+                # acima) — cabe mesmo que a coluna acabe redistribuída
+                # pra uma largura diferente da configurada aqui.
+                "Salvar": st.column_config.Column(width=70),
+                "Desfazer": st.column_config.Column(label="Desfaz.", width=75),
+                "Observação": st.column_config.Column(label="Obs.", width=140),
+                "Cod. Produto Declaracao": st.column_config.Column(label="Cód. Prod.", width=110),
+                "Descricao XML": st.column_config.Column(width=320),
+                "Qtde. Ocorrencias": st.column_config.Column(label="Qtde.", width=70),
+                "Similaridade Descricao (%)": st.column_config.Column(label="Sim. (%)", width=90),
+            },
         )
 
     st.caption(
