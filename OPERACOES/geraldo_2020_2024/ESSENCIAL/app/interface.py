@@ -5466,7 +5466,13 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
             hide_index=True,
             disabled=colunas_travadas,
             key=f"editor_cruzamento_entradas_{sufixo_criterio}",
-            row_height=50,
+            # row_height 70 (2026-08-18, pedido do usuário — "aumente a
+            # coluna da descrição e permita quebra de página do texto"):
+            # 50 só dava espaço pra uma linha e meia, textos mais longos
+            # continuavam cortando com "..." em vez de quebrar — mesmo
+            # row_height (70) já usado com sucesso na Simulação NCM2
+            # (2026-08-16) pra habilitar quebra de texto de verdade.
+            row_height=70,
             column_config={
                 # Largura em PIXELS + rótulo ABREVIADO (2026-08-18,
                 # confirmado por screenshot real via CDP — ver
@@ -5487,9 +5493,15 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
                 "Desfazer": st.column_config.Column(label="Desfaz.", width=75),
                 "Observação": st.column_config.Column(label="Obs.", width=140),
                 "Cod. Produto Declaracao": st.column_config.Column(label="Cód. Prod.", width=110),
-                "Descricao XML": st.column_config.Column(width=320),
+                # TextColumn (não Column genérica) + largura maior
+                # (2026-08-18, pedido do usuário): mesmo tipo de coluna
+                # já usado na Simulação NCM2 pra habilitar quebra de
+                # texto de verdade (junto com o row_height acima).
+                "Descricao XML": st.column_config.TextColumn(width=450),
                 "Qtde. Ocorrencias": st.column_config.Column(label="Qtde.", width=70),
-                "Similaridade Descricao (%)": st.column_config.Column(label="Sim. (%)", width=90),
+                # Rótulo "SimDescr%" (2026-08-18, pedido do usuário —
+                # renomear "Sim. (%)").
+                "Similaridade Descricao (%)": st.column_config.Column(label="SimDescr%", width=90),
             },
         )
 
