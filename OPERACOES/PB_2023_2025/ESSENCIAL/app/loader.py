@@ -5884,6 +5884,43 @@ def _mapa_cod_item_ncm2() -> pd.DataFrame:
     return df[colunas].drop_duplicates("COD_ITEM", keep="first").reset_index(drop=True)
 
 
+_EAN_PLACEHOLDER_SPED = "00000000000000"
+
+
+def _mapa_cod_item_ean() -> pd.DataFrame:
+    """COD_ITEM (normalizado, `_normalizar_cod_item_flexivel()`) -> EAN
+    (`COD_BARRA` do Registro 0200, `sped_produtos`) — mesmo padrão de
+    `_mapa_cod_item_ncm2()`, usado pelo Critério 1 (EAN) de Entradas/
+    Saídas/Estoque (2026-08-19, pedido do usuário — ver pesquisa em
+    [[project_ean_estoque_sped]]). Trata como "sem EAN" (string vazia)
+    tanto o placeholder do próprio SPED (`_EAN_PLACEHOLDER_SPED` =
+    "00000000000000", usado em ~65% dos itens da operação geraldo
+    quando não há código de barras cadastrado) quanto valor vazio/nulo —
+    confirmado com o usuário (AskUserQuestion, 2026-08-19) que dois
+    produtos SEM EAN cadastrado NUNCA devem ser considerados "o mesmo
+    EAN" só por ambos estarem vazios/zerados. Regra R07: COD_ITEM/
+    COD_BARRA sempre string. Colisão rara de normalização resolvida por
+    `keep='first'` — mesmo raciocínio de `_mapa_cod_item_ncm2()`."""
+    colunas = ["COD_ITEM", "COD_BARRA"]
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas)
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "sped_produtos" not in tabelas:
+                return pd.DataFrame(columns=colunas)
+            df = con.execute("SELECT COD_ITEM, COD_BARRA FROM sped_produtos").df()
+    except Exception:
+        logger.exception("Erro ao consultar sped_produtos em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas)
+    if df.empty:
+        return pd.DataFrame(columns=colunas)
+    df["COD_ITEM"] = _normalizar_cod_item_flexivel(df["COD_ITEM"])
+    cod_barra = df["COD_BARRA"].astype(str).str.strip()
+    df["COD_BARRA"] = cod_barra.where(~cod_barra.isin(("", _EAN_PLACEHOLDER_SPED, "nan", "None")), "")
+    return df[colunas].drop_duplicates("COD_ITEM", keep="first").reset_index(drop=True)
+
+
 def gerar_base_simulacao_ncm2_733() -> dict:
     """Estágio 7.3.3 (NCM2) — monta a base ANO+COD_ITEM de EI/Compras/
     Vendas/EF + Capítulo NCM (ncm2) + descrição do cadastro, pra
@@ -7684,8 +7721,122 @@ def _chaves_ja_atribuidas_a_outro_alvo(descr_alvo_atual: str, origem: str) -> se
     return set(zip(outras["codproddecl"], outras["desc_xml"]))
 
 
+# ── Cruzamento do Produto Escolhido — Critério 1 (EAN) ───────────────────
+# Solicitação Técnica (2026-08-19): "NOVO Critério 1 — EAN_prod_decl do
+# alvo = EAN_prod_decl do candidato (mesmo EAN normalizado — remove zero à
+# esquerda só se numérico puro). Similaridade de descrição (desc_xml ×
+# DESCR_ALVO) é só ordenação. DEMAIS CRITÉRIOS AVANÇAR OS NÚMEROS" — o
+# Critério 1 (código) original virou Critério 2, o 2 (nome declaração)
+# virou 3, o 3 (nome_prod_xml/código divergente) virou 4, o 4 (pesquisa
+# livre) virou 5 (mesmas constantes/funções de antes, só o RÓTULO mudou —
+# ver comentário de cada constante CRITERIO_BUSCA* mais abaixo). EAN vem
+# de `_mapa_cod_item_ean()` (Registro 0200, `sped_produtos`), OLHADO PELO
+# COD_ITEM tanto do alvo quanto do candidato (`codproddecl`) — não existe
+# EAN direto em `estagio8_agrupado`. Placeholder do SPED
+# (`_EAN_PLACEHOLDER_SPED`) e vazio contam como "sem EAN" e NUNCA batem
+# entre si (confirmado com o usuário via AskUserQuestion — sem essa
+# exclusão, a maioria dos produtos SEM código de barras cadastrado
+# (~65% na geraldo) acabaria "casando" entre si só por estarem os dois
+# zerados).
+CRITERIO_BUSCA1_EAN = "Critério de Busca1: EAN_prod_decl do alvo = EAN_prod_decl do candidato"
+
+
+def cruzar_produto_escolhido_entradas_ean() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 1 (Entradas, EAN — ver comentário de CRITERIO_BUSCA1_EAN):
+    compara o EAN do produto escolhido (via `_mapa_cod_item_ean()`,
+    olhando `escolhido["COD_ITEM"]` no Registro 0200) com o EAN do
+    `codproddecl` de cada candidato de `estagio8_agrupado` (mesmo
+    cadastro, por código de declaração) — só entra quem tem EAN REAL
+    (não vazio, não o placeholder do SPED) em AMBOS os lados E os dois
+    EANs são IGUAIS. Sem EAN real do lado do alvo → resultado sempre
+    vazio (nada pra comparar). `SIMILARIDADE_DESCRICAO` (`desc_xml` ×
+    `DESCR_ALVO`) calculada só pra ORDENAR, igual ao Critério 2 (mesmo
+    código). Mesma exclusão cross-alvo de
+    `_chaves_ja_atribuidas_a_outro_alvo()` dos outros critérios. Devolve
+    (DataFrame, dict do produto escolhido) — mesmas regras de vazio/None
+    do Critério 2 (Entradas)."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), None
+    mapa_ean = _mapa_cod_item_ean()
+    if mapa_ean.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    ean_por_cod_item = pd.Series(mapa_ean["COD_BARRA"].values, index=mapa_ean["COD_ITEM"])
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    ean_alvo = ean_por_cod_item.get(cod_item_normalizado, "")
+    if not ean_alvo:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    agrupado, _ = consultar_estagio8_agrupado(limite=None)
+    if agrupado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    codigos_normalizados = _normalizar_cod_item_flexivel(agrupado["codproddecl"])
+    ean_candidatos = codigos_normalizados.map(ean_por_cod_item).fillna("")
+    correspondentes = agrupado[ean_candidatos == ean_alvo].copy()
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "entradas")
+    if chaves_bloqueadas:
+        correspondentes = correspondentes[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(correspondentes["codproddecl"], correspondentes["desc_xml"])]
+        ]
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO), escolhido
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
+    correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    correspondentes = correspondentes.sort_values(
+        ["SIMILARIDADE_DESCRICAO", "qtde_ocorrencias"], ascending=[False, False]
+    )[_COLUNAS_CRUZAMENTO_ENTRADAS_AGRUPADO].reset_index(drop=True)
+    return correspondentes, escolhido
+
+
+def cruzar_produto_escolhido_entradas_ean_detalhado() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 1 (Entradas, EAN) — tabela DETALHADA, mesma lógica de
+    cruzar_produto_escolhido_entradas_ean(), mas contra estagio8_
+    detalhado (uma linha por item do XML, com idunico) em vez de
+    estagio8_agrupado. Mesmas regras de vazio/None."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), None
+    mapa_ean = _mapa_cod_item_ean()
+    if mapa_ean.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    ean_por_cod_item = pd.Series(mapa_ean["COD_BARRA"].values, index=mapa_ean["COD_ITEM"])
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    ean_alvo = ean_por_cod_item.get(cod_item_normalizado, "")
+    if not ean_alvo:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    detalhado, _ = consultar_estagio8_detalhado(limite=None)
+    if detalhado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    codigos_normalizados = _normalizar_cod_item_flexivel(detalhado["codproddecl"])
+    ean_candidatos = codigos_normalizados.map(ean_por_cod_item).fillna("")
+    correspondentes = detalhado[ean_candidatos == ean_alvo].copy()
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "entradas")
+    if chaves_bloqueadas:
+        correspondentes = correspondentes[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(correspondentes["codproddecl"], correspondentes["desc_xml"])]
+        ]
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO), escolhido
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
+    correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    correspondentes = correspondentes.sort_values(
+        "SIMILARIDADE_DESCRICAO", ascending=False
+    )[_COLUNAS_CRUZAMENTO_ENTRADAS_DETALHADO].reset_index(drop=True)
+    return correspondentes, escolhido
+
+
+# ── Cruzamento do Produto Escolhido — Critério 2 (Entradas, mesmo código, ──
+# renumerado de Critério 1 em 2026-08-19, ver comentário de
+# CRITERIO_BUSCA1_EAN acima).
 def cruzar_produto_escolhido_entradas() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 1 (Entradas): compara o produto atualmente escolhido
+    """Critério 2 (Entradas): compara o produto atualmente escolhido
     (consultar_produto_cruzamento_escolhido()) com estagio8_agrupado
     (Entradas) por MESMO código de produto — "100%" significa o MESMO
     código, não a mesma string byte-a-byte: usa
@@ -7740,7 +7891,7 @@ def cruzar_produto_escolhido_entradas() -> "tuple[pd.DataFrame, dict | None]":
 
 
 def cruzar_produto_escolhido_entradas_detalhado() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 1 (Entradas) — tabela DETALHADA (2026-07-23, pedido do
+    """Critério 2 (Entradas) — tabela DETALHADA (2026-07-23, pedido do
     usuário: "CRIE UMA TABELA INFERIOR COM OS PRODUTOS E RESPECTIVOS IDS
     ÚNICOS"): mesma comparação de cruzar_produto_escolhido_entradas()
     (mesmo código normalizado + `SIMILARIDADE_DESCRICAO`), mas contra
@@ -7793,30 +7944,34 @@ def cruzar_produto_escolhido_entradas_detalhado() -> "tuple[pd.DataFrame, dict |
 def _normalizar_nome_para_igualdade(texto) -> str:
     """Normaliza nome/descrição pra comparação de IGUALDADE (não fuzzy):
     maiúsculas, remove espaços nas pontas, colapsa espaços internos
-    múltiplos num só. Usado no Critério 2 (nome de declaração == alvo)
+    múltiplos num só. Usado no Critério 3 (nome de declaração == alvo)
     — achado real que motivou colapsar espaços: `descrição_decl` de
     "FARINHA DE TRIGO ADORITA  C/ FERMENTO 50KG" tem espaço duplo depois
     de "ADORITA"; sem colapsar, um `DESCR_ALVO` com espaço simples no
     mesmo ponto nunca bateria igual, mesmo sendo o mesmo nome — mesmo
-    tipo de armadilha já visto com zero à esquerda no Critério 1 (ver
+    tipo de armadilha já visto com zero à esquerda no Critério 2 (ver
     _normalizar_cod_item_flexivel())."""
     return re.sub(r"\s+", " ", str(texto).strip().upper())
 
 
 # Rótulo renomeado 2026-07-23 (mesma sessão): "mude os nomes dos
 # criterios: ... 2-nome_prod_decl do alvo = nome_prod_decl do
-# candidato" — era "Nome de Declaração Igual ao Alvo".
-CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL = "Critério de Busca2: nome_prod_decl do alvo = nome_prod_decl do candidato"
+# candidato" — era "Nome de Declaração Igual ao Alvo". Renumerado de
+# Busca2 pra Busca3 em 2026-08-19 (novo Critério 1 = EAN, ver comentário
+# de CRITERIO_BUSCA1_EAN) — identificador da constante mantido com o
+# número ANTIGO só na função (`_criterio2`, nome interno não muda),
+# porém o RÓTULO exibido/usado pra despacho já reflete o número novo.
+CRITERIO_BUSCA3_NOME_DECLARACAO_IGUAL = "Critério de Busca3: nome_prod_decl do alvo = nome_prod_decl do candidato"
 
 
 def cruzar_produto_escolhido_entradas_criterio2() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 2 (Entradas): candidatos cujo `descrição_decl` (nome que
+    """Critério 3 (Entradas): candidatos cujo `descrição_decl` (nome que
     a AUDITADA usa na própria declaração/Matching pra aquele item) é
     IGUAL (normalizado — maiúsculas, espaços colapsados, ver
     _normalizar_nome_para_igualdade()) ao `DESCR_ALVO` do produto
     escolhido — não exige nenhuma relação de código (nem igual, nem
     divergente): é possível que o código também bata (redundante com o
-    Critério 1) ou não. Mesma exclusão cross-alvo de
+    Critério 2) ou não. Mesma exclusão cross-alvo de
     _chaves_ja_atribuidas_a_outro_alvo() dos outros critérios.
     `SIMILARIDADE_DESCRICAO` (entre `desc_xml` e `DESCR_ALVO`) continua
     calculada e usada pra ORDENAR (desc, depois qtde_ocorrencias desc) —
@@ -7854,7 +8009,7 @@ def cruzar_produto_escolhido_entradas_criterio2() -> "tuple[pd.DataFrame, dict |
 
 
 def cruzar_produto_escolhido_entradas_criterio2_detalhado() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 2 (Entradas) — tabela DETALHADA, mesma lógica de
+    """Critério 3 (Entradas) — tabela DETALHADA, mesma lógica de
     cruzar_produto_escolhido_entradas_criterio2() (nome de declaração
     igual ao alvo), mas contra estagio8_detalhado (uma linha por item
     do XML, com idunico) em vez de estagio8_agrupado. Mesmas regras de
@@ -7915,10 +8070,14 @@ def cruzar_produto_escolhido_entradas_criterio2_detalhado() -> "tuple[pd.DataFra
 # constante/texto agora (substituiu CRITERIO_BUSCA3_CODIGO_DIVERGENTE,
 # rótulo antigo "sem correspondência com declaração", e a efêmera
 # CRITERIO_BUSCA2_NOME_XML_SAIDAS, ambas sem uso depois desta troca).
-CRITERIO_BUSCA3_NOME_XML = "Critério de Busca3: nome_prod_decl do alvo = nome_prod_xml"
+# Renumerado de Busca3 pra Busca4 em 2026-08-19 (novo Critério 1 = EAN,
+# ver comentário de CRITERIO_BUSCA1_EAN) — nome interno da constante e
+# das funções (`_criterio3`) mantido, só o RÓTULO exibido mudou.
+CRITERIO_BUSCA4_NOME_XML = "Critério de Busca4: nome_prod_decl do alvo = nome_prod_xml"
 LIMIAR_SIMILARIDADE_CRITERIO3 = 20.0
-# Critério 4 — pesquisa livre (Solicitação Técnica 2026-07-29): discutido
-# tirar o piso de 20% do Critério 3 pra não perder candidatos reais de 0%
+# Critério 5 — pesquisa livre (Solicitação Técnica 2026-07-29, renumerado
+# de Busca4 pra Busca5 em 2026-08-19 pela mesma razão acima): discutido
+# tirar o piso de 20% do Critério 4 pra não perder candidatos reais de 0%
 # de similaridade, mas descartado por volume (a base inteira de
 # estagio8_agrupado seria devolvida de uma vez — 5.091 grupos em Entradas
 # na geraldo). Em vez disso, um critério NOVO, sem filtro de código nem
@@ -7926,18 +8085,18 @@ LIMIAR_SIMILARIDADE_CRITERIO3 = 20.0
 # termo na busca por descrição do XML (ver _render_cruzamento_entradas()/
 # _saidas()/_estoque() em interface.py) — o próprio auditor filtra
 # manualmente, cobrindo o caso de similaridade 0% sem sobrecarregar a tela.
-CRITERIO_BUSCA4_PESQUISA_LIVRE = "Critério de Busca4: pesquisa livre (sem filtro de código/similaridade)"
+CRITERIO_BUSCA5_PESQUISA_LIVRE = "Critério de Busca5: pesquisa livre (sem filtro de código/similaridade)"
 
 
 def cruzar_produto_escolhido_entradas_criterio3() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 3 (Entradas): candidatos com código DIVERGENTE do alvo
-    (normalizado — mesmo tratamento de zero à esquerda do Critério 1,
+    """Critério 4 (Entradas): candidatos com código DIVERGENTE do alvo
+    (normalizado — mesmo tratamento de zero à esquerda do Critério 2,
     mas invertido: só entra quem NÃO bate), filtrados por
     `SIMILARIDADE_DESCRICAO >= LIMIAR_SIMILARIDADE_CRITERIO3` (=20,
     mesmo piso do app antigo — matching/criterio_descricao.py,
     `min_score=20` — sem esse piso, o resultado seria a base inteira de
     estagio8_agrupado ordenada por similaridade, praticamente toda com
-    0%). Diferente do Critério 1: aqui a similaridade FILTRA (não é só
+    0%). Diferente do Critério 2: aqui a similaridade FILTRA (não é só
     ordenação), porque não há mais o código como evidência — é o único
     sinal disponível. Mesma exclusão cross-alvo de
     _chaves_ja_atribuidas_a_outro_alvo() dos outros critérios.
@@ -7979,7 +8138,7 @@ def cruzar_produto_escolhido_entradas_criterio3() -> "tuple[pd.DataFrame, dict |
 
 
 def cruzar_produto_escolhido_entradas_criterio3_detalhado() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 3 (Entradas) — tabela DETALHADA, mesma lógica de
+    """Critério 4 (Entradas) — tabela DETALHADA, mesma lógica de
     cruzar_produto_escolhido_entradas_criterio3() (código divergente +
     piso de similaridade), mas contra estagio8_detalhado (uma linha por
     item do XML, com idunico) em vez de estagio8_agrupado. Mesmas
@@ -8016,15 +8175,15 @@ def cruzar_produto_escolhido_entradas_criterio3_detalhado() -> "tuple[pd.DataFra
 
 
 def cruzar_produto_escolhido_entradas_criterio4() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 4 (Entradas) — PESQUISA LIVRE, ver comentário de
-    `CRITERIO_BUSCA4_PESQUISA_LIVRE`. SEM filtro de código (nem igual,
+    """Critério 5 (Entradas) — PESQUISA LIVRE, ver comentário de
+    `CRITERIO_BUSCA5_PESQUISA_LIVRE`. SEM filtro de código (nem igual,
     nem divergente) e SEM piso de similaridade — devolve TODOS os
     grupos de `estagio8_agrupado`, só excluindo os já atribuídos a
     OUTRO alvo (mesma regra dos outros critérios).
     `SIMILARIDADE_DESCRICAO` calculada só informativamente (não
     filtra nada aqui — quem filtra é o auditor, via busca manual na
     UI). Ordenado por SIMILARIDADE_DESCRICAO desc, qtde_ocorrencias
-    desc — mesma ordenação de referência do Critério 1/3. Devolve
+    desc — mesma ordenação de referência do Critério 2/4. Devolve
     (DataFrame, dict do produto escolhido) — DataFrame vazio se nenhum
     produto foi escolhido ainda, estagio8_agrupado não existir, ou
     todos os grupos já pertencerem a outro alvo; escolhido=None só no
@@ -8054,7 +8213,7 @@ def cruzar_produto_escolhido_entradas_criterio4() -> "tuple[pd.DataFrame, dict |
 
 
 def cruzar_produto_escolhido_entradas_criterio4_detalhado() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 4 (Entradas) — tabela DETALHADA, mesma lógica de
+    """Critério 5 (Entradas) — tabela DETALHADA, mesma lógica de
     cruzar_produto_escolhido_entradas_criterio4() (pesquisa livre, sem
     filtro de código nem piso), mas contra estagio8_detalhado. Mesmas
     regras de vazio/None."""
@@ -8082,23 +8241,106 @@ def cruzar_produto_escolhido_entradas_criterio4_detalhado() -> "tuple[pd.DataFra
     return candidatos, escolhido
 
 
-# ── Cruzamento do Produto Escolhido — Critérios 1 e 3 (Saídas) ───────────
+# ── Cruzamento do Produto Escolhido — Critérios 1, 2 e 4 (Saídas) ────────
 # Solicitação Técnica (2026-07-25): "BUSCA DE CORRESPONDENTES NAS SAÍDAS
 # (BOTÃO 9)" — replica a mecânica de Entradas pras Saídas, sobre
 # estagio8_saidas_agrupado/estagio8_saidas_detalhado (Estágio 8.1) em vez
-# de estagio8_agrupado/estagio8_detalhado. SEM Critério 2 (nome de
-# declaração igual) — regra de negócio explícita: na saída a auditada é
+# de estagio8_agrupado/estagio8_detalhado. Critério 1 (EAN, 2026-08-19).
+# SEM Critério 3 (nome de declaração igual) — regra de negócio explícita:
+# na saída a auditada é
 # EMITENTE da nota, então `desc_xml`/`codproddecl` (vindo de `cProd` do
 # próprio XML, ver gerar_estagio_8_saidas()) JÁ é a "declaração" dela
 # mesma — não existe uma descrição de declaração SEPARADA pra comparar
 # contra (estagio8_saidas não tem `descrição_decl`), o que tornaria um
-# "Critério 2" redundante ou sem sentido aqui.
+# "Critério 3" redundante ou sem sentido aqui.
 _COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO = _COLUNAS_ESTAGIO8_SAIDAS_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
 _COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO = _COLUNAS_ESTAGIO8_SAIDAS_DETALHADO + ["SIMILARIDADE_DESCRICAO"]
 
 
+def cruzar_produto_escolhido_saidas_ean() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 1 (Saídas, EAN) — mesma lógica de
+    cruzar_produto_escolhido_entradas_ean(), mas contra estagio8_saidas_
+    agrupado. Exclusão cross-alvo com `origem="saidas"`. Devolve
+    (DataFrame, dict do produto escolhido) — mesmas regras de vazio/None
+    do Critério 1 (EAN) de Entradas."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), None
+    mapa_ean = _mapa_cod_item_ean()
+    if mapa_ean.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
+    ean_por_cod_item = pd.Series(mapa_ean["COD_BARRA"].values, index=mapa_ean["COD_ITEM"])
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    ean_alvo = ean_por_cod_item.get(cod_item_normalizado, "")
+    if not ean_alvo:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
+    agrupado, _ = consultar_estagio8_saidas_agrupado(limite=None)
+    if agrupado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
+    codigos_normalizados = _normalizar_cod_item_flexivel(agrupado["codproddecl"])
+    ean_candidatos = codigos_normalizados.map(ean_por_cod_item).fillna("")
+    correspondentes = agrupado[ean_candidatos == ean_alvo].copy()
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "saidas")
+    if chaves_bloqueadas:
+        correspondentes = correspondentes[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(correspondentes["codproddecl"], correspondentes["desc_xml"])]
+        ]
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), escolhido
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
+    correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    correspondentes = correspondentes.sort_values(
+        ["SIMILARIDADE_DESCRICAO", "qtde_ocorrencias"], ascending=[False, False]
+    )[_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO].reset_index(drop=True)
+    return correspondentes, escolhido
+
+
+def cruzar_produto_escolhido_saidas_ean_detalhado() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 1 (Saídas, EAN) — tabela DETALHADA, mesma lógica de
+    cruzar_produto_escolhido_saidas_ean(), mas contra estagio8_saidas_
+    detalhado. Mesmas regras de vazio/None."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), None
+    mapa_ean = _mapa_cod_item_ean()
+    if mapa_ean.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
+    ean_por_cod_item = pd.Series(mapa_ean["COD_BARRA"].values, index=mapa_ean["COD_ITEM"])
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    ean_alvo = ean_por_cod_item.get(cod_item_normalizado, "")
+    if not ean_alvo:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
+    detalhado, _ = consultar_estagio8_saidas_detalhado(limite=None)
+    if detalhado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
+    codigos_normalizados = _normalizar_cod_item_flexivel(detalhado["codproddecl"])
+    ean_candidatos = codigos_normalizados.map(ean_por_cod_item).fillna("")
+    correspondentes = detalhado[ean_candidatos == ean_alvo].copy()
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "saidas")
+    if chaves_bloqueadas:
+        correspondentes = correspondentes[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(correspondentes["codproddecl"], correspondentes["desc_xml"])]
+        ]
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO), escolhido
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
+    correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["desc_xml"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    correspondentes = correspondentes.sort_values(
+        "SIMILARIDADE_DESCRICAO", ascending=False
+    )[_COLUNAS_CRUZAMENTO_SAIDAS_DETALHADO].reset_index(drop=True)
+    return correspondentes, escolhido
+
+
 def cruzar_produto_escolhido_saidas() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 1 (Saídas): mesma lógica de
+    """Critério 2 (Saídas): mesma lógica de
     cruzar_produto_escolhido_entradas(), mas contra estagio8_saidas_
     agrupado — MESMO código de produto (normalizado via
     _normalizar_cod_item_flexivel()) + SIMILARIDADE_DESCRICAO
@@ -8107,7 +8349,7 @@ def cruzar_produto_escolhido_saidas() -> "tuple[pd.DataFrame, dict | None]":
     _chaves_ja_atribuidas_a_outro_alvo()) — um item já confirmado pra
     outro produto alvo, na mesma origem, não aparece aqui. Devolve
     (DataFrame, dict do produto escolhido) — mesmas regras de
-    vazio/None do Critério 1 de Entradas."""
+    vazio/None do Critério 2 de Entradas."""
     escolhido = consultar_produto_cruzamento_escolhido()
     if not escolhido:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), None
@@ -8137,7 +8379,7 @@ def cruzar_produto_escolhido_saidas() -> "tuple[pd.DataFrame, dict | None]":
 
 
 def cruzar_produto_escolhido_saidas_detalhado() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 1 (Saídas) — tabela DETALHADA, mesma lógica de
+    """Critério 2 (Saídas) — tabela DETALHADA, mesma lógica de
     cruzar_produto_escolhido_saidas(), mas contra estagio8_saidas_
     detalhado (uma linha por item do XML, com idunico) em vez de
     estagio8_saidas_agrupado. Mesmas regras de vazio/None."""
@@ -8170,13 +8412,13 @@ def cruzar_produto_escolhido_saidas_detalhado() -> "tuple[pd.DataFrame, dict | N
 
 
 def cruzar_produto_escolhido_saidas_criterio3() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 3 (Saídas): mesma lógica de
+    """Critério 4 (Saídas): mesma lógica de
     cruzar_produto_escolhido_entradas_criterio3(), mas contra
     estagio8_saidas_agrupado — código DIVERGENTE do alvo (normalizado)
     + `SIMILARIDADE_DESCRICAO >= LIMIAR_SIMILARIDADE_CRITERIO3` como
     FILTRO (não só ordenação). Exclusão cross-alvo com `origem=
     "saidas"`. Devolve (DataFrame, dict do produto escolhido) — mesmas
-    regras de vazio/None do Critério 3 de Entradas."""
+    regras de vazio/None do Critério 4 de Entradas."""
     escolhido = consultar_produto_cruzamento_escolhido()
     if not escolhido:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), None
@@ -8209,7 +8451,7 @@ def cruzar_produto_escolhido_saidas_criterio3() -> "tuple[pd.DataFrame, dict | N
 
 
 def cruzar_produto_escolhido_saidas_criterio3_detalhado() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 3 (Saídas) — tabela DETALHADA, mesma lógica de
+    """Critério 4 (Saídas) — tabela DETALHADA, mesma lógica de
     cruzar_produto_escolhido_saidas_criterio3() (código divergente +
     piso de similaridade), mas contra estagio8_saidas_detalhado. Mesmas
     regras de vazio/None."""
@@ -8245,13 +8487,13 @@ def cruzar_produto_escolhido_saidas_criterio3_detalhado() -> "tuple[pd.DataFrame
 
 
 def cruzar_produto_escolhido_saidas_criterio4() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 4 (Saídas) — PESQUISA LIVRE, mesma lógica de
+    """Critério 5 (Saídas) — PESQUISA LIVRE, mesma lógica de
     cruzar_produto_escolhido_entradas_criterio4() (ver comentário de
-    `CRITERIO_BUSCA4_PESQUISA_LIVRE`), mas contra
+    `CRITERIO_BUSCA5_PESQUISA_LIVRE`), mas contra
     estagio8_saidas_agrupado — SEM filtro de código nem piso de
     similaridade, exclusão cross-alvo com `origem="saidas"`. Devolve
     (DataFrame, dict do produto escolhido) — mesmas regras de
-    vazio/None do Critério 4 de Entradas."""
+    vazio/None do Critério 5 de Entradas."""
     escolhido = consultar_produto_cruzamento_escolhido()
     if not escolhido:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_SAIDAS_AGRUPADO), None
@@ -8277,7 +8519,7 @@ def cruzar_produto_escolhido_saidas_criterio4() -> "tuple[pd.DataFrame, dict | N
 
 
 def cruzar_produto_escolhido_saidas_criterio4_detalhado() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 4 (Saídas) — tabela DETALHADA, mesma lógica de
+    """Critério 5 (Saídas) — tabela DETALHADA, mesma lógica de
     cruzar_produto_escolhido_saidas_criterio4() (pesquisa livre), mas
     contra estagio8_saidas_detalhado. Mesmas regras de vazio/None."""
     escolhido = consultar_produto_cruzamento_escolhido()
@@ -8304,14 +8546,15 @@ def cruzar_produto_escolhido_saidas_criterio4_detalhado() -> "tuple[pd.DataFrame
     return candidatos, escolhido
 
 
-# ── Cruzamento do Produto Escolhido — Critérios 1 e 2 (Estoque) ──────────
+# ── Cruzamento do Produto Escolhido — Critérios 1, 2 e 3 (Estoque) ───────
 # Solicitação Técnica (2026-07-25): "BUSCA DE CORRESPONDENTES NO ESTOQUE
 # (BOTÃO 9)" — replica a mecânica de Entradas pro Estoque (Bloco H,
 # Estágio 8.2), sobre estagio8_estoque_agrupado/estagio8_estoque_detalhado
-# em vez de estagio8_agrupado/estagio8_detalhado. Critério 1 (mesmo
-# código) + Critério 2 (nome de declaração igual ao alvo) — mesmos dois
-# critérios de Entradas, SEM o Critério 3 (código divergente): não pedido
-# na Solicitação Técnica. Diferença estrutural: estagio8_estoque_agrupado/
+# em vez de estagio8_agrupado/estagio8_detalhado. Critério 1 (EAN,
+# 2026-08-19) + Critério 2 (mesmo código) + Critério 3 (nome de
+# declaração igual ao alvo) — mesmos critérios de Entradas, SEM o
+# Critério 4 (código divergente): não pedido na Solicitação Técnica.
+# Diferença estrutural: estagio8_estoque_agrupado/
 # _detalhado não tem `desc_xml` (o Bloco H só declara UMA descrição por
 # item, `descrição_decl` — não existe uma "descrição do XML" separada da
 # declaração, diferente de Entradas/Saídas). `desc_xml` é preenchido AQUI
@@ -8324,8 +8567,96 @@ _COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO = ["codproddecl", "desc_xml", "descrição_
 _COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO = ["codproddecl", "desc_xml", "descrição_decl", "idunico", "SIMILARIDADE_DESCRICAO"]
 
 
+def cruzar_produto_escolhido_estoque_ean() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 1 (Estoque, EAN) — mesma lógica de
+    cruzar_produto_escolhido_entradas_ean(), mas contra estagio8_
+    estoque_agrupado — `desc_xml` preenchido como alias de
+    `descrição_decl` (mesmo padrão do Critério 2/3 de Estoque, Bloco H
+    não tem XML separado da declaração). Exclusão cross-alvo com
+    `origem="estoque"`. Devolve (DataFrame, dict do produto escolhido)
+    — mesmas regras de vazio/None do Critério 1 (EAN) de Entradas."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), None
+    mapa_ean = _mapa_cod_item_ean()
+    if mapa_ean.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
+    ean_por_cod_item = pd.Series(mapa_ean["COD_BARRA"].values, index=mapa_ean["COD_ITEM"])
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    ean_alvo = ean_por_cod_item.get(cod_item_normalizado, "")
+    if not ean_alvo:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
+    agrupado, _ = consultar_estagio8_estoque_agrupado(limite=None)
+    if agrupado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
+    agrupado = agrupado.copy()
+    agrupado["desc_xml"] = agrupado["descrição_decl"]
+    codigos_normalizados = _normalizar_cod_item_flexivel(agrupado["codproddecl"])
+    ean_candidatos = codigos_normalizados.map(ean_por_cod_item).fillna("")
+    correspondentes = agrupado[ean_candidatos == ean_alvo].copy()
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "estoque")
+    if chaves_bloqueadas:
+        correspondentes = correspondentes[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(correspondentes["codproddecl"], correspondentes["desc_xml"])]
+        ]
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), escolhido
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
+    correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["descrição_decl"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    correspondentes = correspondentes.sort_values(
+        ["SIMILARIDADE_DESCRICAO", "qtde_ocorrencias"], ascending=[False, False]
+    )[_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO].reset_index(drop=True)
+    return correspondentes, escolhido
+
+
+def cruzar_produto_escolhido_estoque_ean_detalhado() -> "tuple[pd.DataFrame, dict | None]":
+    """Critério 1 (Estoque, EAN) — tabela DETALHADA, mesma lógica de
+    cruzar_produto_escolhido_estoque_ean(), mas contra estagio8_
+    estoque_detalhado. Mesmas regras de vazio/None."""
+    escolhido = consultar_produto_cruzamento_escolhido()
+    if not escolhido:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), None
+    mapa_ean = _mapa_cod_item_ean()
+    if mapa_ean.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
+    ean_por_cod_item = pd.Series(mapa_ean["COD_BARRA"].values, index=mapa_ean["COD_ITEM"])
+    cod_item_normalizado = _normalizar_cod_item_flexivel(pd.Series([escolhido["COD_ITEM"]])).iloc[0]
+    ean_alvo = ean_por_cod_item.get(cod_item_normalizado, "")
+    if not ean_alvo:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
+    detalhado, _ = consultar_estagio8_estoque_detalhado(limite=None)
+    if detalhado.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
+    detalhado = detalhado.copy()
+    detalhado["desc_xml"] = detalhado["descrição_decl"]
+    codigos_normalizados = _normalizar_cod_item_flexivel(detalhado["codproddecl"])
+    ean_candidatos = codigos_normalizados.map(ean_por_cod_item).fillna("")
+    correspondentes = detalhado[ean_candidatos == ean_alvo].copy()
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
+    chaves_bloqueadas = _chaves_ja_atribuidas_a_outro_alvo(escolhido["DESCR_ALVO"], "estoque")
+    if chaves_bloqueadas:
+        correspondentes = correspondentes[
+            [(c, d) not in chaves_bloqueadas for c, d in zip(correspondentes["codproddecl"], correspondentes["desc_xml"])]
+        ]
+    if correspondentes.empty:
+        return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO), escolhido
+    descr_alvo = descricao_efetiva_escolhido(escolhido)
+    correspondentes["SIMILARIDADE_DESCRICAO"] = correspondentes["descrição_decl"].apply(
+        lambda desc: _score_similaridade_descricao(desc, descr_alvo)
+    )
+    correspondentes = correspondentes.sort_values(
+        "SIMILARIDADE_DESCRICAO", ascending=False
+    )[_COLUNAS_CRUZAMENTO_ESTOQUE_DETALHADO].reset_index(drop=True)
+    return correspondentes, escolhido
+
+
 def cruzar_produto_escolhido_estoque() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 1 (Estoque): mesma lógica de
+    """Critério 2 (Estoque): mesma lógica de
     cruzar_produto_escolhido_entradas(), mas contra estagio8_estoque_
     agrupado — MESMO código de produto (normalizado via
     _normalizar_cod_item_flexivel()). `SIMILARIDADE_DESCRICAO` calculada
@@ -8333,7 +8664,7 @@ def cruzar_produto_escolhido_estoque() -> "tuple[pd.DataFrame, dict | None]":
     `DESCR_ALVO` — diferente de Entradas/Saídas, que comparam `desc_xml`
     (não existe aqui). Exclusão cross-alvo com `origem="estoque"` (ver
     _chaves_ja_atribuidas_a_outro_alvo()). Devolve (DataFrame, dict do
-    produto escolhido) — mesmas regras de vazio/None do Critério 1 de
+    produto escolhido) — mesmas regras de vazio/None do Critério 2 de
     Entradas."""
     escolhido = consultar_produto_cruzamento_escolhido()
     if not escolhido:
@@ -8366,7 +8697,7 @@ def cruzar_produto_escolhido_estoque() -> "tuple[pd.DataFrame, dict | None]":
 
 
 def cruzar_produto_escolhido_estoque_detalhado() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 1 (Estoque) — tabela DETALHADA, mesma lógica de
+    """Critério 2 (Estoque) — tabela DETALHADA, mesma lógica de
     cruzar_produto_escolhido_estoque(), mas contra estagio8_estoque_
     detalhado (uma linha por item, com o idunico SINTÉTICO do Estágio
     8.2 — hash de ANO_REFERENCIA+COD_ITEM_DECLARACAO+DESCR_ITEM_
@@ -8403,14 +8734,14 @@ def cruzar_produto_escolhido_estoque_detalhado() -> "tuple[pd.DataFrame, dict | 
 
 
 def cruzar_produto_escolhido_estoque_criterio2() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 2 (Estoque): mesma lógica de
+    """Critério 3 (Estoque): mesma lógica de
     cruzar_produto_escolhido_entradas_criterio2() — candidatos cujo
     `descrição_decl` é IGUAL (normalizado, ver
     _normalizar_nome_para_igualdade()) ao `DESCR_ALVO` do produto
     escolhido, sem exigir relação de código. `SIMILARIDADE_DESCRICAO`
     (entre `descrição_decl` e `DESCR_ALVO`) usada só pra ORDENAR. Mesma
     exclusão cross-alvo com `origem="estoque"`. Devolve (DataFrame, dict
-    do produto escolhido) — mesmas regras de vazio/None do Critério 2 de
+    do produto escolhido) — mesmas regras de vazio/None do Critério 3 de
     Entradas."""
     escolhido = consultar_produto_cruzamento_escolhido()
     if not escolhido:
@@ -8443,7 +8774,7 @@ def cruzar_produto_escolhido_estoque_criterio2() -> "tuple[pd.DataFrame, dict | 
 
 
 def cruzar_produto_escolhido_estoque_criterio2_detalhado() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 2 (Estoque) — tabela DETALHADA, mesma lógica de
+    """Critério 3 (Estoque) — tabela DETALHADA, mesma lógica de
     cruzar_produto_escolhido_estoque_criterio2(), mas contra
     estagio8_estoque_detalhado (uma linha por item, idunico sintético).
     Mesmas regras de vazio/None."""
@@ -8478,15 +8809,15 @@ def cruzar_produto_escolhido_estoque_criterio2_detalhado() -> "tuple[pd.DataFram
 
 
 def cruzar_produto_escolhido_estoque_criterio4() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 4 (Estoque) — PESQUISA LIVRE, mesma lógica de
+    """Critério 5 (Estoque) — PESQUISA LIVRE, mesma lógica de
     cruzar_produto_escolhido_entradas_criterio4() (ver comentário de
-    `CRITERIO_BUSCA4_PESQUISA_LIVRE`), mas contra
+    `CRITERIO_BUSCA5_PESQUISA_LIVRE`), mas contra
     estagio8_estoque_agrupado — SEM filtro de código nem piso de
     similaridade, exclusão cross-alvo com `origem="estoque"`.
     `desc_xml` preenchido como alias de `descrição_decl` (mesmo
-    padrão do Critério 1/2 de Estoque — Bloco H não tem XML separado
+    padrão do Critério 1/2/3 de Estoque — Bloco H não tem XML separado
     da declaração). Devolve (DataFrame, dict do produto escolhido) —
-    mesmas regras de vazio/None do Critério 4 de Entradas."""
+    mesmas regras de vazio/None do Critério 5 de Entradas."""
     escolhido = consultar_produto_cruzamento_escolhido()
     if not escolhido:
         return pd.DataFrame(columns=_COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO), None
@@ -8514,7 +8845,7 @@ def cruzar_produto_escolhido_estoque_criterio4() -> "tuple[pd.DataFrame, dict | 
 
 
 def cruzar_produto_escolhido_estoque_criterio4_detalhado() -> "tuple[pd.DataFrame, dict | None]":
-    """Critério 4 (Estoque) — tabela DETALHADA, mesma lógica de
+    """Critério 5 (Estoque) — tabela DETALHADA, mesma lógica de
     cruzar_produto_escolhido_estoque_criterio4() (pesquisa livre), mas
     contra estagio8_estoque_detalhado. Mesmas regras de vazio/None."""
     escolhido = consultar_produto_cruzamento_escolhido()
@@ -8559,7 +8890,11 @@ _COLUNAS_CRUZAMENTO_CONFIRMADO = [
     "DESCR_ALVO", "COD_ITEM", "ORIGEM", "codproddecl", "desc_xml",
     "descrição_decl", "qtde_ocorrencias", "CRITERIO", "TS",
 ]
-CRITERIO_BUSCA1_MESMO_CODIGO = "Critério de Busca1: cod_prod_decl do alvo = cod_prod_decl do candidato"
+# Renumerado de Busca1 pra Busca2 em 2026-08-19 (novo Critério 1 = EAN,
+# ver comentário de CRITERIO_BUSCA1_EAN) — identificador da constante e
+# das funções (`cruzar_produto_escolhido_entradas()`/`_saidas()`/
+# `_estoque()`, sem sufixo numérico) mantidos, só o RÓTULO exibido mudou.
+CRITERIO_BUSCA2_MESMO_CODIGO = "Critério de Busca2: cod_prod_decl do alvo = cod_prod_decl do candidato"
 
 
 def salvar_cruzamento_confirmado(
@@ -8570,7 +8905,7 @@ def salvar_cruzamento_confirmado(
     (checkbox) como pertencentes à rubrica do produto alvo `escolhido`,
     vindas da origem `origem` ("entradas"/"saidas"/"estoques") e
     justificadas pelo `criterio` de busca (ex.:
-    CRITERIO_BUSCA1_MESMO_CODIGO). `linhas` tem as colunas codproddecl/
+    CRITERIO_BUSCA2_MESMO_CODIGO). `linhas` tem as colunas codproddecl/
     desc_xml/descrição_decl/qtde_ocorrencias (mesmo formato de estagio8_
     agrupado). Upsert por (DESCR_ALVO, ORIGEM, codproddecl, desc_xml) —
     reconfirmar a mesma linha atualiza TS/CRITERIO em vez de duplicar;
@@ -8825,29 +9160,34 @@ def consultar_cruzamento_confirmado_detalhado(
 
 # ── Execução Automática da Rubrica (Estágio 10.1) ────────────────────────
 # Solicitação Técnica (2026-07-30): "EXECUÇÃO AUTOMÁTICA DA RUBRICA" —
-# motor que aplica sequencialmente os critérios de busca "óbvios" (mesmo
-# código, nome de declaração igual) sem exigir clique manual em cada aba/
-# critério, poupando o auditor de revisar linha a linha em casos de alta
-# confiança.
+# motor que aplica sequencialmente os critérios de busca "óbvios" (EAN,
+# mesmo código, nome de declaração igual) sem exigir clique manual em cada
+# aba/critério, poupando o auditor de revisar linha a linha em casos de
+# alta confiança.
 #
 # TRAVA DE QUALIDADE — piso de similaridade >= 60% aplicado a TODOS os
-# critérios (1, 2 e 3), não só ao 3. Versão original (mesmo dia) só
-# aplicava o piso ao Critério 3, argumentando que código/nome igual já
-# seria evidência forte o suficiente sozinha — CORRIGIDO pelo usuário
-# com dado real: código/nome podem coincidir por REUSO/erro de cadastro
-# entre produtos fisicamente diferentes (achado real, geraldo: código
-# 07891149200504 — CERV SKOL LATA 350ML — batendo Critério 2 [nome
+# critérios (1, 2, 3 e 4), não só ao 4. Versão original (mesmo dia) só
+# aplicava o piso ao Critério 3 (hoje 4), argumentando que código/nome
+# igual já seria evidência forte o suficiente sozinha — CORRIGIDO pelo
+# usuário com dado real: código/nome podem coincidir por REUSO/erro de
+# cadastro entre produtos fisicamente diferentes (achado real, geraldo:
+# código 07891149200504 — CERV SKOL LATA 350ML — batendo Critério 3 [nome
 # declarado igual] com "SKOL BEATS SENSES LT 269ML CX C/8 FRIDGE PACK",
 # 11,1% de similaridade de texto — produto claramente diferente, mesmo
 # código reaproveitado no cadastro). Piso agora é `>=` (não `>`
 # estrito) — pedido explícito do usuário ("tem que ser >=60%. vc
-# considerou a menor").
+# considerou a menor"). Critério 1 (EAN, 2026-08-19) entra no mesmo piso
+# — apesar do EAN ser um identificador mais confiável que código interno
+# (padrão global, menos sujeito a reuso de cadastro), continua sem
+# revisão humana linha a linha, então o mesmo piso de qualidade se
+# aplica por segurança (confirmado com o usuário via AskUserQuestion).
 LIMIAR_SIMILARIDADE_AUTOMATICA = 60.0
 
 
 def executar_confirmacao_automatica_rubrica(escolhido: dict, callback=None) -> dict:
     """Aplica AUTOMATICAMENTE, em sequência, os critérios de busca de
-    Entradas (1, 2, 3), Saídas (1, 3) e Estoque (1, 2) pro produto
+    Entradas (1 EAN, 2 código, 3 nome), Saídas (1 EAN, 2 código, 4
+    divergente) e Estoque (1 EAN, 2 código, 3 nome) pro produto
     `escolhido` (mesmo dict de consultar_produto_cruzamento_escolhido())
     e confirma na Rubrica os resultados — sem intervenção manual linha a
     linha. Reaproveita as MESMAS funções `cruzar_produto_escolhido_*()`
@@ -8858,17 +9198,17 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict, callback=None) -> d
     embutidas em gerar_estagio_8_saidas()/gerar_estagio_8_estoque(), que
     alimentam essas funções).
 
-    TODOS os critérios (1, 2 e 3, das 3 origens) são refiltrados aqui
-    por `SIMILARIDADE_DESCRICAO >= LIMIAR_SIMILARIDADE_AUTOMATICA`
-    (60%) — mesmo Critério 1/2, cujo filtro "de verdade" é código/nome
-    igual (sem piso nenhum no modo MANUAL): confirmado com dado real
-    que código/nome podem coincidir por reuso de cadastro entre
-    produtos fisicamente diferentes, e sem revisão humana linha a
-    linha (a automação toda existe pra isso), esse piso é a única
-    proteção contra confirmar automaticamente um par claramente
-    errado. Pro Critério 3 (que já vem com piso manual de 20%,
-    LIMIAR_SIMILARIDADE_CRITERIO3), refiltrar a 60% é estritamente
-    mais restritivo — equivalente a nunca ter tido o piso de 20%.
+    TODOS os critérios do `plano` são refiltrados aqui por
+    `SIMILARIDADE_DESCRICAO >= LIMIAR_SIMILARIDADE_AUTOMATICA` (60%) —
+    mesmo EAN/código/nome, cujo filtro "de verdade" é identidade exata
+    (sem piso nenhum no modo MANUAL): confirmado com dado real que
+    código/nome podem coincidir por reuso de cadastro entre produtos
+    fisicamente diferentes, e sem revisão humana linha a linha (a
+    automação toda existe pra isso), esse piso é a única proteção
+    contra confirmar automaticamente um par claramente errado. Pro
+    Critério 4 (código divergente, que já vem com piso manual de 20%,
+    LIMIAR_SIMILARIDADE_CRITERIO3), refiltrar a 60% é estritamente mais
+    restritivo — equivalente a nunca ter tido o piso de 20%.
 
     Persistência via `salvar_cruzamento_confirmado()`/`_detalhado()` com
     `universo_chaves=None`/`universo_idunicos=None` — semântica SÓ
@@ -8881,11 +9221,13 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict, callback=None) -> d
     `callback(origem, criterio, indice, total)` (2026-07-30, pedido do
     usuário: "criar barra de progresso para acompanhar"), se informado,
     é chamado ao FINAL de cada um dos critérios do `plano` (indice de 1
-    a `total` — 7 no total: 3 de Entradas + 2 de Saídas + 2 de
-    Estoque), independente de ter encontrado algo ou dado erro — usado
-    pela UI (`interface.py`) pra atualizar uma `st.progress()` em
-    tempo real. `callback=None` (padrão) mantém o comportamento
-    silencioso de antes.
+    a `total` — 10 no total, desde 2026-08-19: 4 de Entradas [EAN,
+    código, nome, divergente] + 3 de Saídas [EAN, código, divergente] +
+    3 de Estoque [EAN, código, nome]; era 7 antes do Critério EAN),
+    independente de ter encontrado algo ou dado erro — usado pela UI
+    (`interface.py`) pra atualizar uma `st.progress()` em tempo real.
+    `callback=None` (padrão) mantém o comportamento silencioso de
+    antes.
 
     Devolve {'ok': True, 'total_adicionado': int (itens NOVOS na Rubrica
     detalhada — saldo líquido, não conta reconfirmação de item já
@@ -8901,20 +9243,34 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict, callback=None) -> d
     antes, _ = consultar_cruzamento_confirmado_detalhado(descr_alvo=descr_alvo, limite=None)
     idunicos_antes = set(antes["idunico"]) if not antes.empty else set()
 
+    # Critério EAN (1) entra PRIMEIRO em cada origem (2026-08-19, pedido
+    # do usuário — "entra primeiro no plano"): identificador global mais
+    # confiável que código interno, roda antes do código/nome pra que,
+    # em caso de item já confirmado por dois critérios diferentes nesta
+    # mesma rodada, o registro fique com o critério mais forte (embora
+    # `salvar_cruzamento_confirmado()` já seja idempotente por chave —
+    # a ORDEM aqui é só uma preferência de rastreabilidade, não uma
+    # exigência funcional).
     plano = [
-        ("entradas", CRITERIO_BUSCA1_MESMO_CODIGO,
+        ("entradas", CRITERIO_BUSCA1_EAN,
+         cruzar_produto_escolhido_entradas_ean, cruzar_produto_escolhido_entradas_ean_detalhado),
+        ("entradas", CRITERIO_BUSCA2_MESMO_CODIGO,
          cruzar_produto_escolhido_entradas, cruzar_produto_escolhido_entradas_detalhado),
-        ("entradas", CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL,
+        ("entradas", CRITERIO_BUSCA3_NOME_DECLARACAO_IGUAL,
          cruzar_produto_escolhido_entradas_criterio2, cruzar_produto_escolhido_entradas_criterio2_detalhado),
-        ("entradas", CRITERIO_BUSCA3_NOME_XML,
+        ("entradas", CRITERIO_BUSCA4_NOME_XML,
          cruzar_produto_escolhido_entradas_criterio3, cruzar_produto_escolhido_entradas_criterio3_detalhado),
-        ("saidas", CRITERIO_BUSCA1_MESMO_CODIGO,
+        ("saidas", CRITERIO_BUSCA1_EAN,
+         cruzar_produto_escolhido_saidas_ean, cruzar_produto_escolhido_saidas_ean_detalhado),
+        ("saidas", CRITERIO_BUSCA2_MESMO_CODIGO,
          cruzar_produto_escolhido_saidas, cruzar_produto_escolhido_saidas_detalhado),
-        ("saidas", CRITERIO_BUSCA3_NOME_XML,
+        ("saidas", CRITERIO_BUSCA4_NOME_XML,
          cruzar_produto_escolhido_saidas_criterio3, cruzar_produto_escolhido_saidas_criterio3_detalhado),
-        ("estoque", CRITERIO_BUSCA1_MESMO_CODIGO,
+        ("estoque", CRITERIO_BUSCA1_EAN,
+         cruzar_produto_escolhido_estoque_ean, cruzar_produto_escolhido_estoque_ean_detalhado),
+        ("estoque", CRITERIO_BUSCA2_MESMO_CODIGO,
          cruzar_produto_escolhido_estoque, cruzar_produto_escolhido_estoque_detalhado),
-        ("estoque", CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL,
+        ("estoque", CRITERIO_BUSCA3_NOME_DECLARACAO_IGUAL,
          cruzar_produto_escolhido_estoque_criterio2, cruzar_produto_escolhido_estoque_criterio2_detalhado),
     ]
 

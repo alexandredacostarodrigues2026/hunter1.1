@@ -44,7 +44,11 @@ def main() -> None:
         # "rn1_produto"/"rn1_simulada_30"/"consolidado_733"/"estagio_8"/
         # "produtos_alvo_salvos"/"estagio_9"/"consolidado_11"/
         # "relatorios" = os 17 grupos de painéis navegáveis, ver
-        # interface.render_menu_principal().
+        # interface.render_menu_principal(). "cruzamento_produtos"
+        # (plural, 2026-08-19) NÃO é um 18º botão do menu — é uma
+        # 2ª tela do Estágio 10, alcançada só pelo botão "🎯 Cruzar
+        # Produto" de "produtos_alvo_salvos" (interface.render_pagina_
+        # cruzamento_produtos()).
         st.session_state["pagina_ativa"] = None
 
     pagina = st.session_state["pagina_ativa"]
@@ -98,6 +102,8 @@ def main() -> None:
         interface.render_pagina_estagio_8()
     elif pagina == "produtos_alvo_salvos":
         interface.render_pagina_produtos_alvo_salvos()
+    elif pagina == "cruzamento_produtos":
+        interface.render_pagina_cruzamento_produtos()
     elif pagina == "estagio_9":
         interface.render_pagina_estagio_9()
     elif pagina == "consolidado_11":

@@ -1555,18 +1555,6 @@ def _padrao_busca_curinga(texto: str) -> str:
     return f"{prefixo}{meio}{sufixo}"
 
 
-def _badge_st(escolhido: dict) -> str:
-    """Rótulo curto "ST" (Substituição Tributária) pra anexar onde o
-    produto alvo é identificado no Estágio 10 — Solicitação Técnica
-    (2026-07-29): "ESSA INFORMAÇÃO 'ST' DEVERÁ ACOMPANHAR O PRODUTO
-    ALVO NO DECORRER DE TODOS OS PROCEDIMENTOS DA APLICAÇÃO. SEMPRE QUE
-    REQUISITADO" — lê `escolhido["IS_ST"]` (já enriquecido ao vivo por
-    loader.consultar_produto_cruzamento_escolhido(), a partir de
-    produto_alvo_fiscalizacao). String vazia se não for ST, pra usar
-    direto em f-string/concatenação sem `if` repetido em cada tela."""
-    return " 🏷️ **ST**" if escolhido.get("IS_ST") else ""
-
-
 def _formatar_pct_br(v: float) -> str:
     """% Diverg do painel 7.2: acima de 1000% vira '>1000%' — evita número
     gigante na tela quando o denominador é ~0 (ver gerar_cruzamento_
@@ -3681,8 +3669,8 @@ def render_menu_principal() -> None:
     # em 2026-08-07 (Solicitação Técnica "MÓDULO DE RELATÓRIOS FINAIS").
     (
         col_consolidado_733, col_estagio8, col_estagio9, col_produtos_alvo_salvos,
-        col_consolidado_11, col_relatorios,
-    ) = st.columns(6)
+        col_cruzamento_produtos, col_consolidado_11, col_relatorios,
+    ) = st.columns(7)
     if col_consolidado_733.button(
         "🔍 7.3.3: SELEÇÃO CONSOLIDADA (ESTOQUE/XML)",
         key="btn_menu_consolidado_733", use_container_width=True,
@@ -3705,6 +3693,15 @@ def render_menu_principal() -> None:
         "🎯 ESTÁGIO 10 - PRODUTOS ALVOS SALVOS", key="btn_menu_produtos_alvo_salvos", use_container_width=True,
     ):
         st.session_state["pagina_ativa"] = "produtos_alvo_salvos"
+        st.rerun()
+    # "10.1: CRUZAMENTO DE PRODUTOS" (2026-08-19, pedido do usuário via
+    # print) — botão PRÓPRIO no Menu Principal pra render_cruzamento_
+    # produtos(), além do acesso já existente via "🎯 Cruzar Produto"
+    # dentro do Estágio 10 (não substitui aquele, é um atalho a mais).
+    if col_cruzamento_produtos.button(
+        "🔀 10.1: CRUZAMENTO DE PRODUTOS", key="btn_menu_cruzamento_produtos", use_container_width=True,
+    ):
+        st.session_state["pagina_ativa"] = "cruzamento_produtos"
         st.rerun()
     if col_consolidado_11.button(
         "📊 11: CONSOLIDADO GERAL (RN1)", key="btn_menu_consolidado_11", use_container_width=True,
@@ -4933,25 +4930,32 @@ def _obter_criterios_cruzamento_entradas() -> dict:
     certa conforme o que está selecionado. Rótulo do Critério 3
     (2026-07-28, pedido do usuário: "mudar o nome do critério3 para:
     'nome_prod_decl do alvo = nome_prod_xml' em entradas") usa
-    `CRITERIO_BUSCA3_NOME_XML` — mesma constante usada no Critério 3 de
+    `CRITERIO_BUSCA4_NOME_XML` — mesma constante usada no Critério 3 de
     Saídas (ver _obter_criterios_cruzamento_saidas(); chegou a ser
     renumerada "Busca2" lá no mesmo dia, revertida logo em seguida —
     "vamos fixar. volte para o nr 3." — daí as duas abas convergirem
-    pra uma constante SÓ, em vez de uma por aba)."""
+    pra uma constante SÓ, em vez de uma por aba). Critério 1 (EAN,
+    2026-08-19) adicionado NA FRENTE de todos os outros — código/nome/
+    divergente empurrados de 1/2/3/4 pra 2/3/4/5, ver comentário de
+    `loader.CRITERIO_BUSCA1_EAN`."""
     return {
-        loader.CRITERIO_BUSCA1_MESMO_CODIGO: (
+        loader.CRITERIO_BUSCA1_EAN: (
+            loader.cruzar_produto_escolhido_entradas_ean,
+            loader.cruzar_produto_escolhido_entradas_ean_detalhado,
+        ),
+        loader.CRITERIO_BUSCA2_MESMO_CODIGO: (
             loader.cruzar_produto_escolhido_entradas,
             loader.cruzar_produto_escolhido_entradas_detalhado,
         ),
-        loader.CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL: (
+        loader.CRITERIO_BUSCA3_NOME_DECLARACAO_IGUAL: (
             loader.cruzar_produto_escolhido_entradas_criterio2,
             loader.cruzar_produto_escolhido_entradas_criterio2_detalhado,
         ),
-        loader.CRITERIO_BUSCA3_NOME_XML: (
+        loader.CRITERIO_BUSCA4_NOME_XML: (
             loader.cruzar_produto_escolhido_entradas_criterio3,
             loader.cruzar_produto_escolhido_entradas_criterio3_detalhado,
         ),
-        loader.CRITERIO_BUSCA4_PESQUISA_LIVRE: (
+        loader.CRITERIO_BUSCA5_PESQUISA_LIVRE: (
             loader.cruzar_produto_escolhido_entradas_criterio4,
             loader.cruzar_produto_escolhido_entradas_criterio4_detalhado,
         ),
@@ -5326,18 +5330,24 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
 
     correspondentes, _ = fn_agrupado()
     if correspondentes.empty:
-        if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
+        if criterio_busca == loader.CRITERIO_BUSCA1_EAN:
+            st.warning(
+                f"⚠️ Nenhum candidato com o mesmo EAN de **{escolhido['COD_ITEM']}** encontrado "
+                "em `estagio8_agrupado` — o produto (ou o candidato) provavelmente não tem EAN "
+                "cadastrado no Registro 0200 (Cadastro de Itens) do SPED."
+            )
+        elif criterio_busca == loader.CRITERIO_BUSCA2_MESMO_CODIGO:
             st.warning(
                 f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
                 "em `estagio8_agrupado`, mesmo após normalizar zero à esquerda — o produto "
                 "provavelmente não aparece nas entradas com esse código."
             )
-        elif criterio_busca == loader.CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL:
+        elif criterio_busca == loader.CRITERIO_BUSCA3_NOME_DECLARACAO_IGUAL:
             st.warning(
                 f"⚠️ Nenhum item declarado com o mesmo nome de **{descr_efetiva}** encontrado "
                 "em `estagio8_agrupado`."
             )
-        elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+        elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
             st.warning(
                 "⚠️ `estagio8_agrupado` está vazio, ou todos os grupos já pertencem a outro alvo — "
                 "nada disponível pra pesquisa livre."
@@ -5349,7 +5359,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
                 "em `estagio8_agrupado`."
             )
         return
-    if criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+    if criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
         st.info(
             f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
             "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
@@ -5428,7 +5438,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         editor_base = editor_base[mask_busca]
         editor_exibicao = editor_exibicao.loc[editor_base.index]
         st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
-    elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+    elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
         # Pesquisa livre (Solicitação Técnica 2026-07-29) não tem filtro
         # de código nem piso de similaridade — sem um termo de busca, a
         # tabela renderizaria a base inteira de uma vez (5.091 grupos em
@@ -5491,8 +5501,8 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
                 # pra uma largura diferente da configurada aqui.
                 "Salvar": st.column_config.Column(width=70),
                 "Desfazer": st.column_config.Column(label="Desfaz.", width=75),
-                "Observação": st.column_config.Column(label="Obs.", width=140),
-                "Cod. Produto Declaracao": st.column_config.Column(label="Cód. Prod.", width=110),
+                "Observação": st.column_config.Column(label="Obs.", width=180),
+                "Cod. Produto Declaracao": st.column_config.Column(label="Cód. Prod.", width=150),
                 # TextColumn (não Column genérica) + largura maior
                 # (2026-08-18, pedido do usuário): mesmo tipo de coluna
                 # já usado na Simulação NCM2 pra habilitar quebra de
@@ -5612,7 +5622,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     )
     # IS_ST (2026-07-29) acompanha o produto alvo até a tabela de Itens
     # Individuais — mesmo valor pra todas as linhas (propriedade do
-    # PRODUTO, não do item), ver _badge_st()/consultar_produto_
+    # PRODUTO, não do item), ver consultar_produto_
     # cruzamento_escolhido().
     detalhado["IS_ST"] = escolhido.get("IS_ST", False)
 
@@ -5647,7 +5657,7 @@ def _obter_criterios_cruzamento_saidas() -> dict:
     entradas() (2026-07-25, Solicitação Técnica "BUSCA DE CORRESPONDENTES
     NAS SAÍDAS"), mas só com 2 critérios: "Busca1" (mesmo código) e
     "Busca3" (código divergente, mesma comparação e MESMA constante
-    `CRITERIO_BUSCA3_NOME_XML` do Critério 3 de Entradas —
+    `CRITERIO_BUSCA4_NOME_XML` do Critério 3 de Entradas —
     SIMILARIDADE_DESCRICAO entre desc_xml do candidato e DESCR_ALVO;
     2026-07-28, chegou a ser renumerado "Busca2" no mesmo dia da troca
     de texto — "nas saídas transforme busca3 em 2 e mude o texto
@@ -5656,17 +5666,23 @@ def _obter_criterios_cruzamento_saidas() -> dict:
     "nome de declaração" do candidato separado de `desc_xml` pra
     comparar (a auditada é a EMITENTE, `desc_xml` já é a descrição
     dela) — só o "buraco" na numeração ficou aceito pra manter a MESMA
-    constante/texto que Entradas)."""
+    constante/texto que Entradas). Critério 1 (EAN, 2026-08-19)
+    adicionado na frente dos outros dois — ver comentário de
+    `loader.CRITERIO_BUSCA1_EAN`."""
     return {
-        loader.CRITERIO_BUSCA1_MESMO_CODIGO: (
+        loader.CRITERIO_BUSCA1_EAN: (
+            loader.cruzar_produto_escolhido_saidas_ean,
+            loader.cruzar_produto_escolhido_saidas_ean_detalhado,
+        ),
+        loader.CRITERIO_BUSCA2_MESMO_CODIGO: (
             loader.cruzar_produto_escolhido_saidas,
             loader.cruzar_produto_escolhido_saidas_detalhado,
         ),
-        loader.CRITERIO_BUSCA3_NOME_XML: (
+        loader.CRITERIO_BUSCA4_NOME_XML: (
             loader.cruzar_produto_escolhido_saidas_criterio3,
             loader.cruzar_produto_escolhido_saidas_criterio3_detalhado,
         ),
-        loader.CRITERIO_BUSCA4_PESQUISA_LIVRE: (
+        loader.CRITERIO_BUSCA5_PESQUISA_LIVRE: (
             loader.cruzar_produto_escolhido_saidas_criterio4,
             loader.cruzar_produto_escolhido_saidas_criterio4_detalhado,
         ),
@@ -5713,7 +5729,15 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     if escolhido.get("IS_ST"):
         st.caption(f"🏷️ **{descr_efetiva}** é **ST** (Substituição Tributária).")
 
-    if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
+    if criterio_busca == loader.CRITERIO_BUSCA1_EAN:
+        st.caption(
+            f"Combinações em `estagio8_saidas_agrupado` (Saídas, Estágio 8) com o MESMO EAN de "
+            f"**{descr_efetiva}** ({escolhido['COD_ITEM']}) — EAN vem do Registro 0200 (Cadastro de "
+            "Itens do SPED, via código de produto), placeholder/vazio nunca conta como igual — "
+            "ordenadas por similaridade de descrição (overlap de tokens) entre o produto vendido e "
+            "a descrição do alvo."
+        )
+    elif criterio_busca == loader.CRITERIO_BUSCA2_MESMO_CODIGO:
         st.caption(
             f"Combinações em `estagio8_saidas_agrupado` (Saídas, Estágio 8) com o MESMO código de produto "
             f"de **{descr_efetiva}** ({escolhido['COD_ITEM']}) — Unidade: **{unid_efetiva or '—'}** — "
@@ -5721,7 +5745,7 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
             "ordenadas por "
             "similaridade de descrição (overlap de tokens) entre o produto vendido e a descrição do alvo."
         )
-    elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+    elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
         st.caption(
             f"Pesquisa livre em `estagio8_saidas_agrupado` (Saídas, Estágio 8) pra comparar com "
             f"**{descr_efetiva}** ({escolhido['COD_ITEM']}) — SEM filtro de código e SEM "
@@ -5743,13 +5767,19 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
 
     correspondentes, _ = fn_agrupado()
     if correspondentes.empty:
-        if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
+        if criterio_busca == loader.CRITERIO_BUSCA1_EAN:
+            st.warning(
+                f"⚠️ Nenhum candidato com o mesmo EAN de **{escolhido['COD_ITEM']}** encontrado "
+                "em `estagio8_saidas_agrupado` — o produto (ou o candidato) provavelmente não tem "
+                "EAN cadastrado no Registro 0200 (Cadastro de Itens) do SPED."
+            )
+        elif criterio_busca == loader.CRITERIO_BUSCA2_MESMO_CODIGO:
             st.warning(
                 f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
                 "em `estagio8_saidas_agrupado`, mesmo após normalizar zero à esquerda — o produto "
                 "provavelmente não aparece nas saídas com esse código."
             )
-        elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+        elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
             st.warning(
                 "⚠️ `estagio8_saidas_agrupado` está vazio, ou todos os grupos já pertencem a "
                 "outro alvo — nada disponível pra pesquisa livre."
@@ -5761,7 +5791,7 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
                 "em `estagio8_saidas_agrupado`."
             )
         return
-    if criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+    if criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
         st.info(
             f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
             "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
@@ -5797,7 +5827,7 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
         editor_base = editor_base[mask_busca]
         editor_exibicao = editor_exibicao.loc[editor_base.index]
         st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
-    elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+    elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
         # Pesquisa livre — ver comentário equivalente em
         # _render_cruzamento_entradas().
         st.info(
@@ -5919,19 +5949,25 @@ def _obter_criterios_cruzamento_estoque() -> dict:
     """Mapa criterio -> (fn_agrupado, fn_detalhado) usado pelo selectbox de
     _render_cruzamento_estoque() — mirror de _obter_criterios_cruzamento_
     entradas() (2026-07-25, Solicitação Técnica "BUSCA DE CORRESPONDENTES
-    NO ESTOQUE"), com Critério 1 (mesmo código) e Critério 2 (nome de
-    declaração igual) — mesmos dois critérios de Entradas. SEM Critério 3
-    (código divergente): não pedido na Solicitação Técnica."""
+    NO ESTOQUE"), com Critério 2 (mesmo código) e Critério 3 (nome de
+    declaração igual) — mesmos dois critérios de Entradas. SEM Critério 4
+    (código divergente): não pedido na Solicitação Técnica. Critério 1
+    (EAN, 2026-08-19) adicionado na frente dos outros dois — ver
+    comentário de `loader.CRITERIO_BUSCA1_EAN`."""
     return {
-        loader.CRITERIO_BUSCA1_MESMO_CODIGO: (
+        loader.CRITERIO_BUSCA1_EAN: (
+            loader.cruzar_produto_escolhido_estoque_ean,
+            loader.cruzar_produto_escolhido_estoque_ean_detalhado,
+        ),
+        loader.CRITERIO_BUSCA2_MESMO_CODIGO: (
             loader.cruzar_produto_escolhido_estoque,
             loader.cruzar_produto_escolhido_estoque_detalhado,
         ),
-        loader.CRITERIO_BUSCA2_NOME_DECLARACAO_IGUAL: (
+        loader.CRITERIO_BUSCA3_NOME_DECLARACAO_IGUAL: (
             loader.cruzar_produto_escolhido_estoque_criterio2,
             loader.cruzar_produto_escolhido_estoque_criterio2_detalhado,
         ),
-        loader.CRITERIO_BUSCA4_PESQUISA_LIVRE: (
+        loader.CRITERIO_BUSCA5_PESQUISA_LIVRE: (
             loader.cruzar_produto_escolhido_estoque_criterio4,
             loader.cruzar_produto_escolhido_estoque_criterio4_detalhado,
         ),
@@ -6008,7 +6044,15 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     if escolhido.get("IS_ST"):
         st.caption(f"🏷️ **{descr_efetiva}** é **ST** (Substituição Tributária).")
 
-    if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
+    if criterio_busca == loader.CRITERIO_BUSCA1_EAN:
+        st.caption(
+            f"Combinações em `estagio8_estoque_agrupado` (Estoque, Estágio 8.2) com o MESMO EAN de "
+            f"**{descr_efetiva}** ({escolhido['COD_ITEM']}) — EAN vem do Registro 0200 (Cadastro de "
+            "Itens do SPED, via código de produto), placeholder/vazio nunca conta como igual — "
+            "ordenadas por similaridade de descrição (overlap de tokens) entre a descrição declarada "
+            "e a do alvo."
+        )
+    elif criterio_busca == loader.CRITERIO_BUSCA2_MESMO_CODIGO:
         st.caption(
             f"Combinações em `estagio8_estoque_agrupado` (Estoque, Estágio 8.2) com o MESMO código de produto "
             f"de **{descr_efetiva}** ({escolhido['COD_ITEM']}) — Unidade: **{unid_efetiva or '—'}** — "
@@ -6016,7 +6060,7 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
             "ordenadas por similaridade de descrição (overlap de tokens) entre a descrição declarada e "
             "a do alvo."
         )
-    elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+    elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
         st.caption(
             f"Pesquisa livre em `estagio8_estoque_agrupado` (Estoque, Estágio 8.2) pra comparar "
             f"com **{descr_efetiva}** ({escolhido['COD_ITEM']}) — SEM filtro de código e "
@@ -6036,12 +6080,18 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
 
     correspondentes, _ = fn_agrupado()
     if correspondentes.empty:
-        if criterio_busca == loader.CRITERIO_BUSCA1_MESMO_CODIGO:
+        if criterio_busca == loader.CRITERIO_BUSCA1_EAN:
+            st.warning(
+                f"⚠️ Nenhum candidato com o mesmo EAN de **{escolhido['COD_ITEM']}** encontrado "
+                "em `estagio8_estoque_agrupado` — o produto (ou o candidato) provavelmente não tem "
+                "EAN cadastrado no Registro 0200 (Cadastro de Itens) do SPED."
+            )
+        elif criterio_busca == loader.CRITERIO_BUSCA2_MESMO_CODIGO:
             st.warning(
                 f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
                 "em `estagio8_estoque_agrupado`, mesmo após normalizar zero à esquerda."
             )
-        elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+        elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
             st.warning(
                 "⚠️ `estagio8_estoque_agrupado` está vazio, ou todos os grupos já pertencem a "
                 "outro alvo — nada disponível pra pesquisa livre."
@@ -6052,7 +6102,7 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
                 "em `estagio8_estoque_agrupado`."
             )
         return
-    if criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+    if criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
         st.info(
             f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
             "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
@@ -6096,7 +6146,7 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
         editor_base = editor_base[mask_busca]
         editor_exibicao = editor_exibicao.loc[editor_base.index]
         st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
-    elif criterio_busca == loader.CRITERIO_BUSCA4_PESQUISA_LIVRE:
+    elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
         # Pesquisa livre — ver comentário equivalente em
         # _render_cruzamento_entradas().
         st.info(
@@ -6332,20 +6382,39 @@ def render_produtos_alvo_salvos() -> None:
         return
 
     escolhido_atual = loader.consultar_produto_cruzamento_escolhido()
-    if escolhido_atual:
-        st.success(
-            f"🎯 Produto atualmente escolhido pra cruzamento: "
-            f"**{loader.descricao_efetiva_escolhido(escolhido_atual)}** "
-            f"(Cód. {escolhido_atual['COD_ITEM']}) — escolhido em {escolhido_atual['TS']}."
-            + _badge_st(escolhido_atual)
-        )
 
     st.markdown(f"**{total:,} produto(s)** no grupo salvo.".replace(",", "."))
+
+    # "Escolher p/ Cruzamento" como seleção ÚNICA (2026-08-19, pedido do
+    # usuário — data_editor não tem um tipo radio nativo pra
+    # CheckboxColumn). 1ª tentativa mutava `st.session_state[chave][
+    # "edited_rows"]` na mesma key e dava st.rerun() — corrigia o ESTADO
+    # em Python, mas a grade (Glide) do FRONTEND não resincroniza sozinha
+    # a partir disso, então visualmente as 2 linhas continuavam marcadas.
+    # Fix: forçar REMOUNT completo do widget (key com contador,
+    # incrementado só quando há conflito) — key NOVA nasce do zero a
+    # partir do dataframe base. 2ª tentativa consumia a marcação forçada
+    # com `.pop` (uma vez só) — quebrava de novo: ao clicar "Confirmar"
+    # (rerun SEM tocar no editor), a marcação já tinha sido consumida,
+    # então o default voltava a usar `escolhido_atual` (ainda o produto
+    # ANTIGO no banco, já que a confirmação nem rodou ainda) e a
+    # caixinha "pulava" de volta pro produto salvo anteriormente (achado
+    # do usuário: "quando mando confirmar, volta pra cerveja"). Fix
+    # real: `selecao_provisoria_cruzamento` fica PERSISTENTE (`.get`,
+    # nunca `.pop`) — é a fonte de verdade da linha marcada em TODA
+    # renderização (inclusive a do clique em "Confirmar produto pra
+    # cruzamento" abaixo) até ser explicitamente limpa depois que
+    # `loader.escolher_produto_cruzamento()` grava a escolha de verdade
+    # no banco (senão `escolhido_atual` já resolve certo sozinho).
+    contador_editor = st.session_state.get("contador_editor_produtos_alvo_salvos", 0)
+    chave_editor = f"editor_produtos_alvo_salvos_{contador_editor}"
+    descr_selecao_provisoria = st.session_state.get("selecao_provisoria_cruzamento")
+    descr_default_checkbox = descr_selecao_provisoria or (escolhido_atual["DESCR_ALVO"] if escolhido_atual else None)
 
     editor_base = grupo[_COLUNAS_PRODUTOS_ALVO_SALVOS].drop_duplicates().reset_index(drop=True)
     editor_base.insert(
         0, _COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS,
-        editor_base["DESCR_ALVO"].eq(escolhido_atual["DESCR_ALVO"]) if escolhido_atual else False,
+        editor_base["DESCR_ALVO"].eq(descr_default_checkbox) if descr_default_checkbox else False,
     )
     editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
     colunas_editaveis = (
@@ -6360,8 +6429,23 @@ def render_produtos_alvo_salvos() -> None:
             use_container_width=True,
             hide_index=True,
             disabled=colunas_travadas,
-            key="editor_produtos_alvo_salvos",
+            key=chave_editor,
         )
+
+    marcados_agora = editado[_COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS].reindex(editor_base.index).fillna(False)
+    if marcados_agora.sum() > 1:
+        marcados_antes = editor_base[_COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS]
+        recem_marcados = editor_base.index[marcados_agora & ~marcados_antes]
+        manter = recem_marcados[0] if len(recem_marcados) else editor_base.index[marcados_agora][0]
+        st.session_state["selecao_provisoria_cruzamento"] = editor_base.loc[manter, "DESCR_ALVO"]
+        st.session_state["contador_editor_produtos_alvo_salvos"] = contador_editor + 1
+        st.rerun()
+    elif marcados_agora.sum() == 1:
+        st.session_state["selecao_provisoria_cruzamento"] = editor_base.loc[
+            editor_base.index[marcados_agora][0], "DESCR_ALVO"
+        ]
+    else:
+        st.session_state["selecao_provisoria_cruzamento"] = None
 
     # "É ST" (Substituição Tributária, 2026-07-29, pedido do usuário:
     # "crie uma campo para selecionar e o produto é ST") — botão PRÓPRIO,
@@ -6395,7 +6479,38 @@ def render_produtos_alvo_salvos() -> None:
             st.success(f"✅ {resultado_st['total_atualizado']} produto(s) atualizado(s).")
             st.rerun()
 
-    if st.button("🎯 Confirmar produto pra cruzamento", key="btn_confirmar_produto_cruzamento"):
+    # "Cruzar Produto" (2026-08-19, pedido do usuário via prints):
+    # botão que ANTES só revelava/escondia (toggle) a seção de busca de
+    # correspondências NA MESMA página virou NAVEGAÇÃO pra uma tela
+    # própria — "Estágio 10" (print2) fica só com a tabela/confirmação;
+    # a busca de correspondências + Cruzamento Final do Produto
+    # (extraídos pra render_cruzamento_produtos(), ver abaixo) moraram
+    # pra uma 2ª tela ("Cruzamento de Produtos"), roteada por
+    # `pagina_ativa` em main.py, mesmo padrão das outras 17 sub-páginas
+    # navegáveis (com o botão "⬅️ Voltar ao Menu Principal" automático
+    # de main.py no final).
+    col_confirmar, col_cruzar = st.columns(2)
+    with col_confirmar:
+        clicou_confirmar = st.button(
+            "🎯 Confirmar produto pra cruzamento", key="btn_confirmar_produto_cruzamento",
+            use_container_width=True,
+        )
+    with col_cruzar:
+        clicou_cruzar = st.button(
+            "🎯 Cruzar Produto", key="btn_cruzar_produto",
+            use_container_width=True, disabled=not escolhido_atual,
+            help=(
+                f"Abre a busca de correspondências pra "
+                f"{loader.descricao_efetiva_escolhido(escolhido_atual)} (Cód. "
+                f"{escolhido_atual['COD_ITEM']})."
+                if escolhido_atual else "Confirme um produto primeiro."
+            ),
+        )
+    if clicou_cruzar:
+        st.session_state["pagina_ativa"] = "cruzamento_produtos"
+        st.rerun()
+
+    if clicou_confirmar:
         marcados = editado[_COLUNA_CHECKBOX_PRODUTOS_ALVO_SALVOS].reindex(editor_base.index).fillna(False)
         marcadas = editor_base.loc[marcados]
         if marcadas.empty:
@@ -6408,13 +6523,61 @@ def render_produtos_alvo_salvos() -> None:
             if "erro" in resultado:
                 st.error(f"Erro: {resultado['erro']}")
             else:
+                st.session_state["selecao_provisoria_cruzamento"] = None
                 st.success(f"✅ Produto '{linha['DESCR_ALVO']}' escolhido pra cruzamento.")
                 st.rerun()
 
-    st.divider()
-    st.markdown("### 🔀 Busca de Produtos Correspondentes")
+    # Produto Confirmado em fonte grande (2026-08-19, pedido do usuário
+    # via print) — abaixo dos botões "Confirmar"/"Cruzar Produto",
+    # substitui a faixa verde st.success() removida antes (mesma
+    # informação, tamanho maior em vez de banner colorido).
+    if escolhido_atual:
+        st.markdown(
+            "<div style='font-size:1.8rem; font-weight:700; margin-top:0.5rem;'>"
+            f"🎯 {loader.descricao_efetiva_escolhido(escolhido_atual)}"
+            "<span style='font-size:1.1rem; font-weight:400; color:gray;'> "
+            f"(Cód. {escolhido_atual['COD_ITEM']})</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+
+def render_cruzamento_produtos() -> None:
+    """Tela 'Cruzamento de Produtos' (2026-08-19, pedido do usuário via
+    prints — separada do Estágio 10, que antes trazia tudo isto embutido
+    embaixo do divisor). Conteúdo extraído de render_produtos_alvo_
+    salvos() sem alteração de lógica: cabeçalho "🔀 {descrição} (Cód.
+    ...)" do produto atualmente escolhido (loader.consultar_produto_
+    cruzamento_escolhido()), Equalização Automática da Rubrica (Estágio
+    10.1), abas "📥 Entradas"/"📤 Saídas"/"📦 Estoque" (Critério 1,
+    _render_cruzamento_entradas()/_saidas()/_estoque()) e, por fim,
+    "⚖️ 10.2 Cruzamento Final do Produto" (_render_cruzamento_final_
+    produto()). Roteada por `pagina_ativa == "cruzamento_produtos"` em
+    main.py, alcançada pelo botão "🎯 Cruzar Produto" do Estágio 10 OU
+    direto pelo Menu Principal ("🔀 10.1: CRUZAMENTO DE PRODUTOS").
+
+    Botão "⬅️ Voltar ao Estágio 10" (2026-08-19, pedido do usuário via
+    print) — ADICIONAL ao "⬅️ Voltar ao Menu Principal" genérico que
+    main.py já injeta automaticamente no final de toda sub-página
+    (`_botao_voltar_menu()`); este aqui é ESPECÍFICO, no TOPO, pra
+    voltar direto pro Estágio 10 sem passar pelo Menu Principal."""
+    st.subheader("Cruzamento de Produtos")
+    if st.button("⬅️ Voltar ao Estágio 10", key="btn_voltar_estagio_10"):
+        st.session_state["pagina_ativa"] = "produtos_alvo_salvos"
+        st.rerun()
+    escolhido_atual = loader.consultar_produto_cruzamento_escolhido()
+    if escolhido_atual:
+        st.markdown(
+            f"### 🔀 {loader.descricao_efetiva_escolhido(escolhido_atual)} "
+            f"(Cód. {escolhido_atual['COD_ITEM']})"
+        )
+    else:
+        st.markdown("### 🔀 Busca de Produtos Correspondentes")
     if not escolhido_atual:
-        st.info("Escolha um produto acima pra ver o cruzamento com o Estágio 8.")
+        st.info(
+            'Nenhum produto confirmado ainda — volte pra "⚖️ 10: PRODUTOS ALVOS SALVOS" e '
+            'clique em "🎯 Confirmar produto pra cruzamento" primeiro.'
+        )
     else:
         # Execução Automática da Rubrica (Estágio 10.1, Solicitação Técnica
         # 2026-07-30) — botão posicionado à DIREITA da linha de abas.
@@ -6536,6 +6699,18 @@ def render_produtos_alvo_salvos() -> None:
 
         st.divider()
         _render_cruzamento_final_produto(escolhido_atual)
+
+
+def render_pagina_cruzamento_produtos() -> None:
+    """Página 'Cruzamento de Produtos' — roteada por `pagina_ativa ==
+    "cruzamento_produtos"` em main.py, alcançada pelo botão "🎯 Cruzar
+    Produto" do Estágio 10 (render_produtos_alvo_salvos()), não pelo
+    Menu Principal (2026-08-19). Exige dados_carregados (mesmo padrão
+    das outras páginas)."""
+    if not st.session_state.get("dados_carregados"):
+        st.info('Carregue os dados primeiro em "🛠️ 1: PROCEDIMENTOS INICIAIS".')
+        return
+    render_cruzamento_produtos()
 
 
 def _render_cruzamento_final_produto(escolhido: dict) -> None:
