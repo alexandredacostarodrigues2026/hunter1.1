@@ -7961,7 +7961,7 @@ def _normalizar_nome_para_igualdade(texto) -> str:
 # de CRITERIO_BUSCA1_EAN) — identificador da constante mantido com o
 # número ANTIGO só na função (`_criterio2`, nome interno não muda),
 # porém o RÓTULO exibido/usado pra despacho já reflete o número novo.
-CRITERIO_BUSCA3_NOME_DECLARACAO_IGUAL = "Critério de Busca3: nome_prod_decl do alvo = nome_prod_decl do candidato"
+CRITERIO_BUSCA3_NOME_DECLARACAO_IGUAL = "Critério de Busca3: nome_prod do alvo = nome_prod_decl do candidato"
 
 
 def cruzar_produto_escolhido_entradas_criterio2() -> "tuple[pd.DataFrame, dict | None]":
@@ -8073,7 +8073,7 @@ def cruzar_produto_escolhido_entradas_criterio2_detalhado() -> "tuple[pd.DataFra
 # Renumerado de Busca3 pra Busca4 em 2026-08-19 (novo Critério 1 = EAN,
 # ver comentário de CRITERIO_BUSCA1_EAN) — nome interno da constante e
 # das funções (`_criterio3`) mantido, só o RÓTULO exibido mudou.
-CRITERIO_BUSCA4_NOME_XML = "Critério de Busca4: nome_prod_decl do alvo = nome_prod_xml"
+CRITERIO_BUSCA4_NOME_XML = "Critério de Busca4: nome_prod do alvo = nome_prod_xml"
 LIMIAR_SIMILARIDADE_CRITERIO3 = 20.0
 # Critério 5 — pesquisa livre (Solicitação Técnica 2026-07-29, renumerado
 # de Busca4 pra Busca5 em 2026-08-19 pela mesma razão acima): discutido
