@@ -8085,7 +8085,7 @@ LIMIAR_SIMILARIDADE_CRITERIO3 = 20.0
 # termo na busca por descrição do XML (ver _render_cruzamento_entradas()/
 # _saidas()/_estoque() em interface.py) — o próprio auditor filtra
 # manualmente, cobrindo o caso de similaridade 0% sem sobrecarregar a tela.
-CRITERIO_BUSCA5_PESQUISA_LIVRE = "Critério de Busca5: pesquisa livre (sem filtro de código/similaridade)"
+CRITERIO_BUSCA5_PESQUISA_LIVRE = "Critério de Busca5: nome_prod do alvo = pesquisa livre (sem filtro de código/similaridade)"
 
 
 def cruzar_produto_escolhido_entradas_criterio3() -> "tuple[pd.DataFrame, dict | None]":
