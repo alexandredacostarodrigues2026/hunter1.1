@@ -7738,7 +7738,7 @@ def _chaves_ja_atribuidas_a_outro_alvo(descr_alvo_atual: str, origem: str) -> se
 # exclusão, a maioria dos produtos SEM código de barras cadastrado
 # (~65% na geraldo) acabaria "casando" entre si só por estarem os dois
 # zerados).
-CRITERIO_BUSCA1_EAN = "Critério de Busca1: EAN_prod_decl do alvo = EAN_prod_decl do candidato"
+CRITERIO_BUSCA1_EAN = "Critério de Busca1: EAN_prod do alvo = EAN_prod_decl do candidato"
 
 
 def cruzar_produto_escolhido_entradas_ean() -> "tuple[pd.DataFrame, dict | None]":
@@ -8894,7 +8894,7 @@ _COLUNAS_CRUZAMENTO_CONFIRMADO = [
 # ver comentário de CRITERIO_BUSCA1_EAN) — identificador da constante e
 # das funções (`cruzar_produto_escolhido_entradas()`/`_saidas()`/
 # `_estoque()`, sem sufixo numérico) mantidos, só o RÓTULO exibido mudou.
-CRITERIO_BUSCA2_MESMO_CODIGO = "Critério de Busca2: cod_prod_decl do alvo = cod_prod_decl do candidato"
+CRITERIO_BUSCA2_MESMO_CODIGO = "Critério de Busca2: cod_prod_decl do alvo = cod_prod do candidato"
 
 
 def salvar_cruzamento_confirmado(
