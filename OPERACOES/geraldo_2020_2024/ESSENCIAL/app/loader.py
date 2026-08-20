@@ -7738,7 +7738,7 @@ def _chaves_ja_atribuidas_a_outro_alvo(descr_alvo_atual: str, origem: str) -> se
 # exclusão, a maioria dos produtos SEM código de barras cadastrado
 # (~65% na geraldo) acabaria "casando" entre si só por estarem os dois
 # zerados).
-CRITERIO_BUSCA1_EAN = "Critério de Busca1: EAN_prod do alvo = EAN_prod_decl do candidato"
+CRITERIO_BUSCA1_EAN = "Critério de Busca1: EAN_prod do alvo X EAN_prod_decl do candidato"
 
 
 def cruzar_produto_escolhido_entradas_ean() -> "tuple[pd.DataFrame, dict | None]":
@@ -7961,7 +7961,7 @@ def _normalizar_nome_para_igualdade(texto) -> str:
 # de CRITERIO_BUSCA1_EAN) — identificador da constante mantido com o
 # número ANTIGO só na função (`_criterio2`, nome interno não muda),
 # porém o RÓTULO exibido/usado pra despacho já reflete o número novo.
-CRITERIO_BUSCA3_NOME_DECLARACAO_IGUAL = "Critério de Busca3: nome_prod do alvo = nome_prod_decl do candidato"
+CRITERIO_BUSCA3_NOME_DECLARACAO_IGUAL = "Critério de Busca3: nome_prod do alvo X nome_prod_decl do candidato"
 
 
 def cruzar_produto_escolhido_entradas_criterio2() -> "tuple[pd.DataFrame, dict | None]":
@@ -8073,7 +8073,7 @@ def cruzar_produto_escolhido_entradas_criterio2_detalhado() -> "tuple[pd.DataFra
 # Renumerado de Busca3 pra Busca4 em 2026-08-19 (novo Critério 1 = EAN,
 # ver comentário de CRITERIO_BUSCA1_EAN) — nome interno da constante e
 # das funções (`_criterio3`) mantido, só o RÓTULO exibido mudou.
-CRITERIO_BUSCA4_NOME_XML = "Critério de Busca4: nome_prod do alvo = nome_prod_xml"
+CRITERIO_BUSCA4_NOME_XML = "Critério de Busca4: nome_prod do alvo X nome_prod_xml"
 LIMIAR_SIMILARIDADE_CRITERIO3 = 20.0
 # Critério 5 — pesquisa livre (Solicitação Técnica 2026-07-29, renumerado
 # de Busca4 pra Busca5 em 2026-08-19 pela mesma razão acima): discutido
@@ -8085,7 +8085,7 @@ LIMIAR_SIMILARIDADE_CRITERIO3 = 20.0
 # termo na busca por descrição do XML (ver _render_cruzamento_entradas()/
 # _saidas()/_estoque() em interface.py) — o próprio auditor filtra
 # manualmente, cobrindo o caso de similaridade 0% sem sobrecarregar a tela.
-CRITERIO_BUSCA5_PESQUISA_LIVRE = "Critério de Busca5: nome_prod do alvo = pesquisa livre (sem filtro de código/similaridade)"
+CRITERIO_BUSCA5_PESQUISA_LIVRE = "Critério de Busca5: nome_prod do alvo X pesquisa livre (sem filtro de código/similaridade)"
 
 
 def cruzar_produto_escolhido_entradas_criterio3() -> "tuple[pd.DataFrame, dict | None]":
@@ -8894,7 +8894,7 @@ _COLUNAS_CRUZAMENTO_CONFIRMADO = [
 # ver comentário de CRITERIO_BUSCA1_EAN) — identificador da constante e
 # das funções (`cruzar_produto_escolhido_entradas()`/`_saidas()`/
 # `_estoque()`, sem sufixo numérico) mantidos, só o RÓTULO exibido mudou.
-CRITERIO_BUSCA2_MESMO_CODIGO = "Critério de Busca2: cod_prod_decl do alvo = cod_prod do candidato"
+CRITERIO_BUSCA2_MESMO_CODIGO = "Critério de Busca2: cod_prod_decl do alvo X cod_prod do candidato"
 
 
 def salvar_cruzamento_confirmado(
