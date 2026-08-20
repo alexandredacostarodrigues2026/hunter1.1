@@ -9509,62 +9509,66 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict, callback=None) -> d
     Entradas (1 EAN, 2 código, 3 nome), Saídas (1 EAN, 2 código, 4
     divergente) e Estoque (1 EAN, 2 código, 3 nome) pro produto
     `escolhido` (mesmo dict de consultar_produto_cruzamento_escolhido())
-    — sem intervenção manual linha a linha. Reaproveita as MESMAS
-    funções `cruzar_produto_escolhido_*()` já usadas pelas telas
-    manuais (nenhuma lógica de matching duplicada aqui) — o que garante
-    de graça: exclusão cross-alvo (`_chaves_ja_atribuidas_a_outro_
-    alvo()`, já embutida em cada uma), exclusão de autoemissão em
-    Saídas e de anos ainda não fechados em Estoque (já embutidas em
-    gerar_estagio_8_saidas()/gerar_estagio_8_estoque(), que alimentam
-    essas funções).
+    e confirma na Rubrica os resultados — sem intervenção manual linha a
+    linha. Reaproveita as MESMAS funções `cruzar_produto_escolhido_*()`
+    já usadas pelas telas manuais (nenhuma lógica de matching duplicada
+    aqui) — o que garante de graça: exclusão cross-alvo (`_chaves_ja_
+    atribuidas_a_outro_alvo()`, já embutida em cada uma), exclusão de
+    autoemissão em Saídas e de anos ainda não fechados em Estoque (já
+    embutidas em gerar_estagio_8_saidas()/gerar_estagio_8_estoque(), que
+    alimentam essas funções).
 
-    2026-08-20, Solicitação Técnica "PAINEL DE REVISÃO DA EQUALIZAÇÃO
-    AUTOMÁTICA": NÃO grava mais direto na Rubrica oficial — grava em
-    RASCUNHO (`cruzamento_provisorio`/`_detalhado`, via `salvar_
-    cruzamento_provisorio()`/`_detalhado()`), pra revisão do auditor no
-    Painel de Revisão (`interface.py`, `_render_painel_revisao_
-    equalizacao()`) antes de ir pra Rubrica de verdade (`gravar_
-    rubricas_revisadas()`, chamada pelo botão "💾 Homologar" de cada
-    critério). Chama `limpar_rascunho_provisorio(descr_alvo)` no
-    início, pra descartar rascunho de uma rodada anterior antes de
-    gerar um lote novo.
+    2026-08-20: chegou a gravar em RASCUNHO (`cruzamento_provisorio`/
+    `_detalhado`, Painel de Revisão) por algumas horas — REVERTIDO no
+    mesmo dia, pedido do usuário ("desfazer a revisão obrigatória"):
+    volta a gravar DIRETO na Rubrica oficial, sem passar por rascunho/
+    homologação. As tabelas/funções `cruzamento_provisorio*` continuam
+    existindo em loader.py (sem uso agora) — não foram apagadas.
 
     TODOS os critérios do `plano` são refiltrados aqui por
     `SIMILARIDADE_DESCRICAO >= LIMIAR_SIMILARIDADE_AUTOMATICA` (60%) —
     mesmo EAN/código/nome, cujo filtro "de verdade" é identidade exata
     (sem piso nenhum no modo MANUAL): confirmado com dado real que
     código/nome podem coincidir por reuso de cadastro entre produtos
-    fisicamente diferentes, esse piso é a proteção contra sugerir
-    automaticamente um par claramente errado (mesmo com a revisão
-    humana agora exigida antes da Rubrica oficial, o piso continua
-    valendo — menos ruído pro auditor revisar). Pro Critério 4 (código
-    divergente, que já vem com piso manual de 20%, LIMIAR_SIMILARIDADE_
-    CRITERIO3), refiltrar a 60% é estritamente mais restritivo —
-    equivalente a nunca ter tido o piso de 20%.
+    fisicamente diferentes, e sem revisão humana linha a linha (a
+    automação toda existe pra isso), esse piso é a única proteção
+    contra confirmar automaticamente um par claramente errado. Pro
+    Critério 4 (código divergente, que já vem com piso manual de 20%,
+    LIMIAR_SIMILARIDADE_CRITERIO3), refiltrar a 60% é estritamente mais
+    restritivo — equivalente a nunca ter tido o piso de 20%.
+
+    Persistência via `salvar_cruzamento_confirmado()`/`_detalhado()` com
+    `universo_chaves=None`/`universo_idunicos=None` — semântica SÓ
+    ADITIVA (nunca remove o que o auditor já confirmou manualmente,
+    mesmo que o item não apareça mais num critério nesta rodada).
+    Deduplicação por idunico e Regra R07 (strings) já garantidas DENTRO
+    de `salvar_cruzamento_confirmado_detalhado()` — nada extra necessário
+    aqui.
 
     `callback(origem, criterio, indice, total)` (2026-07-30, pedido do
     usuário: "criar barra de progresso para acompanhar"), se informado,
     é chamado ao FINAL de cada um dos critérios do `plano` (indice de 1
     a `total` — 10 no total, desde 2026-08-19: 4 de Entradas [EAN,
     código, nome, divergente] + 3 de Saídas [EAN, código, divergente] +
-    3 de Estoque [EAN, código, nome]), independente de ter encontrado
-    algo ou dado erro — usado pela UI (`interface.py`) pra atualizar
-    uma `st.progress()` em tempo real. `callback=None` (padrão) mantém
-    o comportamento silencioso de antes.
+    3 de Estoque [EAN, código, nome]; era 7 antes do Critério EAN),
+    independente de ter encontrado algo ou dado erro — usado pela UI
+    (`interface.py`) pra atualizar uma `st.progress()` em tempo real.
+    `callback=None` (padrão) mantém o comportamento silencioso de
+    antes.
 
-    Devolve {'ok': True, 'total_adicionado': int (total de itens
-    individuais no RASCUNHO ao final desta rodada — não mais "na
-    Rubrica", já que nada é confirmado aqui), 'por_origem': {'entradas':
-    int, 'saidas': int, 'estoque': int}, 'erros': list} — ou {'erro':
-    str} se nenhum produto estiver escolhido. Erros de UM critério
-    (ex.: tabela de origem ainda não gerada) não interrompem os demais
-    — acumulados em 'erros', o motor continua pros critérios
-    seguintes."""
+    Devolve {'ok': True, 'total_adicionado': int (itens NOVOS na Rubrica
+    detalhada — saldo líquido, não conta reconfirmação de item já
+    existente), 'por_origem': {'entradas': int, 'saidas': int, 'estoque':
+    int}, 'erros': list} — ou {'erro': str} se nenhum produto estiver
+    escolhido. Erros de UM critério (ex.: tabela de origem ainda não
+    gerada) não interrompem os demais — acumulados em 'erros', o motor
+    continua pros critérios seguintes."""
     if not escolhido:
         return {"erro": "Nenhum produto escolhido pra cruzamento."}
 
     descr_alvo = escolhido["DESCR_ALVO"]
-    limpar_rascunho_provisorio(descr_alvo)
+    antes, _ = consultar_cruzamento_confirmado_detalhado(descr_alvo=descr_alvo, limite=None)
+    idunicos_antes = set(antes["idunico"]) if not antes.empty else set()
 
     # Critério EAN (1) entra PRIMEIRO em cada origem (2026-08-19, pedido
     # do usuário — "entra primeiro no plano"): identificador global mais
@@ -9608,12 +9612,14 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict, callback=None) -> d
             if agrupado.empty:
                 continue
             colunas_disponiveis = [
-                c for c in ("codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias", "SIMILARIDADE_DESCRICAO")
+                c for c in ("codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias")
                 if c in agrupado.columns
             ]
             selecionadas = agrupado[colunas_disponiveis].copy()
 
-            r_agrupado = salvar_cruzamento_provisorio(escolhido, origem, criterio, selecionadas)
+            r_agrupado = salvar_cruzamento_confirmado(
+                escolhido, origem, criterio, selecionadas, universo_chaves=None,
+            )
             if "erro" in r_agrupado:
                 erros.append(f"{origem} — {criterio}: {r_agrupado['erro']}")
                 continue
@@ -9629,7 +9635,9 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict, callback=None) -> d
             if itens.empty:
                 continue
 
-            r_detalhado = salvar_cruzamento_provisorio_detalhado(escolhido, origem, criterio, itens)
+            r_detalhado = salvar_cruzamento_confirmado_detalhado(
+                escolhido, origem, criterio, itens, universo_idunicos=None,
+            )
             if "erro" in r_detalhado:
                 erros.append(f"{origem} — {criterio} (detalhado): {r_detalhado['erro']}")
                 continue
@@ -9644,10 +9652,11 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict, callback=None) -> d
             if callback:
                 callback(origem, criterio, indice, total_passos)
 
-    depois, _ = consultar_cruzamento_provisorio_detalhado(descr_alvo=descr_alvo, limite=None)
+    depois, _ = consultar_cruzamento_confirmado_detalhado(descr_alvo=descr_alvo, limite=None)
+    idunicos_depois = set(depois["idunico"]) if not depois.empty else set()
     return {
         "ok": True,
-        "total_adicionado": len(depois),
+        "total_adicionado": len(idunicos_depois - idunicos_antes),
         "por_origem": por_origem,
         "erros": erros,
     }
