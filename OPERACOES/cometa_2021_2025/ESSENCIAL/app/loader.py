@@ -723,6 +723,54 @@ _BC2_COLUNAS_FINAIS = [
 ]
 
 
+def montar_saidas_proprias_aprendizado() -> "tuple[pd.DataFrame, dict]":
+    """Saídas em que a auditada é EMITENTE (venda própria) — fonte extra do
+    dicionário de aprendizado do A5 (2026-08-20, pedido do usuário: "pode
+    pegar o código de produto da nota de saída também, no caso de emissão
+    própria da auditada... seria uma ampliação do A5"; ver matching.
+    _montar_dicionario_a5()). O cProd/xProd do XML da própria auditada já é
+    autodeclarado (mesmo raciocínio de AE e de gerar_estagio_8_saidas()) —
+    sem precisar de Matching contra a BC1.
+
+    Fonte: `_classificar_itens_nfe()["saidas_real"]` — NÃO `estoque_saidas`/
+    `gerar_estagio_8_saidas()` (essas só existem depois do Estágio 4, que
+    roda DEPOIS do Matching no pipeline da Carga; usá-las aqui criaria
+    dependência circular). `saidas_real` já filtra situação válida e CFOP
+    fora da watchlist (mesma base que `montar_bc2()` usa pra Entradas) e é
+    cacheada via `@st.cache_data` em `_classificar_itens_nfe()` — chamar de
+    novo aqui não reprocessa XML.
+
+    Exclui autoemissão (`emit_cnpj == dest_cnpj`, transferência entre
+    estabelecimentos próprios) — mesmo critério de `gerar_estagio_8_
+    saidas()`."""
+    r = _classificar_itens_nfe()
+    df = r["saidas_real"]
+    if df.empty:
+        return pd.DataFrame(), {
+            "origem_dados": "SAIDAS_PROPRIAS_APRENDIZADO", "total_linhas": 0, "erros": r["erros"],
+        }
+
+    df = df[df["AUDITADA_PAPEL"] == "EMITENTE"].copy()
+    entidade = obter_entidade_auditada()
+    cnpj_auditada = (entidade or {}).get("cnpj")
+    if cnpj_auditada:
+        emit_cnpj = df["fatonfe_infnfe_emit_cnpj"].apply(_normalizar_cnpj)
+        dest_cnpj = df["fatonfe_infnfe_dest_cnpj"].apply(_normalizar_cnpj)
+        df = df[emit_cnpj != dest_cnpj]
+
+    df = df.rename(columns={"fatoitemnfe_infnfe_det_prod_cprod": "COD_ITEM"})
+    colunas = [c for c in ["fatoitemnfe_infnfe_det_prod_xprod", "COD_ITEM", "ID_UNICO"] if c in df.columns]
+    df = df[colunas]
+    df = _forcar_colunas_string(df, ["COD_ITEM"])
+
+    meta = {
+        "origem_dados": "SAIDAS_PROPRIAS_APRENDIZADO",
+        "total_linhas": len(df), "total_colunas": len(df.columns), "colunas": df.columns.tolist(),
+        "erros": r["erros"],
+    }
+    return df, meta
+
+
 def montar_bc2() -> "tuple[pd.DataFrame, dict]":
     """Monta a Base Comparativa 2 (BC2): itens de NF-e de Emissão de
     Terceiros (ET) — origem ET, situação válida (A/O — inválidas já foram

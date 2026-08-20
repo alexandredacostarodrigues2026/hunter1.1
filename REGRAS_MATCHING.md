@@ -46,7 +46,7 @@ Cada nível só tenta casar o que sobrou do nível anterior.
 | 4 | **A2** (aprendizado por descrição) | igual ao A1, trocando `COD_ITEM` pela descrição exata normalizada do XML (`xprod`): `CNPJ_EMITENTE + DESCR_ITEM (normalizada) + ANO_EMISSAO` | sem limiar | Não | `nd`/`nm` restantes após A1 |
 | 5 | **A3** (aprendizado por código, sem ano) | fallback do A1: mesma chave, mas **sem** `ANO_EMISSAO` — `CNPJ_EMITENTE + COD_ITEM` | sem limiar | Não | `nd`/`nm` restantes após A2 |
 | 6 | **A4** (aprendizado por descrição, sem ano) | fallback do A2: mesma chave, mas **sem** `ANO_EMISSAO` — `CNPJ_EMITENTE + DESCR_ITEM (normalizada)` | sem limiar | Não | `nd`/`nm` restantes após A3 |
-| 7 | **A5** (aprendizado só por descrição) | fallback do A4: relaxa também o `CNPJ_EMITENTE` — chave só `DESCR_ITEM (normalizada)` | sem limiar | Não | `nd`/`nm` restantes após A4 |
+| 7 | **A5** (aprendizado só por descrição) [¹] | fallback do A4: relaxa também o `CNPJ_EMITENTE` — chave só `DESCR_ITEM (normalizada)` | sem limiar | Não | `nd`/`nm` restantes após A4 |
 | 8 | **D3** (consolidação N-para-1) | agrupa vários itens do XML numa única linha "consolidada"/"sortido" do SPED — ver seção própria abaixo | `LIMIAR_D3_COBERTURA = 0,60` (cobertura do radical) | Sim | `nd`/`nm` restantes após A5 |
 | 9 | **D4** (integridade de nota) | restringe às `CHV_NFE` "íntegras": mesma **contagem de itens da nota** (nº de linhas XML == nº de linhas SPED, para aquela `CHV_NFE`) **e** mesma **soma de `VL_ITEM` da nota** (somatório de todos os itens do XML == somatório de todos os itens do SPED, para aquela `CHV_NFE`) — e casa, só dentro dessas notas, por similaridade normalizada, 1-para-1 | `LIMIAR_D4 = 0,70` | Sim (dentro das notas íntegras) | `nd`/`nm` restantes após D3 |
 | 10 | **D5** (último recurso) | casa só por similaridade de descrição normalizada, 1-para-1, sem exigir GTIN, valor ou integridade de nota | `LIMIAR_D5 = 0,70` | Sim | `nd`/`nm` restantes após D4 |
@@ -60,6 +60,11 @@ Funções correspondentes em `matching.py`: `_match_d1_por_nota`,
 > **AE (Autoemissão)** roda entre D2 e A1, fora desta tabela: não é um
 > nível de matching contra a BC1, é autodeclaração via XML próprio.
 > Ver seção "AE — Autoemissão" abaixo.
+
+> [¹] **A5 tem uma 2ª fonte de dicionário** desde 2026-08-20: além dos
+> matches D1/D2 confirmados, também usa Saídas de emissão própria da
+> auditada (autodeclaração, mesma lógica do AE). Ver seção "Dicionário
+> de aprendizado (A1/A2/A3/A4/A5)" abaixo.
 
 ## Consolidação N-para-1 (D3)
 
@@ -360,6 +365,30 @@ do Matching) de volta para o dataset bruto de ET, em vez de mostrar só as
   família de aprendizado por descrição (risco maior de falso positivo entre
   fornecedores diferentes que descrevem o produto igual, por isso roda por
   último dentro dessa família, só sobre o que sobrou de todos os anteriores).
+- **A5 tem uma 2ª fonte de dicionário** (2026-08-20, pedido do usuário:
+  "pode pegar o código de produto da nota de saída também, no caso de
+  emissão própria da auditada... seria uma ampliação do A5"): além dos
+  matches D1/D2 confirmados na mesma rodada, `_montar_dicionario_a5()`
+  (matching.py) também incorpora `loader.montar_saidas_proprias_
+  aprendizado()` — Saídas em que a auditada é EMITENTE (venda própria):
+  o `cProd`/`xProd` do XML dela mesma já é autodeclarado, mesmo
+  raciocínio do AE e de `gerar_estagio_8_saidas()`, sem precisar de
+  matching contra a BC1. Fonte deliberadamente **não** é `estoque_
+  saidas`/`gerar_estagio_8_saidas()` (Estágio 4) — essas só existem
+  depois do Matching no pipeline da Carga, usá-las criaria dependência
+  circular; a fonte real é `_classificar_itens_nfe()["saidas_real"]`,
+  já disponível antes do Matching e cacheada. Exclui autoemissão
+  (`emit_cnpj == dest_cnpj`, transferência interna). Em caso de colisão
+  de chave (mesma descrição normalizada, código diferente entre as duas
+  fontes), prevalece o par D1/D2 (matching real confirmado, mais forte)
+  sobre o autodeclarado por texto (mais fraco) — mesma regra de
+  "primeira ocorrência" já usada nas outras fontes. Itens recuperados
+  por essa 2ª fonte não têm `DT_E_S`/`DT_FIN` (não há BC1 do outro
+  lado) nem `FATOR_MULTIPLICADOR_SUGERIDO` (não há `VL_ITEM` de
+  declaração pra comparar) — ficam `'nd'`/`NaN`, mesmo tratamento do
+  AE. Continuam classificados `MATCH_TIPO='A5'` (não é um tipo novo) —
+  nenhuma mudança em KPIs, barra de progresso ou `consultar_totais_
+  bc3()`. A1-A4 não foram alterados, só o A5.
 
 ## Não Declarados e Não Matches (status antes de A1 em diante)
 
@@ -659,3 +688,20 @@ entre D3 e os outros tipos (D1-D5, D6, todos 1-para-1).
   `interface.py` passaram a incluir `totais["AE"]`; `_barra_progresso`
   da Carga passou de `n_passos=11` para `n_passos=12` (callback ganhou
   uma 12ª chamada). Sincronizado nas 4 operações.
+- 2026-08-20 (mesmo dia): ampliação do A5 — dicionário de aprendizado
+  do A5 ganhou uma 2ª fonte, Saídas de emissão própria da auditada
+  (`loader.montar_saidas_proprias_aprendizado()`, nova função), além
+  dos matches D1/D2 confirmados que já alimentavam A1-A5. Motivado por
+  pedido do usuário logo após o AE: "pode pegar o código de produto da
+  nota de saída também, no caso de emissão própria da auditada... seria
+  uma ampliação do A5". D1/D2 tem prioridade em caso de colisão de
+  chave (concatenados primeiro, `drop_duplicates` mantém a 1ª
+  ocorrência). Itens recuperados por essa fonte ficam com `DT_E_S`/
+  `DT_FIN='nd'` e `FATOR_MULTIPLICADOR_SUGERIDO=NaN` (sem BC1 do outro
+  lado), mas continuam `MATCH_TIPO='A5'` — nenhuma mudança em KPIs/
+  `consultar_totais_bc3()`/barra de progresso, diferente do AE.
+  Validado na base real da geraldo (sem persistir, só em memória): A5
+  subiu de 5 (com AE já aplicado) para 13 — as 8 recuperações novas
+  todas de itens `CHEEZ IT` (4 descrições distintas, `DT_E_S`/`DT_FIN`
+  `'nd'` como esperado); checagem de conservação (D6 -4, NM -4, A5 +8)
+  bateu exata. Sincronizado nas 4 operações.

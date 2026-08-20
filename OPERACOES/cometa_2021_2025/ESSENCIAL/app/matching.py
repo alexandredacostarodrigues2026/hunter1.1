@@ -640,27 +640,53 @@ def _chave_a5(df: pd.DataFrame) -> pd.Series:
 
 
 def _montar_dicionario_a5(df_bc3: pd.DataFrame) -> pd.DataFrame:
-    """Constrói o dicionário de aprendizado do A5 exclusivamente a
-    partir dos matches já confirmados de D1 e D2 (mesma base do
-    A1 — ver _montar_dicionario_a1): mapeia DESCR_ITEM (XML,
-    exata) -> COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO já vinculados
-    historicamente, sem distinguir por CNPJ nem por ano. Em caso de chaves
-    repetidas, prevalece a primeira ocorrência."""
-    confirmados = df_bc3[df_bc3["MATCH_TIPO"].isin(("D1", "D2"))]
-    if confirmados.empty:
-        return pd.DataFrame(columns=[
-            "COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO", "FATOR_MULTIPLICADOR_SUGERIDO",
-            "DT_E_S", "DT_FIN",
-        ])
+    """Constrói o dicionário de aprendizado do A5 a partir de DUAS fontes,
+    mapeando DESCR_ITEM (XML, exata) -> COD_ITEM_DECLARACAO/DESCR_ITEM_
+    DECLARACAO, sem distinguir por CNPJ nem por ano:
 
-    aprendizado = pd.DataFrame({
-        "_CHAVE": _chave_a5(confirmados),
-        "COD_ITEM_DECLARACAO": confirmados["COD_ITEM_DECLARACAO"].to_numpy(),
-        "DESCR_ITEM_DECLARACAO": confirmados["DESCR_ITEM_DECLARACAO"].to_numpy(),
-        "FATOR_MULTIPLICADOR_SUGERIDO": confirmados["FATOR_MULTIPLICADOR_SUGERIDO"].to_numpy(),
-        "DT_E_S": confirmados["DT_E_S"].to_numpy(),
-        "DT_FIN": confirmados["DT_FIN"].to_numpy(),
-    })
+    1. Matches já confirmados de D1 e D2 (mesma base do A1 — ver
+       _montar_dicionario_a1) — fonte original.
+    2. (2026-08-20, "ampliação do A5", pedido do usuário) Saídas em que a
+       auditada é emitente (venda própria) — loader.montar_saidas_
+       proprias_aprendizado(): o cProd/xProd do XML da própria auditada já
+       é autodeclarado, sem precisar de matching contra a BC1. Sem
+       DT_E_S/DT_FIN (não há BC1 do outro lado) nem FATOR_MULTIPLICADOR
+       (não há VL_ITEM de declaração pra comparar) — mesmo tratamento
+       'nd'/NaN já usado no AE.
+
+    Em caso de chaves repetidas — inclusive entre as duas fontes — prevalece
+    a primeira ocorrência; a fonte 1 (D1/D2, matching real confirmado) vem
+    antes da fonte 2 (autodeclaração por texto, mais fraca) na concatenação,
+    então tem prioridade em caso de colisão."""
+    colunas = ["COD_ITEM_DECLARACAO", "DESCR_ITEM_DECLARACAO", "FATOR_MULTIPLICADOR_SUGERIDO", "DT_E_S", "DT_FIN"]
+    partes = []
+
+    confirmados = df_bc3[df_bc3["MATCH_TIPO"].isin(("D1", "D2"))]
+    if not confirmados.empty:
+        partes.append(pd.DataFrame({
+            "_CHAVE": _chave_a5(confirmados),
+            "COD_ITEM_DECLARACAO": confirmados["COD_ITEM_DECLARACAO"].to_numpy(),
+            "DESCR_ITEM_DECLARACAO": confirmados["DESCR_ITEM_DECLARACAO"].to_numpy(),
+            "FATOR_MULTIPLICADOR_SUGERIDO": confirmados["FATOR_MULTIPLICADOR_SUGERIDO"].to_numpy(),
+            "DT_E_S": confirmados["DT_E_S"].to_numpy(),
+            "DT_FIN": confirmados["DT_FIN"].to_numpy(),
+        }))
+
+    df_saidas, _ = loader.montar_saidas_proprias_aprendizado()
+    if not df_saidas.empty:
+        partes.append(pd.DataFrame({
+            "_CHAVE": _normalizar_descricao(df_saidas[_COL_DESCR_XML]),
+            "COD_ITEM_DECLARACAO": df_saidas["COD_ITEM"].to_numpy(),
+            "DESCR_ITEM_DECLARACAO": df_saidas[_COL_DESCR_XML].to_numpy(),
+            "FATOR_MULTIPLICADOR_SUGERIDO": np.nan,
+            "DT_E_S": "nd",
+            "DT_FIN": "nd",
+        }))
+
+    if not partes:
+        return pd.DataFrame(columns=colunas)
+
+    aprendizado = pd.concat(partes, ignore_index=True)
     return aprendizado.drop_duplicates("_CHAVE").set_index("_CHAVE")
 
 
@@ -670,7 +696,10 @@ def _match_a5(df_bc3: pd.DataFrame) -> int:
     CNPJ_EMITENTE — usa só a descrição exata do XML como chave. É o nível
     mais amplo/permissivo da família de aprendizado por descrição, por isso
     roda por último dentro dela, sobre o que sobrou 'ND'/'NM' após o
-    A4. Sem correspondência, mantém o status original. Devolve a
+    A4. Dicionário alimentado por DUAS fontes (ver _montar_dicionario_a5):
+    matches D1/D2 confirmados E, desde 2026-08-20, Saídas de emissão
+    própria da auditada (autodeclaração, "ampliação do A5"). Sem
+    correspondência, mantém o status original. Devolve a
     quantidade recuperada. Muta df_bc3 in-place."""
     dicionario = _montar_dicionario_a5(df_bc3)
     if dicionario.empty:
