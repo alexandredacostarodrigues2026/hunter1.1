@@ -9029,6 +9029,107 @@ def consultar_cruzamento_confirmado(
         return pd.DataFrame(columns=colunas), 0
 
 
+# ── Painel de Revisão da Equalização Automática — rascunho (Estágio 10.1) ──
+# Solicitação Técnica (2026-08-20): "PAINEL DE REVISÃO DA EQUALIZAÇÃO
+# AUTOMÁTICA" — a Equalização Automática deixa de gravar DIRETO em
+# cruzamento_confirmado/_detalhado; passa a gravar aqui, em rascunho, e só
+# o que o auditor homologar no Painel de Revisão (interface.py) é que vai
+# pra Rubrica oficial (ver gravar_rubricas_revisadas()). Mesmo schema de
+# cruzamento_confirmado + SIMILARIDADE_DESCRICAO (2026-08-20: precisa
+# sobreviver até a revisão pra mostrar a coluna "SimDescr%" na grade —
+# cruzamento_confirmado não guarda isso porque, uma vez confirmado, a
+# similaridade não importa mais; aqui, ainda em rascunho, importa).
+_COLUNAS_CRUZAMENTO_PROVISORIO = [
+    "DESCR_ALVO", "COD_ITEM", "ORIGEM", "codproddecl", "desc_xml",
+    "descrição_decl", "qtde_ocorrencias", "SIMILARIDADE_DESCRICAO", "CRITERIO", "TS",
+]
+
+
+def salvar_cruzamento_provisorio(escolhido: dict, origem: str, criterio: str, linhas: pd.DataFrame) -> dict:
+    """Persiste em cruzamento_provisorio as sugestões geradas pela
+    Equalização Automática (Estágio 10.1) — RASCUNHO, ainda NÃO é a
+    Rubrica oficial (essa continua em cruzamento_confirmado, gravada só
+    depois que o auditor homologar via gravar_rubricas_revisadas()).
+    `linhas` no mesmo formato aceito por salvar_cruzamento_confirmado()
+    (codproddecl/desc_xml/descrição_decl/qtde_ocorrencias), mais
+    SIMILARIDADE_DESCRICAO (default 0.0 se a coluna não vier). SEM
+    upsert/sincronização — é sempre chamada logo depois de limpar_
+    rascunho_provisorio(descr_alvo) no início de executar_confirmacao_
+    automatica_rubrica(), então só concatena com o que já existir de
+    OUTROS produtos/origens/critérios (preservados intocados) e
+    regrava a tabela inteira. Regra R07: DESCR_ALVO/COD_ITEM/
+    codproddecl sempre string. Devolve {'ok': True, 'total_salvo':
+    int} ou {'erro': str}."""
+    resultado = {}
+    try:
+        if "descrição_decl" in linhas.columns:
+            novo = linhas[["codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias"]].copy()
+        else:
+            novo = linhas[["codproddecl", "desc_xml", "qtde_ocorrencias"]].copy()
+            novo["descrição_decl"] = ""
+        novo["SIMILARIDADE_DESCRICAO"] = (
+            linhas["SIMILARIDADE_DESCRICAO"].values if "SIMILARIDADE_DESCRICAO" in linhas.columns else 0.0
+        )
+        novo["DESCR_ALVO"] = str(escolhido["DESCR_ALVO"])
+        novo["COD_ITEM"] = str(escolhido["COD_ITEM"])
+        novo["ORIGEM"] = origem
+        novo["CRITERIO"] = criterio
+        novo["TS"] = datetime.now().isoformat(timespec="seconds")
+        novo = novo[_COLUNAS_CRUZAMENTO_PROVISORIO]
+
+        existente, _ = consultar_cruzamento_provisorio(limite=None)
+        combinado = pd.concat([existente, novo], ignore_index=True) if not existente.empty else novo
+
+        combinado = _forcar_colunas_string(combinado, ["DESCR_ALVO", "COD_ITEM", "codproddecl", "ORIGEM", "CRITERIO"])
+        combinado = combinado[_COLUNAS_CRUZAMENTO_PROVISORIO].reset_index(drop=True)
+
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            con.register("_df_cruzamento_provisorio", combinado)
+            con.execute("CREATE OR REPLACE TABLE cruzamento_provisorio AS SELECT * FROM _df_cruzamento_provisorio")
+            con.unregister("_df_cruzamento_provisorio")
+        resultado["ok"] = True
+        resultado["total_salvo"] = len(novo)
+    except Exception as exc:
+        logger.exception("Erro ao salvar cruzamento_provisorio: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def consultar_cruzamento_provisorio(
+    descr_alvo: "str | None" = None, origem: "str | None" = None,
+    criterio: "str | None" = None, limite: "int | None" = 200,
+) -> "tuple[pd.DataFrame, int]":
+    """Lê cruzamento_provisorio (rascunho da Equalização Automática,
+    ainda não homologado) — opcionalmente filtrada por DESCR_ALVO/
+    ORIGEM/CRITERIO. limite=None devolve tudo."""
+    colunas = _COLUNAS_CRUZAMENTO_PROVISORIO
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "cruzamento_provisorio" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            condicoes = []
+            if descr_alvo is not None:
+                condicoes.append(f"DESCR_ALVO = '{descr_alvo.replace(chr(39), chr(39) * 2)}'")
+            if origem is not None:
+                condicoes.append(f"ORIGEM = '{origem.replace(chr(39), chr(39) * 2)}'")
+            if criterio is not None:
+                condicoes.append(f"CRITERIO = '{criterio.replace(chr(39), chr(39) * 2)}'")
+            filtro = f"WHERE {' AND '.join(condicoes)}" if condicoes else ""
+            total = con.execute(f"SELECT COUNT(*) FROM cruzamento_provisorio {filtro}").fetchone()[0]
+            query = f"SELECT * FROM cruzamento_provisorio {filtro}"
+            if limite is not None:
+                query += f" LIMIT {limite}"
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar cruzamento_provisorio em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
 # ── Rubrica do Produto Alvo — detalhe item-a-item (idunico) ──────────────
 # Solicitação Técnica (2026-07-23): "é importante que os produtos com ids
 # fiquem gravado no produto alvo e que depois de gravado a situação possa
@@ -9158,6 +9259,225 @@ def consultar_cruzamento_confirmado_detalhado(
         return pd.DataFrame(columns=colunas), 0
 
 
+_COLUNAS_CRUZAMENTO_PROVISORIO_DETALHADO = [
+    "DESCR_ALVO", "COD_ITEM", "ORIGEM", "codproddecl", "desc_xml", "idunico", "CRITERIO", "TS",
+]
+
+
+def salvar_cruzamento_provisorio_detalhado(escolhido: dict, origem: str, criterio: str, itens: pd.DataFrame) -> dict:
+    """Persiste em cruzamento_provisorio_detalhado uma linha POR ITEM
+    individual (idunico) das sugestões geradas pela Equalização
+    Automática — mesmo raciocínio de salvar_cruzamento_provisorio(),
+    sem upsert/sincronização (rascunho sempre regerado do zero a cada
+    rodada, ver limpar_rascunho_provisorio()). Usada por gravar_
+    rubricas_revisadas() pra saber quais idunicos promover pra
+    cruzamento_confirmado_detalhado na homologação. Regra R07:
+    DESCR_ALVO/COD_ITEM/codproddecl/idunico sempre string. Devolve
+    {'ok': True, 'total_salvo': int} ou {'erro': str}."""
+    resultado = {}
+    try:
+        itens = itens.drop_duplicates(subset=["idunico"])
+        novo = itens[["codproddecl", "desc_xml", "idunico"]].copy()
+        novo["DESCR_ALVO"] = str(escolhido["DESCR_ALVO"])
+        novo["COD_ITEM"] = str(escolhido["COD_ITEM"])
+        novo["ORIGEM"] = origem
+        novo["CRITERIO"] = criterio
+        novo["TS"] = datetime.now().isoformat(timespec="seconds")
+        novo = novo[_COLUNAS_CRUZAMENTO_PROVISORIO_DETALHADO]
+
+        existente, _ = consultar_cruzamento_provisorio_detalhado(limite=None)
+        combinado = pd.concat([existente, novo], ignore_index=True) if not existente.empty else novo
+        combinado = combinado.drop_duplicates(subset=["DESCR_ALVO", "ORIGEM", "idunico"])
+
+        combinado = _forcar_colunas_string(
+            combinado, ["DESCR_ALVO", "COD_ITEM", "codproddecl", "idunico", "ORIGEM", "CRITERIO"],
+        )
+        combinado = combinado[_COLUNAS_CRUZAMENTO_PROVISORIO_DETALHADO].reset_index(drop=True)
+
+        _BANCO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            con.register("_df_cruzamento_provisorio_detalhado", combinado)
+            con.execute(
+                "CREATE OR REPLACE TABLE cruzamento_provisorio_detalhado AS "
+                "SELECT * FROM _df_cruzamento_provisorio_detalhado"
+            )
+            con.unregister("_df_cruzamento_provisorio_detalhado")
+        resultado["ok"] = True
+        resultado["total_salvo"] = len(novo)
+    except Exception as exc:
+        logger.exception("Erro ao salvar cruzamento_provisorio_detalhado: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def consultar_cruzamento_provisorio_detalhado(
+    descr_alvo: "str | None" = None, origem: "str | None" = None,
+    criterio: "str | None" = None, limite: "int | None" = 200,
+) -> "tuple[pd.DataFrame, int]":
+    """Lê cruzamento_provisorio_detalhado — opcionalmente filtrada por
+    DESCR_ALVO/ORIGEM/CRITERIO. limite=None devolve tudo."""
+    colunas = _COLUNAS_CRUZAMENTO_PROVISORIO_DETALHADO
+    if not _BANCO_PATH.exists():
+        return pd.DataFrame(columns=colunas), 0
+    try:
+        with duckdb.connect(str(_BANCO_PATH), read_only=True) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            if "cruzamento_provisorio_detalhado" not in tabelas:
+                return pd.DataFrame(columns=colunas), 0
+            condicoes = []
+            if descr_alvo is not None:
+                condicoes.append(f"DESCR_ALVO = '{descr_alvo.replace(chr(39), chr(39) * 2)}'")
+            if origem is not None:
+                condicoes.append(f"ORIGEM = '{origem.replace(chr(39), chr(39) * 2)}'")
+            if criterio is not None:
+                condicoes.append(f"CRITERIO = '{criterio.replace(chr(39), chr(39) * 2)}'")
+            filtro = f"WHERE {' AND '.join(condicoes)}" if condicoes else ""
+            total = con.execute(f"SELECT COUNT(*) FROM cruzamento_provisorio_detalhado {filtro}").fetchone()[0]
+            query = f"SELECT * FROM cruzamento_provisorio_detalhado {filtro}"
+            if limite is not None:
+                query += f" LIMIT {limite}"
+            df = con.execute(query).df()
+        return df, total
+    except Exception:
+        logger.exception("Erro ao consultar cruzamento_provisorio_detalhado em %s", _BANCO_PATH)
+        return pd.DataFrame(columns=colunas), 0
+
+
+def _remover_rascunho_por_criterio(descr_alvo: str, origem: str, criterio: str) -> dict:
+    """Remove de cruzamento_provisorio/_detalhado todas as linhas de um
+    (DESCR_ALVO, ORIGEM, CRITERIO) específico — usada por
+    gravar_rubricas_revisadas() no final da homologação de cada
+    critério (as linhas aprovadas já foram promovidas antes de chegar
+    aqui; as reprovadas são só descartadas). Resto do rascunho (outros
+    critérios/origens/produtos) fica sempre intocado. Devolve {'ok':
+    True} ou {'erro': str}."""
+    resultado = {}
+    descr_alvo_str = str(descr_alvo)
+    try:
+        if not _BANCO_PATH.exists():
+            resultado["ok"] = True
+            return resultado
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            for tabela in ("cruzamento_provisorio", "cruzamento_provisorio_detalhado"):
+                if tabela not in tabelas:
+                    continue
+                df = con.execute(f"SELECT * FROM {tabela}").df()
+                restante = df[
+                    ~((df["DESCR_ALVO"] == descr_alvo_str) & (df["ORIGEM"] == origem) & (df["CRITERIO"] == criterio))
+                ]
+                con.register("_df_rascunho_restante", restante)
+                con.execute(f"CREATE OR REPLACE TABLE {tabela} AS SELECT * FROM _df_rascunho_restante")
+                con.unregister("_df_rascunho_restante")
+        resultado["ok"] = True
+    except Exception as exc:
+        logger.exception("Erro ao remover rascunho por critério: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def limpar_rascunho_provisorio(descr_alvo: str) -> dict:
+    """Apaga TODAS as linhas (cruzamento_provisorio + _detalhado, todas
+    as origens/critérios) do produto `descr_alvo` — usada (a) no início
+    de executar_confirmacao_automatica_rubrica(), pra descartar
+    rascunho de uma rodada anterior antes de gerar um novo lote; (b)
+    pelo botão "❌ Cancelar Propostas Automáticas" (interface.py), pra
+    descartar tudo sem homologar nada. Rascunho de OUTROS produtos fica
+    sempre intocado. Devolve {'ok': True} ou {'erro': str} — nunca
+    falha por tabela inexistente (nada a limpar nesse caso)."""
+    resultado = {}
+    descr_alvo_str = str(descr_alvo)
+    try:
+        if not _BANCO_PATH.exists():
+            resultado["ok"] = True
+            return resultado
+        with duckdb.connect(str(_BANCO_PATH)) as con:
+            tabelas = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+            for tabela in ("cruzamento_provisorio", "cruzamento_provisorio_detalhado"):
+                if tabela not in tabelas:
+                    continue
+                df = con.execute(f"SELECT * FROM {tabela}").df()
+                restante = df[df["DESCR_ALVO"] != descr_alvo_str]
+                con.register("_df_rascunho_restante", restante)
+                con.execute(f"CREATE OR REPLACE TABLE {tabela} AS SELECT * FROM _df_rascunho_restante")
+                con.unregister("_df_rascunho_restante")
+        resultado["ok"] = True
+    except Exception as exc:
+        logger.exception("Erro ao limpar rascunho provisório: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
+def gravar_rubricas_revisadas(escolhido: dict, aprovados_df: pd.DataFrame, origem: str, criterio: str) -> dict:
+    """Homologa as propostas revisadas pelo auditor no Painel de
+    Revisão da Equalização Automática (Estágio 10.1) — chamada pelo
+    botão "💾 Homologar" de CADA expander de critério. `aprovados_df`
+    tem as colunas codproddecl/desc_xml (mais descrição_decl/qtde_
+    ocorrencias quando disponíveis) das linhas que o auditor manteve
+    marcadas "Aprovar" na grade — mesmo formato de linhas aceito por
+    salvar_cruzamento_confirmado(). Passos:
+    1. Promove os aprovados pra Rubrica oficial via salvar_cruzamento_
+       confirmado()/_detalhado() (funções JÁ EXISTENTES, sem nenhuma
+       alteração, `universo_chaves=None`/`universo_idunicos=None` — só
+       adiciona/atualiza, nunca remove nada que já estava confirmado
+       manualmente).
+    2. Os itens individuais (idunico) de cada correspondência aprovada
+       são buscados em cruzamento_provisorio_detalhado, restrito a
+       (DESCR_ALVO, ORIGEM, CRITERIO) — só os deste critério
+       específico, não do rascunho inteiro.
+    3. Remove do rascunho TODAS as linhas de (DESCR_ALVO, ORIGEM,
+       CRITERIO) — as aprovadas (já promovidas) E as reprovadas
+       (descartadas por terem ficado desmarcadas): homologar sempre
+       resolve o lote inteiro daquele critério, nada fica pendurado em
+       rascunho depois.
+    Devolve {'ok': True, 'total_homologado': int, 'total_descartado':
+    int} ou {'erro': str}."""
+    resultado = {}
+    try:
+        descr_alvo = escolhido["DESCR_ALVO"]
+        rascunho_grupo, _ = consultar_cruzamento_provisorio(
+            descr_alvo=descr_alvo, origem=origem, criterio=criterio, limite=None,
+        )
+        total_rascunho = len(rascunho_grupo)
+        total_homologado = 0
+
+        if not aprovados_df.empty:
+            r_agrupado = salvar_cruzamento_confirmado(escolhido, origem, criterio, aprovados_df, universo_chaves=None)
+            if "erro" in r_agrupado:
+                resultado["erro"] = r_agrupado["erro"]
+                return resultado
+
+            detalhado_provisorio, _ = consultar_cruzamento_provisorio_detalhado(
+                descr_alvo=descr_alvo, origem=origem, criterio=criterio, limite=None,
+            )
+            chaves_aprovadas = set(zip(aprovados_df["codproddecl"], aprovados_df["desc_xml"]))
+            mascara = [
+                (c, d) in chaves_aprovadas
+                for c, d in zip(detalhado_provisorio["codproddecl"], detalhado_provisorio["desc_xml"])
+            ]
+            itens_aprovados = detalhado_provisorio.loc[mascara, ["codproddecl", "desc_xml", "idunico"]]
+            if not itens_aprovados.empty:
+                r_detalhado = salvar_cruzamento_confirmado_detalhado(
+                    escolhido, origem, criterio, itens_aprovados, universo_idunicos=None,
+                )
+                if "erro" in r_detalhado:
+                    resultado["erro"] = r_detalhado["erro"]
+                    return resultado
+            total_homologado = len(aprovados_df)
+
+        r_limpeza = _remover_rascunho_por_criterio(descr_alvo, origem, criterio)
+        if "erro" in r_limpeza:
+            return r_limpeza
+
+        resultado["ok"] = True
+        resultado["total_homologado"] = total_homologado
+        resultado["total_descartado"] = total_rascunho - total_homologado
+    except Exception as exc:
+        logger.exception("Erro ao gravar rubricas revisadas: %s", exc)
+        resultado["erro"] = str(exc)
+    return resultado
+
+
 # ── Execução Automática da Rubrica (Estágio 10.1) ────────────────────────
 # Solicitação Técnica (2026-07-30): "EXECUÇÃO AUTOMÁTICA DA RUBRICA" —
 # motor que aplica sequencialmente os critérios de busca "óbvios" (EAN,
@@ -9189,59 +9509,62 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict, callback=None) -> d
     Entradas (1 EAN, 2 código, 3 nome), Saídas (1 EAN, 2 código, 4
     divergente) e Estoque (1 EAN, 2 código, 3 nome) pro produto
     `escolhido` (mesmo dict de consultar_produto_cruzamento_escolhido())
-    e confirma na Rubrica os resultados — sem intervenção manual linha a
-    linha. Reaproveita as MESMAS funções `cruzar_produto_escolhido_*()`
-    já usadas pelas telas manuais (nenhuma lógica de matching duplicada
-    aqui) — o que garante de graça: exclusão cross-alvo (`_chaves_ja_
-    atribuidas_a_outro_alvo()`, já embutida em cada uma), exclusão de
-    autoemissão em Saídas e de anos ainda não fechados em Estoque (já
-    embutidas em gerar_estagio_8_saidas()/gerar_estagio_8_estoque(), que
-    alimentam essas funções).
+    — sem intervenção manual linha a linha. Reaproveita as MESMAS
+    funções `cruzar_produto_escolhido_*()` já usadas pelas telas
+    manuais (nenhuma lógica de matching duplicada aqui) — o que garante
+    de graça: exclusão cross-alvo (`_chaves_ja_atribuidas_a_outro_
+    alvo()`, já embutida em cada uma), exclusão de autoemissão em
+    Saídas e de anos ainda não fechados em Estoque (já embutidas em
+    gerar_estagio_8_saidas()/gerar_estagio_8_estoque(), que alimentam
+    essas funções).
+
+    2026-08-20, Solicitação Técnica "PAINEL DE REVISÃO DA EQUALIZAÇÃO
+    AUTOMÁTICA": NÃO grava mais direto na Rubrica oficial — grava em
+    RASCUNHO (`cruzamento_provisorio`/`_detalhado`, via `salvar_
+    cruzamento_provisorio()`/`_detalhado()`), pra revisão do auditor no
+    Painel de Revisão (`interface.py`, `_render_painel_revisao_
+    equalizacao()`) antes de ir pra Rubrica de verdade (`gravar_
+    rubricas_revisadas()`, chamada pelo botão "💾 Homologar" de cada
+    critério). Chama `limpar_rascunho_provisorio(descr_alvo)` no
+    início, pra descartar rascunho de uma rodada anterior antes de
+    gerar um lote novo.
 
     TODOS os critérios do `plano` são refiltrados aqui por
     `SIMILARIDADE_DESCRICAO >= LIMIAR_SIMILARIDADE_AUTOMATICA` (60%) —
     mesmo EAN/código/nome, cujo filtro "de verdade" é identidade exata
     (sem piso nenhum no modo MANUAL): confirmado com dado real que
     código/nome podem coincidir por reuso de cadastro entre produtos
-    fisicamente diferentes, e sem revisão humana linha a linha (a
-    automação toda existe pra isso), esse piso é a única proteção
-    contra confirmar automaticamente um par claramente errado. Pro
-    Critério 4 (código divergente, que já vem com piso manual de 20%,
-    LIMIAR_SIMILARIDADE_CRITERIO3), refiltrar a 60% é estritamente mais
-    restritivo — equivalente a nunca ter tido o piso de 20%.
-
-    Persistência via `salvar_cruzamento_confirmado()`/`_detalhado()` com
-    `universo_chaves=None`/`universo_idunicos=None` — semântica SÓ
-    ADITIVA (nunca remove o que o auditor já confirmou manualmente,
-    mesmo que o item não apareça mais num critério nesta rodada).
-    Deduplicação por idunico e Regra R07 (strings) já garantidas DENTRO
-    de `salvar_cruzamento_confirmado_detalhado()` — nada extra necessário
-    aqui.
+    fisicamente diferentes, esse piso é a proteção contra sugerir
+    automaticamente um par claramente errado (mesmo com a revisão
+    humana agora exigida antes da Rubrica oficial, o piso continua
+    valendo — menos ruído pro auditor revisar). Pro Critério 4 (código
+    divergente, que já vem com piso manual de 20%, LIMIAR_SIMILARIDADE_
+    CRITERIO3), refiltrar a 60% é estritamente mais restritivo —
+    equivalente a nunca ter tido o piso de 20%.
 
     `callback(origem, criterio, indice, total)` (2026-07-30, pedido do
     usuário: "criar barra de progresso para acompanhar"), se informado,
     é chamado ao FINAL de cada um dos critérios do `plano` (indice de 1
     a `total` — 10 no total, desde 2026-08-19: 4 de Entradas [EAN,
     código, nome, divergente] + 3 de Saídas [EAN, código, divergente] +
-    3 de Estoque [EAN, código, nome]; era 7 antes do Critério EAN),
-    independente de ter encontrado algo ou dado erro — usado pela UI
-    (`interface.py`) pra atualizar uma `st.progress()` em tempo real.
-    `callback=None` (padrão) mantém o comportamento silencioso de
-    antes.
+    3 de Estoque [EAN, código, nome]), independente de ter encontrado
+    algo ou dado erro — usado pela UI (`interface.py`) pra atualizar
+    uma `st.progress()` em tempo real. `callback=None` (padrão) mantém
+    o comportamento silencioso de antes.
 
-    Devolve {'ok': True, 'total_adicionado': int (itens NOVOS na Rubrica
-    detalhada — saldo líquido, não conta reconfirmação de item já
-    existente), 'por_origem': {'entradas': int, 'saidas': int, 'estoque':
-    int}, 'erros': list} — ou {'erro': str} se nenhum produto estiver
-    escolhido. Erros de UM critério (ex.: tabela de origem ainda não
-    gerada) não interrompem os demais — acumulados em 'erros', o motor
-    continua pros critérios seguintes."""
+    Devolve {'ok': True, 'total_adicionado': int (total de itens
+    individuais no RASCUNHO ao final desta rodada — não mais "na
+    Rubrica", já que nada é confirmado aqui), 'por_origem': {'entradas':
+    int, 'saidas': int, 'estoque': int}, 'erros': list} — ou {'erro':
+    str} se nenhum produto estiver escolhido. Erros de UM critério
+    (ex.: tabela de origem ainda não gerada) não interrompem os demais
+    — acumulados em 'erros', o motor continua pros critérios
+    seguintes."""
     if not escolhido:
         return {"erro": "Nenhum produto escolhido pra cruzamento."}
 
     descr_alvo = escolhido["DESCR_ALVO"]
-    antes, _ = consultar_cruzamento_confirmado_detalhado(descr_alvo=descr_alvo, limite=None)
-    idunicos_antes = set(antes["idunico"]) if not antes.empty else set()
+    limpar_rascunho_provisorio(descr_alvo)
 
     # Critério EAN (1) entra PRIMEIRO em cada origem (2026-08-19, pedido
     # do usuário — "entra primeiro no plano"): identificador global mais
@@ -9285,14 +9608,12 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict, callback=None) -> d
             if agrupado.empty:
                 continue
             colunas_disponiveis = [
-                c for c in ("codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias")
+                c for c in ("codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias", "SIMILARIDADE_DESCRICAO")
                 if c in agrupado.columns
             ]
             selecionadas = agrupado[colunas_disponiveis].copy()
 
-            r_agrupado = salvar_cruzamento_confirmado(
-                escolhido, origem, criterio, selecionadas, universo_chaves=None,
-            )
+            r_agrupado = salvar_cruzamento_provisorio(escolhido, origem, criterio, selecionadas)
             if "erro" in r_agrupado:
                 erros.append(f"{origem} — {criterio}: {r_agrupado['erro']}")
                 continue
@@ -9308,9 +9629,7 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict, callback=None) -> d
             if itens.empty:
                 continue
 
-            r_detalhado = salvar_cruzamento_confirmado_detalhado(
-                escolhido, origem, criterio, itens, universo_idunicos=None,
-            )
+            r_detalhado = salvar_cruzamento_provisorio_detalhado(escolhido, origem, criterio, itens)
             if "erro" in r_detalhado:
                 erros.append(f"{origem} — {criterio} (detalhado): {r_detalhado['erro']}")
                 continue
@@ -9325,11 +9644,10 @@ def executar_confirmacao_automatica_rubrica(escolhido: dict, callback=None) -> d
             if callback:
                 callback(origem, criterio, indice, total_passos)
 
-    depois, _ = consultar_cruzamento_confirmado_detalhado(descr_alvo=descr_alvo, limite=None)
-    idunicos_depois = set(depois["idunico"]) if not depois.empty else set()
+    depois, _ = consultar_cruzamento_provisorio_detalhado(descr_alvo=descr_alvo, limite=None)
     return {
         "ok": True,
-        "total_adicionado": len(idunicos_depois - idunicos_antes),
+        "total_adicionado": len(depois),
         "por_origem": por_origem,
         "erros": erros,
     }

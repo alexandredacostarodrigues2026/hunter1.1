@@ -6542,6 +6542,118 @@ def render_produtos_alvo_salvos() -> None:
         )
 
 
+def _render_painel_revisao_equalizacao(escolhido: dict) -> None:
+    """Painel de Revisão da Equalização Automática (Estágio 10.1,
+    Solicitação Técnica 2026-08-20: "PAINEL DE REVISÃO DA EQUALIZAÇÃO
+    AUTOMÁTICA") — mostra as propostas geradas por loader.executar_
+    confirmacao_automatica_rubrica() (gravadas em cruzamento_
+    provisorio/_detalhado, RASCUNHO — ainda NÃO é a Rubrica oficial),
+    organizadas em abas por origem (Entradas/Saídas/Estoque) e, dentro
+    de cada aba, um expander colapsado por Critério de busca que teve
+    sugestão. Visibilidade calculada AO VIVO (sem flag de session_
+    state): só aparece se `loader.consultar_cruzamento_provisorio()`
+    não estiver vazio pra este produto — sobrevive a reruns/reabertura
+    de página sozinho, mesmo padrão de "Observação: já salvo" usado em
+    outras telas.
+
+    A grade só decide QUAIS correspondências entram na Rubrica
+    (Aprovar/Cód. Produto/Descrição XML/SimDescr%) — SEM coluna de FM/
+    Nova Unidade (confirmado com o usuário via AskUserQuestion: "a
+    revisão na verdade é somente para a escolha do candidato. o
+    diagnóstico de unidade permanece onde está") — o ajuste de Fator
+    Multiplicador continua 100% na tela manual "📊 Diagnóstico de
+    Unidades", inalterada.
+
+    "💾 Homologar" fica DENTRO de cada expander (não um botão só por
+    aba, confirmado com o usuário) — homologa só aquele critério,
+    chamando loader.gravar_rubricas_revisadas(), que promove os
+    aprovados pra cruzamento_confirmado(_detalhado) via salvar_
+    cruzamento_confirmado()/_detalhado() (funções já existentes, sem
+    alteração) e descarta do rascunho tanto os aprovados quanto os
+    reprovados daquele critério (lote sempre "resolvido" por completo a
+    cada clique). "❌ Cancelar Propostas Automáticas" é ÚNICO pro painel
+    inteiro — descarta TODO o rascunho do produto (loader.limpar_
+    rascunho_provisorio()) sem homologar nada.
+
+    SIMILARIDADE_DESCRICAO vem persistida no rascunho (calculada uma
+    vez, no momento da automação, por cruzar_produto_escolhido_*()) —
+    não precisa ser recalculada aqui."""
+    descr_alvo = escolhido["DESCR_ALVO"]
+    rascunho, total_rascunho = loader.consultar_cruzamento_provisorio(descr_alvo=descr_alvo, limite=None)
+    if rascunho.empty:
+        return
+
+    st.divider()
+    st.markdown("### 📋 Painel de Revisão da Equalização Automática")
+    st.caption(
+        f"{total_rascunho:,} proposta(s) aguardando revisão. Marque \"Aprovar\" e clique "
+        "\"💾 Homologar\" em cada critério — só o que for homologado entra na Rubrica oficial."
+        .replace(",", ".")
+    )
+
+    aba_rev_entradas, aba_rev_saidas, aba_rev_estoque = st.tabs(
+        ["📥 Revisar Entradas", "📤 Revisar Saídas", "📦 Revisar Estoque"]
+    )
+    for aba, origem in (
+        (aba_rev_entradas, "entradas"), (aba_rev_saidas, "saidas"), (aba_rev_estoque, "estoque"),
+    ):
+        with aba:
+            rascunho_origem = rascunho[rascunho["ORIGEM"] == origem]
+            if rascunho_origem.empty:
+                st.info("Nenhuma proposta pendente nesta origem.")
+                continue
+            for criterio, grupo in rascunho_origem.groupby("CRITERIO", sort=False):
+                sufixo_criterio = criterio.split(":", 1)[0].replace("Critério de Busca", "").strip()
+                rotulo_expander = criterio.split(":", 1)[0]
+                with st.expander(f"{rotulo_expander} — {len(grupo)} item(ns) pendente(s)", expanded=False):
+                    st.caption(criterio.split(":", 1)[1].strip())
+                    editor_base = grupo[
+                        ["codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias", "SIMILARIDADE_DESCRICAO"]
+                    ].reset_index(drop=True)
+                    editor_base.insert(0, "Aprovar", True)
+                    editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
+                    editor_exibicao = editor_exibicao.drop(
+                        columns=["Descricao Declaracao", "Qtde. Ocorrencias"], errors="ignore",
+                    )
+                    colunas_travadas = [c for c in editor_exibicao.columns if c != "Aprovar"]
+                    chave_container = f"painel_revisao_{origem}_{sufixo_criterio}"
+                    with st.container(key=chave_container):
+                        _aplicar_fonte_dataframe(chave_container, 8)
+                        editado = st.data_editor(
+                            editor_exibicao,
+                            use_container_width=False,
+                            hide_index=True,
+                            disabled=colunas_travadas,
+                            key=f"editor_{chave_container}",
+                            row_height=70,
+                            column_config={
+                                "Aprovar": st.column_config.Column(width=85),
+                                "Cod. Produto Declaracao": st.column_config.Column(label="Cód. Prod.", width=110),
+                                "Descricao XML": st.column_config.TextColumn(width=400),
+                                "Similaridade Descricao (%)": st.column_config.Column(label="SimDescr%", width=90),
+                            },
+                        )
+                    if st.button("💾 Homologar", key=f"btn_homologar_{chave_container}"):
+                        marcadas = editado["Aprovar"].reindex(editor_base.index).fillna(False)
+                        aprovados_df = editor_base.loc[
+                            marcadas, ["codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias"]
+                        ]
+                        resultado = loader.gravar_rubricas_revisadas(escolhido, aprovados_df, origem, criterio)
+                        if "erro" in resultado:
+                            st.error(f"Erro: {resultado['erro']}")
+                        else:
+                            st.success(
+                                f"✅ {resultado['total_homologado']} item(ns) homologado(s) na Rubrica, "
+                                f"{resultado['total_descartado']} descartado(s)."
+                            )
+                            st.rerun()
+
+    if st.button("❌ Cancelar Propostas Automáticas", key="btn_cancelar_rascunho_provisorio"):
+        loader.limpar_rascunho_provisorio(descr_alvo)
+        st.success("Rascunho descartado.")
+        st.rerun()
+
+
 def render_cruzamento_produtos() -> None:
     """Tela 'Cruzamento de Produtos' (2026-08-19, pedido do usuário via
     prints — separada do Estágio 10, que antes trazia tudo isto embutido
@@ -6621,21 +6733,37 @@ def render_cruzamento_produtos() -> None:
                 clicou_automatico = st.button(
                     "⚡ Equalização Automática de Descrição do Produto e Unidade de Medida",
                     key="btn_execucao_automatica_rubrica",
-                    help="Critérios 1-3, Confiança > 60%, + Fator Multiplicador (FM)",
+                    help=(
+                        "Critérios EAN/código/nome/divergente, Confiança ≥ 60% — gera propostas "
+                        "pra revisão no Painel de Revisão, não confirma nada direto na Rubrica"
+                    ),
                 )
-            # Barras de progresso (2026-07-30, pedido do usuário: "ao
+            # Barra de progresso (2026-07-30, pedido do usuário: "ao
             # pressionar equalização automática, criar barra de progresso
-            # para acompanhar") — renderizadas FORA do container estreito
+            # para acompanhar") — renderizada FORA do container estreito
             # do botão (que fica flutuando/posicionado em cima das abas,
             # sem espaço pra uma barra legível), em largura total, logo
             # abaixo da linha de abas. loader.executar_confirmacao_
-            # automatica_rubrica()/executar_aplicacao_automatica_fm()
-            # chamam `callback(origem, [criterio,] indice, total)` ao
-            # final de cada passo (7 critérios + 3 origens de FM) — usado
+            # automatica_rubrica() chama `callback(origem, criterio,
+            # indice, total)` ao final de cada um dos 10 passos — usado
             # aqui pra avançar a barra em tempo real, mesmo padrão de
             # `_barra_progresso()` já usado na tela de Extração.
+            #
+            # 2026-08-20, Solicitação Técnica "PAINEL DE REVISÃO DA
+            # EQUALIZAÇÃO AUTOMÁTICA": deixou de aplicar FM automaticamente
+            # aqui (2ª barra + loader.executar_aplicacao_automatica_fm()
+            # removidas) — a automação agora só GERA PROPOSTAS (rascunho em
+            # cruzamento_provisorio/_detalhado, não mais a Rubrica oficial
+            # direto); o auditor revisa/aprova no "📋 Painel de Revisão"
+            # (ver _render_painel_revisao_equalizacao() logo abaixo) antes
+            # de qualquer coisa virar Rubrica de verdade. FM continua 100%
+            # manual, na tela "📊 Diagnóstico de Unidades" — inalterada,
+            # só alcançável DEPOIS que o auditor já homologou as
+            # correspondências que quer (confirmado com o usuário via
+            # AskUserQuestion: "o diagnóstico de unidade permanece onde
+            # está").
             if clicou_automatico:
-                barra_rubrica = st.progress(0.0, text="Confirmando correspondências...")
+                barra_rubrica = st.progress(0.0, text="Gerando propostas de correspondência...")
 
                 def _cb_rubrica(origem: str, criterio: str, indice: int, total: int) -> None:
                     rotulo_criterio = criterio.split(":", 1)[0]
@@ -6650,46 +6778,22 @@ def render_cruzamento_produtos() -> None:
                     barra_rubrica.empty()
                     st.error(f"Erro: {resultado_auto['erro']}")
                 else:
-                    barra_rubrica.progress(1.0, text="Correspondências confirmadas.")
-                    # "Próximo passo" (2026-07-30, Solicitação Técnica:
-                    # "aplique nos mesmos moldes fm caso seja > 1") —
-                    # depois de confirmar as correspondências, aplica
-                    # automaticamente o FM sugerido em toda UP com "FM
-                    # Sug" > 1, mesmo botão/clique — ver loader.
-                    # executar_aplicacao_automatica_fm().
-                    barra_fm = st.progress(0.0, text="Aplicando FM sugerido...")
-
-                    def _cb_fm(origem: str, indice: int, total: int) -> None:
-                        barra_fm.progress(indice / total, text=f"{indice}/{total}: {origem}")
-
-                    resultado_fm = loader.executar_aplicacao_automatica_fm(
-                        escolhido_atual, callback=_cb_fm,
-                    )
-                    barra_fm.progress(1.0, text="FM aplicado.")
+                    barra_rubrica.progress(1.0, text="Propostas geradas — revise no painel abaixo.")
                     for erro in resultado_auto["erros"]:
                         st.warning(f"⚠️ Rubrica — {erro}")
-                    if "erro" in resultado_fm:
-                        st.warning(f"⚠️ FM: {resultado_fm['erro']}")
-                    else:
-                        for erro in resultado_fm["erros"]:
-                            st.warning(f"⚠️ FM — {erro}")
                     partes_origem = ", ".join(
                         f"{n} em {o}" for o, n in resultado_auto["por_origem"].items()
                     )
                     detalhe = f" ({partes_origem})" if partes_origem else ""
-                    total_fm = resultado_fm.get("total_aplicado", 0) if "erro" not in resultado_fm else 0
-                    partes_fm = ", ".join(
-                        f"{n} em {o}" for o, n in resultado_fm.get("por_origem", {}).items()
-                    )
-                    detalhe_fm = f" ({partes_fm})" if partes_fm else ""
                     st.success(
-                        f"✅ +{resultado_auto['total_adicionado']} item(ns) adicionados à Rubrica"
-                        f"{detalhe}; {total_fm} item(ns) com FM aplicado{detalhe_fm}."
+                        f"✅ {resultado_auto['total_adicionado']} proposta(s) gerada(s) pra revisão"
+                        f"{detalhe} — veja o \"📋 Painel de Revisão\" abaixo."
                     )
                     st.rerun()
             aba_cruzamento_entradas, aba_cruzamento_saidas, aba_cruzamento_estoque = st.tabs(
                 ["📥 Entradas", "📤 Saídas", "📦 Estoque"]
             )
+        _render_painel_revisao_equalizacao(escolhido_atual)
         with aba_cruzamento_entradas:
             _render_cruzamento_entradas(escolhido_atual)
         with aba_cruzamento_estoque:
