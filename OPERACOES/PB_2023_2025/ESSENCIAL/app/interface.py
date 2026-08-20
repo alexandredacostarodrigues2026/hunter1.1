@@ -5325,8 +5325,6 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     fn_agrupado, fn_detalhado = criterios[criterio_busca]
     sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
     descr_efetiva = loader.descricao_efetiva_escolhido(escolhido)
-    if escolhido.get("IS_ST"):
-        st.caption(f"🏷️ **{descr_efetiva}** é **ST** (Substituição Tributária).")
 
     correspondentes, _ = fn_agrupado()
     if correspondentes.empty:
@@ -5363,10 +5361,6 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         st.info(
             f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
             "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
-        )
-    else:
-        st.success(
-            f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
         )
 
     # Checkbox "Salvar" (2026-07-23, pedido do usuário: "CRIE CAIXA PARA
@@ -5728,8 +5722,6 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     fn_agrupado, fn_detalhado = criterios[criterio_busca]
     sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
     descr_efetiva = loader.descricao_efetiva_escolhido(escolhido)
-    if escolhido.get("IS_ST"):
-        st.caption(f"🏷️ **{descr_efetiva}** é **ST** (Substituição Tributária).")
 
     correspondentes, _ = fn_agrupado()
     if correspondentes.empty:
@@ -5761,10 +5753,6 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
         st.info(
             f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
             "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
-        )
-    else:
-        st.success(
-            f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
         )
 
     ja_confirmadas, _ = loader.consultar_cruzamento_confirmado(descr_alvo=escolhido["DESCR_ALVO"], limite=None)
@@ -6009,8 +5997,6 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     fn_agrupado, fn_detalhado = criterios[criterio_busca]
     sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
     descr_efetiva = loader.descricao_efetiva_escolhido(escolhido)
-    if escolhido.get("IS_ST"):
-        st.caption(f"🏷️ **{descr_efetiva}** é **ST** (Substituição Tributária).")
 
     correspondentes, _ = fn_agrupado()
     if correspondentes.empty:
@@ -6040,10 +6026,6 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
         st.info(
             f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
             "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
-        )
-    else:
-        st.success(
-            f"✅ {len(correspondentes):,} combinação(ões) encontrada(s).".replace(",", ".")
         )
 
     ja_confirmadas, _ = loader.consultar_cruzamento_confirmado(descr_alvo=escolhido["DESCR_ALVO"], limite=None)
