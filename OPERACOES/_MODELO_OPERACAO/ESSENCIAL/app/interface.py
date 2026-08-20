@@ -655,12 +655,16 @@ def render_carga_operacao() -> None:
         # outra página. Barra de progresso REAL (mesmo mecanismo de NF-e/
         # SPED, `_barra_progresso()`), não mais um spinner — pedido explícito
         # do usuário depois de ver a barra genérica ficar só num spinner.
-        # `n_passos=11` = os 11 níveis de match (D1, D2, A1-A5, D3-D6, ver
+        # `n_passos=12` = os 12 níveis de match (D1, D2, AE, A1-A5, D3-D6, ver
         # matching.executar_matching()), cada um reportando via callback
         # quantos itens da BC2 ficaram com aquele MATCH_TIPO — pura
         # instrumentação em matching.py, nenhuma lógica/ordem/limiar mudou.
+        # AE (2026-08-20) adicionado como 12º nível — autodeclaração pra
+        # notas de Entrada em que a auditada é emitente (ver REGRAS_
+        # MATCHING.md); sem atualizar n_passos aqui, a 12ª chamada de
+        # callback faria st.progress() receber fração > 1.0 e quebrar.
         fase_bc3 = "**4. Matching (BC2 x BC1)**" if pend["quantidade"] > 0 else "**3. Matching (BC2 x BC1)**"
-        ok_bc3 = _barra_progresso(fase_bc3, n_passos=11, fn_persistir=loader.persistir_bc3)
+        ok_bc3 = _barra_progresso(fase_bc3, n_passos=12, fn_persistir=loader.persistir_bc3)
         if ok_bc3:
             st.session_state["bc3_gerada"] = True
             st.session_state.pop("erro_bc3_automatico", None)
@@ -1010,14 +1014,14 @@ def render_bc3() -> None:
         total_casados = (
             totais["D1"] + totais["D2"] + totais["A1"] + totais["A2"]
             + totais["A3"] + totais["A4"] + totais["A5"] + totais["D3"]
-            + totais["D4"] + totais["D5"] + totais["D6"]
+            + totais["D4"] + totais["D5"] + totais["D6"] + totais["AE"]
         )
         taxa_match = (total_casados / total_itens * 100) if total_itens else 0.0
 
-        # Fonte reduzida + 2 linhas de 7 (2026-08-12, pedido do usuário) —
-        # 14 KPIs numa linha só estouravam o rótulo ("Matches D1..." virava
+        # Fonte reduzida + 2 linhas (2026-08-12, pedido do usuário) — 14+
+        # KPIs numa linha só estouravam o rótulo ("Matches D1..." virava
         # "Matches...") mesmo com fonte menor; dividido em 2 linhas (Direto
-        # D1/D2 + Aprendizado A1-A5 | Direto D3-D6 + ND/NM/Taxa) dá mais
+        # D1/D2 + Aprendizado A1-A5 | Direto D3-D6 + AE + ND/NM/Taxa) dá mais
         # largura por coluna. CSS escopado só a este container via
         # st.container(key=...), mesmo padrão já usado nas tabelas de alta
         # densidade do resto do app.
@@ -1038,14 +1042,15 @@ def render_bc3() -> None:
             col6.metric("Matches A4", f"{totais['A4']:,}".replace(",", "."))
             col7.metric("Matches A5", f"{totais['A5']:,}".replace(",", "."))
 
-            col8, col9, col10, col11, col12, col13, col14 = st.columns(7)
+            col8, col9, col10, col11, col12, col13, col14, col15 = st.columns(8)
             col8.metric("Matches D3", f"{totais['D3']:,}".replace(",", "."))
             col9.metric("Matches D4", f"{totais['D4']:,}".replace(",", "."))
             col10.metric("Matches D5", f"{totais['D5']:,}".replace(",", "."))
             col11.metric("Matches D6", f"{totais['D6']:,}".replace(",", "."))
-            col12.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
-            col13.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
-            col14.metric("Taxa de Match", f"{taxa_match:.1f}%".replace(".", ","))
+            col12.metric("Matches AE", f"{totais['AE']:,}".replace(",", "."))
+            col13.metric("Não Declarado (nd)", f"{totais['ND']:,}".replace(",", "."))
+            col14.metric("Sem Match (nm)", f"{totais['NM']:,}".replace(",", "."))
+            col15.metric("Taxa de Match", f"{taxa_match:.1f}%".replace(".", ","))
         st.success("✅ Matching (BC3) pronto.")
 
         with st.expander("Visualizar resultado do Matching (BC3)"):
@@ -3762,6 +3767,10 @@ def _render_resultado_matching_inicial() -> None:
     item da BC2 contra a Declaração da auditada (BC1). A Taxa de Match é
     o percentual da BC2 que conseguiu esse código incluído/vinculado —
     o complemento (100% − taxa) é ND (não declarado) + NM (sem match).
+    AE (2026-08-20, autoemissão — ver REGRAS_MATCHING.md) também conta
+    como "incluído": não vem de matching contra a BC1, mas o código já
+    é o da própria auditada (ela é emitente da nota), então entra em
+    total_casados junto com D1-D6/A1-A5.
 
     Só renderiza se bc3_ja_gerada() — cobre tanto o fluxo automático
     (render_carga_operacao() já gerou a BC3 na mesma carga) quanto o caso
@@ -3778,7 +3787,7 @@ def _render_resultado_matching_inicial() -> None:
     total_casados = (
         totais["D1"] + totais["D2"] + totais["A1"] + totais["A2"]
         + totais["A3"] + totais["A4"] + totais["A5"] + totais["D3"]
-        + totais["D4"] + totais["D5"] + totais["D6"]
+        + totais["D4"] + totais["D5"] + totais["D6"] + totais["AE"]
     )
     taxa_match = (total_casados / total_bc2 * 100) if total_bc2 else 0.0
 
@@ -3791,7 +3800,7 @@ def _render_resultado_matching_inicial() -> None:
         "Terceiros) chega do fornecedor SEM o código de produto da auditada — o Matching (BC3) "
         "tenta incluir esse código casando cada item contra a Declaração da auditada (BC1). A "
         f"Taxa de Match é o percentual da BC2 ({total_bc2:,} item(ns)) que conseguiu esse código "
-        'incluído. Detalhamento por tipo de match (D1-D6/A1-A5/ND/NM) disponível em '
+        'incluído. Detalhamento por tipo de match (D1-D6/A1-A5/AE/ND/NM) disponível em '
         '"🧩 MATCHING (BC3)".'.replace(",", ".")
     )
 

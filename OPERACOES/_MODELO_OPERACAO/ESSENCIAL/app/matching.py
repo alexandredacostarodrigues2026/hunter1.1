@@ -1026,7 +1026,8 @@ def _match_d6_por_nota(df_bc2: pd.DataFrame, df_bc1: pd.DataFrame) -> dict:
 
 def executar_matching(callback=None) -> "tuple[pd.DataFrame, dict]":
     """Executa o cruzamento BC2 (XML, ET) x BC1 (SPED) em onze níveis (D1,
-    D2, A1-A5, D3, D4, D5, D6) e devolve a BC3: uma linha por item da BC2, com
+    D2, A1-A5, D3, D4, D5, D6), mais a autodeclaração AE (autoemissão, ver
+    abaixo), e devolve a BC3: uma linha por item da BC2, com
     DESCR_ITEM_DECLARACAO/COD_ITEM_DECLARACAO/DT_E_S/DT_FIN trazidos do BC1
     quando houver correspondência, 'nd' quando a CHV_NFE não estiver
     declarada, ou 'nm' quando a CHV_NFE existir mas o item não passar em
@@ -1036,17 +1037,31 @@ def executar_matching(callback=None) -> "tuple[pd.DataFrame, dict]":
     D1-D6 e herdados via dicionário de aprendizado para A1-A5 (mesmo padrão
     do FATOR_MULTIPLICADOR_SUGERIDO, ver REGRAS_MATCHING.md).
 
+    AE (2026-08-20, "nova fonte para bc3" — quando a empresa auditada é
+    EMITENTE da nota de Entrada, ex.: devolução de mercadorias CFOP 1411, a
+    CHV_NFE nunca aparece na BC1 (load_declaracao_entradas_terceiros() filtra
+    IND_EMIT='1', só terceiros) e o item ficaria 'nd' pra sempre, mesmo sendo
+    identificável. AE roda logo após D1/D2 e ANTES de A1-A5/D3-D6, sobre o
+    que ainda estiver 'ND'/'NM': copia COD_ITEM/fatoitemnfe_infnfe_det_prod_
+    xprod (já são o cProd/xProd do PRÓPRIO XML, ver _BC2_RENOMEAR_COLUNAS em
+    loader.py) pra COD_ITEM_DECLARACAO/DESCR_ITEM_DECLARACAO — mesmo
+    raciocínio já usado em Saídas (loader.gerar_estagio_8_saidas()). Rodar
+    antes da família A/D3-D6 é o que basta pra excluir essas linhas do pool
+    'ND'/'NM' que essas cascatas usam como pendente — nenhuma lógica delas
+    precisou mudar. DT_E_S/DT_FIN permanecem 'nd' (não existe linha de BC1
+    pra essas notas). Ver REGRAS_MATCHING.md, seção "AE — Autoemissão".
+
     `callback` (2026-08-14, Solicitação Técnica "barra de progresso real
     pro Matching", pedido do usuário depois de ver a barra genérica
     ficar só num spinner): opcional, `callback(nome_etapa, n)` chamado
-    UMA VEZ por nível concluído (D1, D2, A1, A2, A3, A4, A5, D3, D4, D5,
-    D6 — 11 chamadas, sempre nesta ordem), com `n` = quantidade de itens
+    UMA VEZ por nível concluído (D1, D2, AE, A1, A2, A3, A4, A5, D3, D4, D5,
+    D6 — 12 chamadas, sempre nesta ordem), com `n` = quantidade de itens
     da BC2 que ficaram com aquele MATCH_TIPO até este ponto (não
     cumulativo entre níveis — é a contagem exata daquele tipo, igual ao
     que `consultar_totais_bc3()` mostra depois). Pura instrumentação —
     NENHUMA lógica/ordem/limiar de matching foi alterada; só chamadas de
     callback intercaladas nos MESMOS pontos onde cada nível já terminava
-    antes desta mudança."""
+    antes desta mudança (AE, 2026-08-20, é a única etapa nova de verdade)."""
     def _reportar(nome_etapa: str) -> None:
         if callback:
             callback(nome_etapa, int((df_bc3["MATCH_TIPO"] == nome_etapa).sum()))
@@ -1126,6 +1141,30 @@ def executar_matching(callback=None) -> "tuple[pd.DataFrame, dict]":
     _reportar("D1")
     _aplicar(match_d2, "D2")
     _reportar("D2")
+
+    # ── AE: autoemissão (empresa auditada é emitente da nota de Entrada) ────
+    # Nota de Entrada emitida pela própria auditada (ex.: devolução de
+    # mercadorias, CFOP 1411) nunca aparece na BC1 (load_declaracao_
+    # entradas_terceiros() filtra IND_EMIT='1', só terceiros) — fica ND
+    # pra sempre, mesmo sendo item identificável. Mesmo raciocínio já usado
+    # em Saídas (gerar_estagio_8_saidas()): o XML da própria auditada já É
+    # a declaração. COD_ITEM (BC2) já é fatoitemnfe_infnfe_det_prod_cprod
+    # do XML (ver _BC2_RENOMEAR_COLUNAS) — pra autoemissão isso já é o
+    # código da PRÓPRIA auditada, só falta copiar pra COD_ITEM_DECLARACAO.
+    cnpj_auditada = (loader.obter_entidade_auditada() or {}).get("cnpj")
+    if cnpj_auditada:
+        emit_cnpj = df_bc3["fatonfe_infnfe_emit_cnpj"].apply(loader._normalizar_cnpj)
+        autoemissao = (emit_cnpj == cnpj_auditada) & df_bc3["MATCH_TIPO"].isin(("ND", "NM"))
+        if autoemissao.any():
+            df_bc3.loc[autoemissao, "MATCH_TIPO"] = "AE"
+            df_bc3.loc[autoemissao, "MATCH_SCORE"] = 1.0
+            df_bc3.loc[autoemissao, "COD_ITEM_DECLARACAO"] = df_bc3.loc[autoemissao, "COD_ITEM"]
+            df_bc3.loc[autoemissao, "DESCR_ITEM_DECLARACAO"] = df_bc3.loc[autoemissao, "fatoitemnfe_infnfe_det_prod_xprod"]
+            # DT_E_S/DT_FIN permanecem 'nd': não existe linha de SPED (BC1)
+            # pra essas notas — nenhuma data de escrituração real existe pra
+            # propagar, mesmo tratamento que ND já usa hoje (Regra R07: não
+            # fabricar dado que não existe).
+    _reportar("AE")
 
     # ── A1: aprendizado histórico sobre o que sobrou como ND/NM ─────────────
     _match_a1(df_bc3)

@@ -2309,18 +2309,20 @@ def consultar_total_bc2() -> int:
 
 def consultar_totais_bc3() -> dict:
     """Retorna a contagem de itens da BC3 por tipo de match (D1, D2,
-    A1, A2, A3, A4, A5, D3, D4, D5, D6, ND, NM) — numeração renomeada em
+    A1, A2, A3, A4, A5, D3, D4, D5, D6, AE, ND, NM) — numeração renomeada em
     2026-07-09, ver HIERARQUIA_TIPOS_TP_ALEXANDRE_vs_TP_IA.md; D3
     (consolidação N-para-1) adicionado em 2026-07-10; D6 (nota íntegra, só
-    valor) adicionado em 2026-07-10), lendo direto do DuckDB (sem
-    reprocessar) — alimenta os KPIs do painel de Matching. Rótulos de
-    versões anteriores da lógica de matching (SECUNDARIO_FUZZY,
-    SECUNDARIO_GTIN, PRINCIPAL_VALOR, TIPO_1..TIPO_5) podem ainda aparecer em
-    bases já geradas antes dessas mudanças e não regeradas — por isso não são
-    somados a nenhum tipo atual, só deixam de ter contador próprio."""
+    valor) adicionado em 2026-07-10; AE (autoemissão, empresa auditada
+    emitente da nota de Entrada) adicionado em 2026-08-20, ver
+    REGRAS_MATCHING.md), lendo direto do DuckDB (sem reprocessar) — alimenta
+    os KPIs do painel de Matching. Rótulos de versões anteriores da lógica de
+    matching (SECUNDARIO_FUZZY, SECUNDARIO_GTIN, PRINCIPAL_VALOR,
+    TIPO_1..TIPO_5) podem ainda aparecer em bases já geradas antes dessas
+    mudanças e não regeradas — por isso não são somados a nenhum tipo atual,
+    só deixam de ter contador próprio."""
     totais = {
         "D1": 0, "D2": 0, "A1": 0, "A2": 0, "A3": 0,
-        "A4": 0, "A5": 0, "D3": 0, "D4": 0, "D5": 0, "D6": 0, "ND": 0, "NM": 0,
+        "A4": 0, "A5": 0, "D3": 0, "D4": 0, "D5": 0, "D6": 0, "AE": 0, "ND": 0, "NM": 0,
     }
     if not _BANCO_PATH.exists():
         return totais

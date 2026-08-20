@@ -57,6 +57,10 @@ Funções correspondentes em `matching.py`: `_match_d1_por_nota`,
 `_match_a4`, `_match_a5`, `_match_d3_por_nota`, `_match_d4_por_nota`,
 `_match_d5_por_nota`, `_match_d6_por_nota`.
 
+> **AE (Autoemissão)** roda entre D2 e A1, fora desta tabela: não é um
+> nível de matching contra a BC1, é autodeclaração via XML próprio.
+> Ver seção "AE — Autoemissão" abaixo.
+
 ## Consolidação N-para-1 (D3)
 
 Motivado por um padrão real: o fornecedor pode declarar no SPED uma única
@@ -364,10 +368,70 @@ do Matching) de volta para o dataset bruto de ET, em vez de mostrar só as
   D1 nem no D2.
 
 Itens `nd`/`nm` recuperados por qualquer um dos A1, A2, A3, A4, A5,
-D3, D4, D5 ou D6 mudam de status para
-`A1`/`A2`/`A3`/`A4`/`A5`/`D3`/`D4`/`D5`/`D6`
+D3, D4, D5, D6 ou AE mudam de status para
+`A1`/`A2`/`A3`/`A4`/`A5`/`D3`/`D4`/`D5`/`D6`/`AE`
 respectivamente. Os que não encontram correspondência em nenhum deles mantêm
 `ND`/`NM`.
+
+## AE — Autoemissão (empresa auditada é emitente da nota)
+
+Implementado em 2026-08-20, a pedido do usuário: "vamos incluir nova fonte
+para bc3. observar o xml quando a empresa alvo for emitente da nota. nesse
+caso, a emissão própria corresponde à declaração." Motivado por um caso
+real: produto `CERV SKOL LATA 350ML` aparecendo com `cod_prod` `nd` em
+Entradas — rastreado até 2 notas de "Devolução de Mercadorias" (CFOP 1411)
+em que a empresa auditada é a PRÓPRIA EMITENTE da nota de Entrada, não um
+fornecedor terceiro.
+
+- **Por que ficava `ND` pra sempre**: `loader.
+  load_declaracao_entradas_terceiros()` (a BC1) filtra explicitamente
+  `IND_EMIT='1'` (só notas emitidas por terceiros) — a `CHV_NFE` de uma
+  nota de autoemissão nunca aparece na BC1, então nenhum dos níveis D1-D6/
+  A1-A5 (todos dependem, direta ou indiretamente via dicionário de
+  aprendizado construído só a partir de D1/D2, de uma correspondência
+  contra a BC1) consegue recuperar esses itens.
+- **Gatilho**: `fatonfe_infnfe_emit_cnpj` (já presente na BC2/BC3 por
+  construção, `_BC2_COLUNAS_FINAIS`) normalizado (`loader.
+  _normalizar_cnpj`) igual ao CNPJ da entidade auditada (`loader.
+  obter_entidade_auditada()`), restrito a linhas ainda `ND`/`NM`.
+- **Origem do dado — sem matching, sem join novo**: `loader.montar_bc2()`
+  já renomeia `fatoitemnfe_infnfe_det_prod_cprod` (código do produto NO
+  PRÓPRIO XML) para `COD_ITEM` (ver `_BC2_RENOMEAR_COLUNAS`) — pra uma
+  nota de terceiro, esse é o código do FORNECEDOR; pra uma nota de
+  autoemissão, o XML foi emitido pela própria auditada, então esse mesmo
+  `COD_ITEM` já É o código dela. AE copia `COD_ITEM` → `COD_ITEM_
+  DECLARACAO` e `fatoitemnfe_infnfe_det_prod_xprod` → `DESCR_ITEM_
+  DECLARACAO` — mesmo raciocínio já usado em Saídas (`loader.
+  gerar_estagio_8_saidas()`: "na saída a auditada é EMITENTE da nota,
+  então o cProd do XML dela já É o código dela mesma, sem precisar de
+  Matching/BC3").
+- **Ordem de execução**: roda logo após D1/D2 e antes de A1-A5/D3-D6.
+  Não compete com D1/D2 (estruturalmente nunca podem casar essas linhas,
+  ver acima) e precisa rodar antes da cascata A1-A5/D3-D6 pra que essas
+  linhas saiam do pool `MATCH_TIPO.isin(("ND","NM"))` que essas cascatas
+  tratam como pendente — nenhuma lógica de D3-D6/A1-A5 foi alterada.
+- **`DT_E_S`/`DT_FIN`**: permanecem `'nd'` (não recebem nenhum valor
+  novo). Não existe linha de SPED (BC1) pra essas notas — não há data de
+  escrituração real pra propagar (Regra R07: não fabricar dado que não
+  existe).
+- **`FATOR_MULTIPLICADOR_SUGERIDO`**: permanece `NaN` (default do bloco
+  ND/NM inicial) — não há `VL_ITEM` da BC1 pra comparar.
+- **`MATCH_SCORE`**: fixado em `1.0` (autodeclaração, não é uma
+  similaridade calculada).
+- **KPIs**: `AE` conta em `total_casados` (Taxa de Match / Taxa de
+  inclusão de código de produto) junto com D1-D6/A1-A5 — o código foi
+  incluído com sucesso, só que por autodeclaração em vez de matching
+  contra a BC1. `interface.py`: KPI "Matches AE" no painel "🧩 MATCHING
+  (BC3)"; `_barra_progresso` da Carga passou de `n_passos=11` para
+  `n_passos=12` (12ª chamada de callback).
+- **Fora de escopo**: não altera Saídas, Estoque, nem os critérios da
+  Equalização Automática da Rubrica (`executar_confirmacao_automatica_
+  rubrica()`) — a BC3 só ganha um `MATCH_TIPO` novo; o que a Rubrica faz
+  com ele não muda nesta mudança.
+
+Função: bloco vetorizado dentro de `matching.executar_matching()` (não é
+uma função `_match_*` própria — não precisa, é cópia direta de colunas já
+presentes na BC2, sem comparação/candidatos).
 
 ## Consistência de unicidade
 
@@ -580,3 +644,18 @@ entre D3 e os outros tipos (D1-D5, D6, todos 1-para-1).
   Não muda nenhum critério, limiar ou contagem de match. Sincronizado nas 4
   operações; `bc3` re-persistida em produção (geraldo, PB2, cometa) —
   contagens de match idênticas às de antes desta mudança.
+- 2026-08-20: implementado AE (Autoemissão — ver seção própria acima),
+  nova fonte da BC3 pra quando a empresa auditada é EMITENTE da nota de
+  Entrada (ex.: devolução de mercadorias, CFOP 1411). Motivado por caso
+  real: produto `CERV SKOL LATA 350ML` com `cod_prod` `nd` em Entradas,
+  rastreado até 2 notas de autoemissão que, por estrutura (BC1 filtra
+  `IND_EMIT='1'`, só terceiros), nunca poderiam ser recuperadas por
+  D1-D6/A1-A5. AE copia `COD_ITEM`/descrição já presentes na BC2 (vindos
+  do próprio XML, sem matching/join novo) pra `COD_ITEM_DECLARACAO`/
+  `DESCR_ITEM_DECLARACAO`, rodando entre D2 e A1 — mesmo raciocínio já
+  usado em Saídas (`gerar_estagio_8_saidas()`). `DT_E_S`/`DT_FIN`
+  permanecem `'nd'` (sem linha de BC1 pra propagar). `consultar_totais_
+  bc3()` ganhou a chave `"AE"`; as 2 somas de `total_casados` em
+  `interface.py` passaram a incluir `totais["AE"]`; `_barra_progresso`
+  da Carga passou de `n_passos=11` para `n_passos=12` (callback ganhou
+  uma 12ª chamada). Sincronizado nas 4 operações.
