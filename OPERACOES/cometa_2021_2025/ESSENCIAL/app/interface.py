@@ -5306,10 +5306,24 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     auditor confirma mais combinações, de qualquer critério), não
     recalculada ao vivo.
 
-    Selectbox "Critério de busca" (2026-07-23: "escolha do critério
-    dever ser antes do cruzamento") vem ANTES de rodar a comparação, já
-    que a escolha do critério é o que DEFINE qual comparação roda — ver
-    _obter_criterios_cruzamento_entradas() pro despacho.
+    Critérios EXPLODIDOS em `st.expander()` (2026-08-21, pedido do
+    usuário: "quero que os critérios fiquem explodidos em cada aba com
+    botão de seleção para checar o que foi feito") — substituiu o
+    `st.selectbox()` que só mostrava UM critério por vez. Agora os N
+    critérios de `_obter_criterios_cruzamento_entradas()` aparecem TODOS,
+    cada um no seu próprio `st.expander(expanded=False)` (o clique pra
+    abrir É o "botão de seleção"), com um badge "✅ N já salvo(s)" no
+    título do expander quando aquele critério já tem correspondências
+    confirmadas na Rubrica — permite "checar o que foi feito" por
+    critério sem precisar abrir um por um. `_render_um_criterio()`
+    (função aninhada) contém o corpo antigo do selectbox praticamente
+    inalterado — os `return` dentro dela só encerram a renderização
+    DAQUELE critério (função aninhada própria), não a aba inteira.
+    `termo_busca_xml` (`_input_busca_xml_compartilhado`) passou a ser
+    lido UMA VEZ, fora do loop — chamar de novo dentro de cada iteração
+    duplicaria a `key` do widget (`StreamlitDuplicateElementKey`, ver
+    docstring de `_input_busca_xml_compartilhado`) já que os N critérios
+    agora rodam todos no MESMO script run.
 
     Descrição EFETIVA (2026-08-04): os avisos desta tela (`st.warning`
     de "nenhuma combinação encontrada") usam `descr_efetiva` —
@@ -5326,51 +5340,7 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
     efetiva`) foram retiradas em 2026-08-18 (pedido do usuário —
     "retirar o texto")."""
     criterios = _obter_criterios_cruzamento_entradas()
-    criterio_busca = st.selectbox(
-        "Critério de busca",
-        options=list(criterios.keys()),
-        key="select_criterio_busca_entradas",
-    )
-    fn_agrupado, fn_detalhado = criterios[criterio_busca]
-    sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
     descr_efetiva = loader.descricao_efetiva_escolhido(escolhido)
-
-    correspondentes, _ = fn_agrupado()
-    if correspondentes.empty:
-        if criterio_busca == loader.CRITERIO_BUSCA1_EAN:
-            st.warning(
-                f"⚠️ Nenhum candidato com o mesmo EAN de **{escolhido['COD_ITEM']}** encontrado "
-                "em `estagio8_agrupado` — o produto (ou o candidato) provavelmente não tem EAN "
-                "cadastrado no Registro 0200 (Cadastro de Itens) do SPED."
-            )
-        elif criterio_busca == loader.CRITERIO_BUSCA2_MESMO_CODIGO:
-            st.warning(
-                f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
-                "em `estagio8_agrupado`, mesmo após normalizar zero à esquerda — o produto "
-                "provavelmente não aparece nas entradas com esse código."
-            )
-        elif criterio_busca == loader.CRITERIO_BUSCA3_NOME_DECLARACAO_IGUAL:
-            st.warning(
-                f"⚠️ Nenhum item declarado com o mesmo nome de **{descr_efetiva}** encontrado "
-                "em `estagio8_agrupado`."
-            )
-        elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-            st.warning(
-                "⚠️ `estagio8_agrupado` está vazio, ou todos os grupos já pertencem a outro alvo — "
-                "nada disponível pra pesquisa livre."
-            )
-        else:
-            st.warning(
-                f"⚠️ Nenhum candidato de código divergente com similaridade ≥ "
-                f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% encontrado pra **{descr_efetiva}** "
-                "em `estagio8_agrupado`."
-            )
-        return
-    if criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-        st.info(
-            f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
-            "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
-        )
 
     # Checkbox "Salvar" (2026-07-23, pedido do usuário: "CRIE CAIXA PARA
     # GRAVAR O PRODUTO QUE FARÁ PARTE DA RUBRICA DO PRODUTO ALVO. GERE 1
@@ -5401,196 +5371,246 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         zip(ja_confirmadas_entradas["codproddecl"], ja_confirmadas_entradas["desc_xml"])
     ) if not ja_confirmadas_entradas.empty else set()
 
-    editor_base = correspondentes[_COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO].copy()
-    editor_base.insert(0, "Salvar", False)
-    # "Desfazer" (2026-07-24, pedido do usuário: "aqui abrir a
-    # oportunidade de desfazer") — checkbox dedicado pra REMOVER uma
-    # combinação já confirmada, separado de "Salvar" (que só adiciona).
-    # Antes, remover dependia de deixar "Salvar" desmarcado numa
-    # combinação já salva e clicar salvar — funcionava (sincronização já
-    # implementada), mas não era uma ação EXPLÍCITA/visível na tela; só
-    # fazia sentido descobrir isso lendo o código. Com "Desfazer"
-    # dedicado, o universo de sincronização passa a ser só as
-    # combinações efetivamente marcadas (Salvar OU Desfazer) em vez de
-    # TODAS as linhas da busca — uma combinação já salva que não for
-    # tocada (nem Salvar nem Desfazer marcados) fica intocada, sem risco
-    # de remoção acidental só por estar desmarcada.
-    editor_base.insert(1, "Desfazer", False)
-    editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
-    # "Descricao Declaracao" sai só da EXIBIÇÃO (2026-07-23: "retire
-    # descrição da declaração") — editor_base mantém a coluna crua
-    # (descrição_decl), exigida por loader.salvar_cruzamento_confirmado().
-    editor_exibicao = editor_exibicao.drop(columns=["Descricao Declaracao"], errors="ignore")
-    editor_exibicao.insert(2, "Observação", [
-        "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
-        for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
-    ])
-
-    # Busca por descrição do XML (pedido do usuário: campo no topo da
-    # tabela pra facilitar a comparação visual com o alvo) — filtro
-    # client-side (substring, case-insensitive) sobre `desc_xml`, não
-    # refaz a busca de candidatos nem muda a contagem de "combinação(ões)
-    # encontrada(s)" acima (essa reflete o total do critério, não o
-    # filtrado). Aplicado em editor_base E editor_exibicao com a MESMA
-    # máscara pra manter os índices alinhados — o botão "Salvar na
-    # Rubrica" usa editor_base.index como referência pro que veio do
-    # st.data_editor.
     termo_busca_xml = _input_busca_xml_compartilhado("entradas")
-    if termo_busca_xml:
-        mask_busca = editor_base["desc_xml"].str.contains(termo_busca_xml, case=False, na=False, regex=False)
-        editor_base = editor_base[mask_busca]
-        editor_exibicao = editor_exibicao.loc[editor_base.index]
-        st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
-    elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-        # Pesquisa livre (Solicitação Técnica 2026-07-29) não tem filtro
-        # de código nem piso de similaridade — sem um termo de busca, a
-        # tabela renderizaria a base inteira de uma vez (5.091 grupos em
-        # Entradas na geraldo), pesado pro st.data_editor. EXIGE busca
-        # antes de mostrar qualquer linha (reaproveita o MESMO campo de
-        # busca acima, em vez de um segundo widget).
-        st.info(
-            "🔎 Digite um termo de busca acima pra ver candidatos — a pesquisa livre não tem "
-            "filtro de código nem de similaridade, então a tabela só aparece depois de buscar."
-        )
-        return
 
-    colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
-    with st.container(key="cruzamento_entradas_tabela"):
-        # Fonte reduzida de 10px pra 8px (2026-08-18, pedido do usuário —
-        # "diminua a fonte, quero ver todas as colunas") — mesmo menor
-        # tamanho já usado nas tabelas de alta densidade do 7.3.3 (NCM2).
-        # As 7 colunas exibidas (Salvar/Desfazer/Observação/Cod. Produto
-        # Declaração/Descrição XML/Qtde. Ocorrências/Similaridade
-        # Descrição) já eram TODAS as colunas disponíveis — nenhuma
-        # estava sendo omitida, o corte era só de largura de tela.
-        _aplicar_fonte_dataframe("cruzamento_entradas_tabela", 8)
-        # Larguras estreitas + quebra de texto (2026-08-18, pedido do
-        # usuário — "continua [grande]. pode diminuir as colunas e
-        # permitir quebra de texto"): a fonte menor sozinha não bastou
-        # pra caber as 7 colunas sem cortar/rolar. `st.column_config.
-        # Column(width="small")` força cada coluna curta (checkbox/
-        # código/número) a ocupar só o espaço que precisa; "Descrição
-        # XML" (a mais longa) fica "large" — `row_height` acima do
-        # padrão de 1 linha (~35px) habilita quebra automática de texto
-        # nela (mesmo mecanismo já usado na Simulação NCM2, 2026-08-16).
-        editado = st.data_editor(
-            editor_exibicao,
-            use_container_width=False,
-            hide_index=True,
-            disabled=colunas_travadas,
-            key=f"editor_cruzamento_entradas_{sufixo_criterio}",
-            # row_height 70 (2026-08-18, pedido do usuário — "aumente a
-            # coluna da descrição e permita quebra de página do texto"):
-            # 50 só dava espaço pra uma linha e meia, textos mais longos
-            # continuavam cortando com "..." em vez de quebrar — mesmo
-            # row_height (70) já usado com sucesso na Simulação NCM2
-            # (2026-08-16) pra habilitar quebra de texto de verdade.
-            row_height=70,
-            column_config={
-                # Largura em PIXELS + rótulo ABREVIADO (2026-08-18,
-                # confirmado por screenshot real via CDP — ver
-                # feedback_verificacao_streamlit_ui.md): largura sozinha
-                # (mesmo em px, não só "small"/"medium"/"large") não
-                # bastou — o Streamlit redistribui o espaço sobrando
-                # entre as colunas quando a soma configurada é menor que
-                # a largura da tabela ("If the total width of all
-                # columns is less than the width of the dataframe, the
-                # remaining space will be distributed evenly among all
-                # columns" — docstring de `column_config.Column()`),
-                # then o cabeçalho LONGO continuava sem caber mesmo com
-                # a coluna maior. `label=` encurta o texto do cabeçalho
-                # (não muda o nome real da coluna, usado em `disabled=`
-                # acima) — cabe mesmo que a coluna acabe redistribuída
-                # pra uma largura diferente da configurada aqui.
-                "Salvar": st.column_config.Column(width=70),
-                "Desfazer": st.column_config.Column(label="Desfaz.", width=75),
-                "Observação": st.column_config.Column(label="Obs.", width=180),
-                "Cod. Produto Declaracao": st.column_config.Column(label="Cód. Prod.", width=150),
-                # TextColumn (não Column genérica) + largura maior
-                # (2026-08-18, pedido do usuário): mesmo tipo de coluna
-                # já usado na Simulação NCM2 pra habilitar quebra de
-                # texto de verdade (junto com o row_height acima).
-                "Descricao XML": st.column_config.TextColumn(width=450),
-                "Qtde. Ocorrencias": st.column_config.Column(label="Qtde.", width=70),
-                # Rótulo "SimDescr%" (2026-08-18, pedido do usuário —
-                # renomear "Sim. (%)").
-                "Similaridade Descricao (%)": st.column_config.Column(label="SimDescr%", width=90),
-            },
-        )
-
-    st.caption(
-        "Marque \"Salvar\" pra confirmar uma combinação na Rubrica; marque \"Desfazer\" pra "
-        "remover uma combinação já salva (coluna \"Observação\")."
-    )
-    if st.button("💾 Salvar na Rubrica do Produto Alvo", key=f"btn_salvar_rubrica_entradas_{sufixo_criterio}"):
-        marcadas_salvar = editado["Salvar"].reindex(editor_base.index).fillna(False)
-        marcadas_desfazer = editado["Desfazer"].reindex(editor_base.index).fillna(False)
-        # "Desfazer" tem precedência sobre "Salvar" se os dois vierem
-        # marcados na mesma linha (caso contraditório raro) — a
-        # combinação é tratada como remoção.
-        selecionadas = editor_base.loc[
-            marcadas_salvar & ~marcadas_desfazer, _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO
-        ]
-        # Universo restrito às combinações efetivamente TOCADAS (Salvar
-        # OU Desfazer) — 2026-07-24, pedido do usuário: "aqui abrir a
-        # oportunidade de desfazer". Antes o universo era TODAS as
-        # linhas da busca (2026-07-23, achado real: desmarcar o
-        # checkbox nunca removia nada, só deixava de adicionar — a
-        # correção de então usava o universo inteiro da busca pra
-        # sincronizar). Restringir o universo só ao que foi marcado
-        # evita que uma combinação já salva, mas simplesmente não
-        # tocada nesta rodada (nem Salvar nem Desfazer), seja removida
-        # por engano — e explicita a ação de remoção como algo
-        # deliberado ("Desfazer"), não um efeito colateral de deixar
-        # "Salvar" desmarcado.
-        chaves_desfazer = set(zip(
-            editor_base.loc[marcadas_desfazer, "codproddecl"],
-            editor_base.loc[marcadas_desfazer, "desc_xml"],
-        ))
-        chaves_salvar = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
-        universo_chaves = chaves_salvar | chaves_desfazer
-        resultado = loader.salvar_cruzamento_confirmado(
-            escolhido, "entradas", criterio_busca, selecionadas, universo_chaves=universo_chaves,
-        )
-        # Grava também o detalhe item-a-item (idunico) — 2026-07-23,
-        # pedido do usuário: "é importante que os produtos com ids
-        # fiquem gravado no produto alvo e que depois de gravado a
-        # situação possa ser revista pelo auditor". Mesmo raciocínio de
-        # universo restrito às combinações tocadas.
-        # fn_detalhado (não sempre cruzar_produto_escolhido_entradas_
-        # detalhado()) — bug em potencial corrigido ao adicionar o
-        # Critério 2: usar sempre a função do Critério 1 aqui teria
-        # calculado o universo de idunicos errado pra buscas do Critério 2.
-        detalhado_completo, _ = fn_detalhado()
-        mask_universo = [
-            (c, d) in universo_chaves
-            for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
-        ]
-        universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
-        universo_idunicos = _ampliar_universo_idunicos_com_persistido(
-            escolhido, "entradas", universo_chaves, universo_idunicos,
-        )
-        mask_salvar = [
-            (c, d) in chaves_salvar
-            for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
-        ]
-        itens_marcados = detalhado_completo.loc[mask_salvar, ["codproddecl", "desc_xml", "idunico"]]
-        resultado_detalhado = loader.salvar_cruzamento_confirmado_detalhado(
-            escolhido, "entradas", criterio_busca, itens_marcados, universo_idunicos=universo_idunicos,
-        )
-        if "erro" in resultado:
-            st.error(f"Erro: {resultado['erro']}")
-        elif "erro" in resultado_detalhado:
-            st.error(f"Erro ao gravar itens individuais: {resultado_detalhado['erro']}")
-        else:
-            partes = [f"{resultado['total_salvo']} confirmada(s)"]
-            if resultado["total_removido"]:
-                partes.append(f"{resultado['total_removido']} removida(s)")
-            st.success(
-                f"✅ Rubrica atualizada — {', '.join(partes)} "
-                f"({resultado_detalhado['total_salvo']} item(ns) individual(is) gravado(s))."
+    def _render_um_criterio(criterio_busca, fn_detalhado, correspondentes, sufixo_criterio) -> None:
+        if correspondentes.empty:
+            if criterio_busca == loader.CRITERIO_BUSCA1_EAN:
+                st.warning(
+                    f"⚠️ Nenhum candidato com o mesmo EAN de **{escolhido['COD_ITEM']}** encontrado "
+                    "em `estagio8_agrupado` — o produto (ou o candidato) provavelmente não tem EAN "
+                    "cadastrado no Registro 0200 (Cadastro de Itens) do SPED."
+                )
+            elif criterio_busca == loader.CRITERIO_BUSCA2_MESMO_CODIGO:
+                st.warning(
+                    f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
+                    "em `estagio8_agrupado`, mesmo após normalizar zero à esquerda — o produto "
+                    "provavelmente não aparece nas entradas com esse código."
+                )
+            elif criterio_busca == loader.CRITERIO_BUSCA3_NOME_DECLARACAO_IGUAL:
+                st.warning(
+                    f"⚠️ Nenhum item declarado com o mesmo nome de **{descr_efetiva}** encontrado "
+                    "em `estagio8_agrupado`."
+                )
+            elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
+                st.warning(
+                    "⚠️ `estagio8_agrupado` está vazio, ou todos os grupos já pertencem a outro alvo — "
+                    "nada disponível pra pesquisa livre."
+                )
+            else:
+                st.warning(
+                    f"⚠️ Nenhum candidato de código divergente com similaridade ≥ "
+                    f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% encontrado pra **{descr_efetiva}** "
+                    "em `estagio8_agrupado`."
+                )
+            return
+        if criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
+            st.info(
+                f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
+                "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
             )
-            st.rerun()
+
+        editor_base = correspondentes[_COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO].copy()
+        editor_base.insert(0, "Salvar", False)
+        # "Desfazer" (2026-07-24, pedido do usuário: "aqui abrir a
+        # oportunidade de desfazer") — checkbox dedicado pra REMOVER uma
+        # combinação já confirmada, separado de "Salvar" (que só adiciona).
+        # Antes, remover dependia de deixar "Salvar" desmarcado numa
+        # combinação já salva e clicar salvar — funcionava (sincronização já
+        # implementada), mas não era uma ação EXPLÍCITA/visível na tela; só
+        # fazia sentido descobrir isso lendo o código. Com "Desfazer"
+        # dedicado, o universo de sincronização passa a ser só as
+        # combinações efetivamente marcadas (Salvar OU Desfazer) em vez de
+        # TODAS as linhas da busca — uma combinação já salva que não for
+        # tocada (nem Salvar nem Desfazer marcados) fica intocada, sem risco
+        # de remoção acidental só por estar desmarcada.
+        editor_base.insert(1, "Desfazer", False)
+        editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
+        # "Descricao Declaracao" sai só da EXIBIÇÃO (2026-07-23: "retire
+        # descrição da declaração") — editor_base mantém a coluna crua
+        # (descrição_decl), exigida por loader.salvar_cruzamento_confirmado().
+        editor_exibicao = editor_exibicao.drop(columns=["Descricao Declaracao"], errors="ignore")
+        editor_exibicao.insert(2, "Observação", [
+            "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
+            for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
+        ])
+
+        # Busca por descrição do XML (pedido do usuário: campo no topo da
+        # tabela pra facilitar a comparação visual com o alvo) — filtro
+        # client-side (substring, case-insensitive) sobre `desc_xml`, não
+        # refaz a busca de candidatos nem muda a contagem de "combinação(ões)
+        # encontrada(s)" acima (essa reflete o total do critério, não o
+        # filtrado). Aplicado em editor_base E editor_exibicao com a MESMA
+        # máscara pra manter os índices alinhados — o botão "Salvar na
+        # Rubrica" usa editor_base.index como referência pro que veio do
+        # st.data_editor. `termo_busca_xml` vem de fora (ver docstring da
+        # função externa) — compartilhado entre todos os critérios exibidos.
+        if termo_busca_xml:
+            mask_busca = editor_base["desc_xml"].str.contains(termo_busca_xml, case=False, na=False, regex=False)
+            editor_base = editor_base[mask_busca]
+            editor_exibicao = editor_exibicao.loc[editor_base.index]
+            st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
+        elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
+            # Pesquisa livre (Solicitação Técnica 2026-07-29) não tem filtro
+            # de código nem piso de similaridade — sem um termo de busca, a
+            # tabela renderizaria a base inteira de uma vez (5.091 grupos em
+            # Entradas na geraldo), pesado pro st.data_editor. EXIGE busca
+            # antes de mostrar qualquer linha (reaproveita o MESMO campo de
+            # busca acima, em vez de um segundo widget).
+            st.info(
+                "🔎 Digite um termo de busca acima pra ver candidatos — a pesquisa livre não tem "
+                "filtro de código nem de similaridade, então a tabela só aparece depois de buscar."
+            )
+            return
+
+        colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
+        with st.container(key=f"cruzamento_entradas_tabela_{sufixo_criterio}"):
+            # Fonte reduzida de 10px pra 8px (2026-08-18, pedido do usuário —
+            # "diminua a fonte, quero ver todas as colunas") — mesmo menor
+            # tamanho já usado nas tabelas de alta densidade do 7.3.3 (NCM2).
+            # As 7 colunas exibidas (Salvar/Desfazer/Observação/Cod. Produto
+            # Declaração/Descrição XML/Qtde. Ocorrências/Similaridade
+            # Descrição) já eram TODAS as colunas disponíveis — nenhuma
+            # estava sendo omitida, o corte era só de largura de tela.
+            _aplicar_fonte_dataframe(f"cruzamento_entradas_tabela_{sufixo_criterio}", 8)
+            # Larguras estreitas + quebra de texto (2026-08-18, pedido do
+            # usuário — "continua [grande]. pode diminuir as colunas e
+            # permitir quebra de texto"): a fonte menor sozinha não bastou
+            # pra caber as 7 colunas sem cortar/rolar. `st.column_config.
+            # Column(width="small")` força cada coluna curta (checkbox/
+            # código/número) a ocupar só o espaço que precisa; "Descrição
+            # XML" (a mais longa) fica "large" — `row_height` acima do
+            # padrão de 1 linha (~35px) habilita quebra automática de texto
+            # nela (mesmo mecanismo já usado na Simulação NCM2, 2026-08-16).
+            editado = st.data_editor(
+                editor_exibicao,
+                use_container_width=False,
+                hide_index=True,
+                disabled=colunas_travadas,
+                key=f"editor_cruzamento_entradas_{sufixo_criterio}",
+                # row_height 70 (2026-08-18, pedido do usuário — "aumente a
+                # coluna da descrição e permita quebra de página do texto"):
+                # 50 só dava espaço pra uma linha e meia, textos mais longos
+                # continuavam cortando com "..." em vez de quebrar — mesmo
+                # row_height (70) já usado com sucesso na Simulação NCM2
+                # (2026-08-16) pra habilitar quebra de texto de verdade.
+                row_height=70,
+                column_config={
+                    # Largura em PIXELS + rótulo ABREVIADO (2026-08-18,
+                    # confirmado por screenshot real via CDP — ver
+                    # feedback_verificacao_streamlit_ui.md): largura sozinha
+                    # (mesmo em px, não só "small"/"medium"/"large") não
+                    # bastou — o Streamlit redistribui o espaço sobrando
+                    # entre as colunas quando a soma configurada é menor que
+                    # a largura da tabela ("If the total width of all
+                    # columns is less than the width of the dataframe, the
+                    # remaining space will be distributed evenly among all
+                    # columns" — docstring de `column_config.Column()`),
+                    # then o cabeçalho LONGO continuava sem caber mesmo com
+                    # a coluna maior. `label=` encurta o texto do cabeçalho
+                    # (não muda o nome real da coluna, usado em `disabled=`
+                    # acima) — cabe mesmo que a coluna acabe redistribuída
+                    # pra uma largura diferente da configurada aqui.
+                    "Salvar": st.column_config.Column(width=70),
+                    "Desfazer": st.column_config.Column(label="Desfaz.", width=75),
+                    "Observação": st.column_config.Column(label="Obs.", width=180),
+                    "Cod. Produto Declaracao": st.column_config.Column(label="Cód. Prod.", width=150),
+                    # TextColumn (não Column genérica) + largura maior
+                    # (2026-08-18, pedido do usuário): mesmo tipo de coluna
+                    # já usado na Simulação NCM2 pra habilitar quebra de
+                    # texto de verdade (junto com o row_height acima).
+                    "Descricao XML": st.column_config.TextColumn(width=450),
+                    "Qtde. Ocorrencias": st.column_config.Column(label="Qtde.", width=70),
+                    # Rótulo "SimDescr%" (2026-08-18, pedido do usuário —
+                    # renomear "Sim. (%)").
+                    "Similaridade Descricao (%)": st.column_config.Column(label="SimDescr%", width=90),
+                },
+            )
+
+        st.caption(
+            "Marque \"Salvar\" pra confirmar uma combinação na Rubrica; marque \"Desfazer\" pra "
+            "remover uma combinação já salva (coluna \"Observação\")."
+        )
+        if st.button("💾 Salvar na Rubrica do Produto Alvo", key=f"btn_salvar_rubrica_entradas_{sufixo_criterio}"):
+            marcadas_salvar = editado["Salvar"].reindex(editor_base.index).fillna(False)
+            marcadas_desfazer = editado["Desfazer"].reindex(editor_base.index).fillna(False)
+            # "Desfazer" tem precedência sobre "Salvar" se os dois vierem
+            # marcados na mesma linha (caso contraditório raro) — a
+            # combinação é tratada como remoção.
+            selecionadas = editor_base.loc[
+                marcadas_salvar & ~marcadas_desfazer, _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO
+            ]
+            # Universo restrito às combinações efetivamente TOCADAS (Salvar
+            # OU Desfazer) — 2026-07-24, pedido do usuário: "aqui abrir a
+            # oportunidade de desfazer". Antes o universo era TODAS as
+            # linhas da busca (2026-07-23, achado real: desmarcar o
+            # checkbox nunca removia nada, só deixava de adicionar — a
+            # correção de então usava o universo inteiro da busca pra
+            # sincronizar). Restringir o universo só ao que foi marcado
+            # evita que uma combinação já salva, mas simplesmente não
+            # tocada nesta rodada (nem Salvar nem Desfazer), seja removida
+            # por engano — e explicita a ação de remoção como algo
+            # deliberado ("Desfazer"), não um efeito colateral de deixar
+            # "Salvar" desmarcado.
+            chaves_desfazer = set(zip(
+                editor_base.loc[marcadas_desfazer, "codproddecl"],
+                editor_base.loc[marcadas_desfazer, "desc_xml"],
+            ))
+            chaves_salvar = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
+            universo_chaves = chaves_salvar | chaves_desfazer
+            resultado = loader.salvar_cruzamento_confirmado(
+                escolhido, "entradas", criterio_busca, selecionadas, universo_chaves=universo_chaves,
+            )
+            # Grava também o detalhe item-a-item (idunico) — 2026-07-23,
+            # pedido do usuário: "é importante que os produtos com ids
+            # fiquem gravado no produto alvo e que depois de gravado a
+            # situação possa ser revista pelo auditor". Mesmo raciocínio de
+            # universo restrito às combinações tocadas.
+            # fn_detalhado (não sempre cruzar_produto_escolhido_entradas_
+            # detalhado()) — bug em potencial corrigido ao adicionar o
+            # Critério 2: usar sempre a função do Critério 1 aqui teria
+            # calculado o universo de idunicos errado pra buscas do Critério 2.
+            detalhado_completo, _ = fn_detalhado()
+            mask_universo = [
+                (c, d) in universo_chaves
+                for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
+            ]
+            universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
+            universo_idunicos = _ampliar_universo_idunicos_com_persistido(
+                escolhido, "entradas", universo_chaves, universo_idunicos,
+            )
+            mask_salvar = [
+                (c, d) in chaves_salvar
+                for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
+            ]
+            itens_marcados = detalhado_completo.loc[mask_salvar, ["codproddecl", "desc_xml", "idunico"]]
+            resultado_detalhado = loader.salvar_cruzamento_confirmado_detalhado(
+                escolhido, "entradas", criterio_busca, itens_marcados, universo_idunicos=universo_idunicos,
+            )
+            if "erro" in resultado:
+                st.error(f"Erro: {resultado['erro']}")
+            elif "erro" in resultado_detalhado:
+                st.error(f"Erro ao gravar itens individuais: {resultado_detalhado['erro']}")
+            else:
+                partes = [f"{resultado['total_salvo']} confirmada(s)"]
+                if resultado["total_removido"]:
+                    partes.append(f"{resultado['total_removido']} removida(s)")
+                st.success(
+                    f"✅ Rubrica atualizada — {', '.join(partes)} "
+                    f"({resultado_detalhado['total_salvo']} item(ns) individual(is) gravado(s))."
+                )
+                st.rerun()
+
+    for criterio_busca, (fn_agrupado, fn_detalhado) in criterios.items():
+        sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
+        correspondentes, _ = fn_agrupado()
+        n_salvos = 0
+        if not correspondentes.empty and chaves_confirmadas:
+            pares = set(zip(correspondentes["codproddecl"], correspondentes["desc_xml"]))
+            n_salvos = len(pares & chaves_confirmadas)
+        badge = f" — ✅ {n_salvos} já salvo(s)" if n_salvos else ""
+        with st.expander(f"{criterio_busca}{badge}", expanded=False):
+            _render_um_criterio(criterio_busca, fn_detalhado, correspondentes, sufixo_criterio)
 
     # Tabela inferior (2026-07-23, pedido do usuário: "CRIE UMA TABELA
     # INFERIOR COM OS PRODUTOS E RESPECTIVOS IDS ÚNICOS") — GRAVADA em
@@ -5721,48 +5741,13 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
     `descr_efetiva` usado nos textos aqui. Legendas explicativas por
     critério de busca (2026-08-20, pedido do usuário: "retirar isso em
     todos as tabelas") — removidas aqui pelo mesmo motivo que já tinham
-    sido retiradas de Entradas em 2026-08-18."""
-    criterios = _obter_criterios_cruzamento_saidas()
-    criterio_busca = st.selectbox(
-        "Critério de busca",
-        options=list(criterios.keys()),
-        key="select_criterio_busca_saidas",
-    )
-    fn_agrupado, fn_detalhado = criterios[criterio_busca]
-    sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
-    descr_efetiva = loader.descricao_efetiva_escolhido(escolhido)
+    sido retiradas de Entradas em 2026-08-18.
 
-    correspondentes, _ = fn_agrupado()
-    if correspondentes.empty:
-        if criterio_busca == loader.CRITERIO_BUSCA1_EAN:
-            st.warning(
-                f"⚠️ Nenhum candidato com o mesmo EAN de **{escolhido['COD_ITEM']}** encontrado "
-                "em `estagio8_saidas_agrupado` — o produto (ou o candidato) provavelmente não tem "
-                "EAN cadastrado no Registro 0200 (Cadastro de Itens) do SPED."
-            )
-        elif criterio_busca == loader.CRITERIO_BUSCA2_MESMO_CODIGO:
-            st.warning(
-                f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
-                "em `estagio8_saidas_agrupado`, mesmo após normalizar zero à esquerda — o produto "
-                "provavelmente não aparece nas saídas com esse código."
-            )
-        elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-            st.warning(
-                "⚠️ `estagio8_saidas_agrupado` está vazio, ou todos os grupos já pertencem a "
-                "outro alvo — nada disponível pra pesquisa livre."
-            )
-        else:
-            st.warning(
-                f"⚠️ Nenhum candidato de código divergente com similaridade ≥ "
-                f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% encontrado pra **{descr_efetiva}** "
-                "em `estagio8_saidas_agrupado`."
-            )
-        return
-    if criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-        st.info(
-            f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
-            "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
-        )
+    Critérios EXPLODIDOS em `st.expander()` (2026-08-21) — ver docstring
+    de `_render_cruzamento_entradas()` pro raciocínio completo (mesma
+    mudança, mesmo padrão, aplicada aqui)."""
+    criterios = _obter_criterios_cruzamento_saidas()
+    descr_efetiva = loader.descricao_efetiva_escolhido(escolhido)
 
     ja_confirmadas, _ = loader.consultar_cruzamento_confirmado(descr_alvo=escolhido["DESCR_ALVO"], limite=None)
     ja_confirmadas_saidas = (
@@ -5773,92 +5758,136 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
         zip(ja_confirmadas_saidas["codproddecl"], ja_confirmadas_saidas["desc_xml"])
     ) if not ja_confirmadas_saidas.empty else set()
 
-    editor_base = correspondentes[_COLUNAS_PREVIEW_CRUZAMENTO_SAIDAS_AGRUPADO].copy()
-    editor_base.insert(0, "Salvar", False)
-    editor_base.insert(1, "Desfazer", False)
-    editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
-    # estagio8_saidas_agrupado não tem "descrição_decl" — nada a remover
-    # da exibição aqui (diferente de Entradas).
-    editor_exibicao.insert(2, "Observação", [
-        "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
-        for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
-    ])
-
     termo_busca_xml = _input_busca_xml_compartilhado("saidas")
-    if termo_busca_xml:
-        mask_busca = editor_base["desc_xml"].str.contains(termo_busca_xml, case=False, na=False, regex=False)
-        editor_base = editor_base[mask_busca]
-        editor_exibicao = editor_exibicao.loc[editor_base.index]
-        st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
-    elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-        # Pesquisa livre — ver comentário equivalente em
-        # _render_cruzamento_entradas().
-        st.info(
-            "🔎 Digite um termo de busca acima pra ver candidatos — a pesquisa livre não tem "
-            "filtro de código nem de similaridade, então a tabela só aparece depois de buscar."
-        )
-        return
 
-    colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
-    with st.container(key="cruzamento_saidas_tabela"):
-        _aplicar_fonte_dataframe("cruzamento_saidas_tabela", 10)
-        editado = st.data_editor(
-            editor_exibicao,
-            use_container_width=True,
-            hide_index=True,
-            disabled=colunas_travadas,
-            key=f"editor_cruzamento_saidas_{sufixo_criterio}",
-        )
-
-    st.caption(
-        "Marque \"Salvar\" pra confirmar uma combinação na Rubrica; marque \"Desfazer\" pra "
-        "remover uma combinação já salva (coluna \"Observação\")."
-    )
-    if st.button("💾 Salvar na Rubrica do Produto Alvo", key=f"btn_salvar_rubrica_saidas_{sufixo_criterio}"):
-        marcadas_salvar = editado["Salvar"].reindex(editor_base.index).fillna(False)
-        marcadas_desfazer = editado["Desfazer"].reindex(editor_base.index).fillna(False)
-        selecionadas = editor_base.loc[
-            marcadas_salvar & ~marcadas_desfazer, _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_AGRUPADO
-        ]
-        chaves_desfazer = set(zip(
-            editor_base.loc[marcadas_desfazer, "codproddecl"],
-            editor_base.loc[marcadas_desfazer, "desc_xml"],
-        ))
-        chaves_salvar = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
-        universo_chaves = chaves_salvar | chaves_desfazer
-        resultado = loader.salvar_cruzamento_confirmado(
-            escolhido, "saidas", criterio_busca, selecionadas, universo_chaves=universo_chaves,
-        )
-        detalhado_completo, _ = fn_detalhado()
-        mask_universo = [
-            (c, d) in universo_chaves
-            for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
-        ]
-        universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
-        universo_idunicos = _ampliar_universo_idunicos_com_persistido(
-            escolhido, "saidas", universo_chaves, universo_idunicos,
-        )
-        mask_salvar = [
-            (c, d) in chaves_salvar
-            for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
-        ]
-        itens_marcados = detalhado_completo.loc[mask_salvar, ["codproddecl", "desc_xml", "idunico"]]
-        resultado_detalhado = loader.salvar_cruzamento_confirmado_detalhado(
-            escolhido, "saidas", criterio_busca, itens_marcados, universo_idunicos=universo_idunicos,
-        )
-        if "erro" in resultado:
-            st.error(f"Erro: {resultado['erro']}")
-        elif "erro" in resultado_detalhado:
-            st.error(f"Erro ao gravar itens individuais: {resultado_detalhado['erro']}")
-        else:
-            partes = [f"{resultado['total_salvo']} confirmada(s)"]
-            if resultado["total_removido"]:
-                partes.append(f"{resultado['total_removido']} removida(s)")
-            st.success(
-                f"✅ Rubrica atualizada — {', '.join(partes)} "
-                f"({resultado_detalhado['total_salvo']} item(ns) individual(is) gravado(s))."
+    def _render_um_criterio(criterio_busca, fn_detalhado, correspondentes, sufixo_criterio) -> None:
+        if correspondentes.empty:
+            if criterio_busca == loader.CRITERIO_BUSCA1_EAN:
+                st.warning(
+                    f"⚠️ Nenhum candidato com o mesmo EAN de **{escolhido['COD_ITEM']}** encontrado "
+                    "em `estagio8_saidas_agrupado` — o produto (ou o candidato) provavelmente não tem "
+                    "EAN cadastrado no Registro 0200 (Cadastro de Itens) do SPED."
+                )
+            elif criterio_busca == loader.CRITERIO_BUSCA2_MESMO_CODIGO:
+                st.warning(
+                    f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
+                    "em `estagio8_saidas_agrupado`, mesmo após normalizar zero à esquerda — o produto "
+                    "provavelmente não aparece nas saídas com esse código."
+                )
+            elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
+                st.warning(
+                    "⚠️ `estagio8_saidas_agrupado` está vazio, ou todos os grupos já pertencem a "
+                    "outro alvo — nada disponível pra pesquisa livre."
+                )
+            else:
+                st.warning(
+                    f"⚠️ Nenhum candidato de código divergente com similaridade ≥ "
+                    f"{loader.LIMIAR_SIMILARIDADE_CRITERIO3:.0f}% encontrado pra **{descr_efetiva}** "
+                    "em `estagio8_saidas_agrupado`."
+                )
+            return
+        if criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
+            st.info(
+                f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
+                "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
             )
-            st.rerun()
+
+        editor_base = correspondentes[_COLUNAS_PREVIEW_CRUZAMENTO_SAIDAS_AGRUPADO].copy()
+        editor_base.insert(0, "Salvar", False)
+        editor_base.insert(1, "Desfazer", False)
+        editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
+        # estagio8_saidas_agrupado não tem "descrição_decl" — nada a remover
+        # da exibição aqui (diferente de Entradas).
+        editor_exibicao.insert(2, "Observação", [
+            "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
+            for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
+        ])
+
+        if termo_busca_xml:
+            mask_busca = editor_base["desc_xml"].str.contains(termo_busca_xml, case=False, na=False, regex=False)
+            editor_base = editor_base[mask_busca]
+            editor_exibicao = editor_exibicao.loc[editor_base.index]
+            st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
+        elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
+            # Pesquisa livre — ver comentário equivalente em
+            # _render_cruzamento_entradas().
+            st.info(
+                "🔎 Digite um termo de busca acima pra ver candidatos — a pesquisa livre não tem "
+                "filtro de código nem de similaridade, então a tabela só aparece depois de buscar."
+            )
+            return
+
+        colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
+        with st.container(key=f"cruzamento_saidas_tabela_{sufixo_criterio}"):
+            _aplicar_fonte_dataframe(f"cruzamento_saidas_tabela_{sufixo_criterio}", 10)
+            editado = st.data_editor(
+                editor_exibicao,
+                use_container_width=True,
+                hide_index=True,
+                disabled=colunas_travadas,
+                key=f"editor_cruzamento_saidas_{sufixo_criterio}",
+            )
+
+        st.caption(
+            "Marque \"Salvar\" pra confirmar uma combinação na Rubrica; marque \"Desfazer\" pra "
+            "remover uma combinação já salva (coluna \"Observação\")."
+        )
+        if st.button("💾 Salvar na Rubrica do Produto Alvo", key=f"btn_salvar_rubrica_saidas_{sufixo_criterio}"):
+            marcadas_salvar = editado["Salvar"].reindex(editor_base.index).fillna(False)
+            marcadas_desfazer = editado["Desfazer"].reindex(editor_base.index).fillna(False)
+            selecionadas = editor_base.loc[
+                marcadas_salvar & ~marcadas_desfazer, _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_AGRUPADO
+            ]
+            chaves_desfazer = set(zip(
+                editor_base.loc[marcadas_desfazer, "codproddecl"],
+                editor_base.loc[marcadas_desfazer, "desc_xml"],
+            ))
+            chaves_salvar = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
+            universo_chaves = chaves_salvar | chaves_desfazer
+            resultado = loader.salvar_cruzamento_confirmado(
+                escolhido, "saidas", criterio_busca, selecionadas, universo_chaves=universo_chaves,
+            )
+            detalhado_completo, _ = fn_detalhado()
+            mask_universo = [
+                (c, d) in universo_chaves
+                for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
+            ]
+            universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
+            universo_idunicos = _ampliar_universo_idunicos_com_persistido(
+                escolhido, "saidas", universo_chaves, universo_idunicos,
+            )
+            mask_salvar = [
+                (c, d) in chaves_salvar
+                for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
+            ]
+            itens_marcados = detalhado_completo.loc[mask_salvar, ["codproddecl", "desc_xml", "idunico"]]
+            resultado_detalhado = loader.salvar_cruzamento_confirmado_detalhado(
+                escolhido, "saidas", criterio_busca, itens_marcados, universo_idunicos=universo_idunicos,
+            )
+            if "erro" in resultado:
+                st.error(f"Erro: {resultado['erro']}")
+            elif "erro" in resultado_detalhado:
+                st.error(f"Erro ao gravar itens individuais: {resultado_detalhado['erro']}")
+            else:
+                partes = [f"{resultado['total_salvo']} confirmada(s)"]
+                if resultado["total_removido"]:
+                    partes.append(f"{resultado['total_removido']} removida(s)")
+                st.success(
+                    f"✅ Rubrica atualizada — {', '.join(partes)} "
+                    f"({resultado_detalhado['total_salvo']} item(ns) individual(is) gravado(s))."
+                )
+                st.rerun()
+
+    for criterio_busca, (fn_agrupado, fn_detalhado) in criterios.items():
+        sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
+        correspondentes, _ = fn_agrupado()
+        n_salvos = 0
+        if not correspondentes.empty and chaves_confirmadas:
+            pares = set(zip(correspondentes["codproddecl"], correspondentes["desc_xml"]))
+            n_salvos = len(pares & chaves_confirmadas)
+        badge = f" — ✅ {n_salvos} já salvo(s)" if n_salvos else ""
+        with st.expander(f"{criterio_busca}{badge}", expanded=False):
+            _render_um_criterio(criterio_busca, fn_detalhado, correspondentes, sufixo_criterio)
 
     st.divider()
     detalhado, total_detalhado = loader.consultar_cruzamento_confirmado_detalhado(
@@ -5996,46 +6025,13 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     `descr_efetiva` usado nos textos aqui. Legendas explicativas por
     critério de busca (2026-08-20, pedido do usuário: "retirar isso em
     todos as tabelas") — removidas aqui pelo mesmo motivo que já tinham
-    sido retiradas de Entradas em 2026-08-18."""
-    criterios = _obter_criterios_cruzamento_estoque()
-    criterio_busca = st.selectbox(
-        "Critério de busca",
-        options=list(criterios.keys()),
-        key="select_criterio_busca_estoque",
-    )
-    fn_agrupado, fn_detalhado = criterios[criterio_busca]
-    sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
-    descr_efetiva = loader.descricao_efetiva_escolhido(escolhido)
+    sido retiradas de Entradas em 2026-08-18.
 
-    correspondentes, _ = fn_agrupado()
-    if correspondentes.empty:
-        if criterio_busca == loader.CRITERIO_BUSCA1_EAN:
-            st.warning(
-                f"⚠️ Nenhum candidato com o mesmo EAN de **{escolhido['COD_ITEM']}** encontrado "
-                "em `estagio8_estoque_agrupado` — o produto (ou o candidato) provavelmente não tem "
-                "EAN cadastrado no Registro 0200 (Cadastro de Itens) do SPED."
-            )
-        elif criterio_busca == loader.CRITERIO_BUSCA2_MESMO_CODIGO:
-            st.warning(
-                f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
-                "em `estagio8_estoque_agrupado`, mesmo após normalizar zero à esquerda."
-            )
-        elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-            st.warning(
-                "⚠️ `estagio8_estoque_agrupado` está vazio, ou todos os grupos já pertencem a "
-                "outro alvo — nada disponível pra pesquisa livre."
-            )
-        else:
-            st.warning(
-                f"⚠️ Nenhum item declarado com o mesmo nome de **{descr_efetiva}** encontrado "
-                "em `estagio8_estoque_agrupado`."
-            )
-        return
-    if criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-        st.info(
-            f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
-            "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
-        )
+    Critérios EXPLODIDOS em `st.expander()` (2026-08-21) — ver docstring
+    de `_render_cruzamento_entradas()` pro raciocínio completo (mesma
+    mudança, mesmo padrão, aplicada aqui)."""
+    criterios = _obter_criterios_cruzamento_estoque()
+    descr_efetiva = loader.descricao_efetiva_escolhido(escolhido)
 
     ja_confirmadas, _ = loader.consultar_cruzamento_confirmado(descr_alvo=escolhido["DESCR_ALVO"], limite=None)
     ja_confirmadas_estoque = (
@@ -6046,19 +6042,6 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
         zip(ja_confirmadas_estoque["codproddecl"], ja_confirmadas_estoque["desc_xml"])
     ) if not ja_confirmadas_estoque.empty else set()
 
-    editor_base = correspondentes[_COLUNAS_BASE_CRUZAMENTO_ESTOQUE_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]].copy()
-    editor_base.insert(0, "Salvar", False)
-    editor_base.insert(1, "Desfazer", False)
-    editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
-    # "desc_xml" não aparece na EXIBIÇÃO (Estoque só tem "descrição_decl",
-    # desc_xml é só um alias interno pro esquema de persistência — ver
-    # loader._COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO).
-    editor_exibicao = editor_exibicao.drop(columns=["Descricao XML"], errors="ignore")
-    editor_exibicao.insert(2, "Observação", [
-        "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
-        for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
-    ])
-
     # Busca por descrição do XML — ver comentário equivalente em
     # _render_cruzamento_entradas(). No Estoque, "desc_xml" é um alias
     # interno de "descrição_decl" (não existe XML separado no Bloco H,
@@ -6066,80 +6049,135 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
     # funciona igual, mesmo com a coluna "Descricao XML" oculta na
     # exibição.
     termo_busca_xml = _input_busca_xml_compartilhado("estoque")
-    if termo_busca_xml:
-        mask_busca = editor_base["desc_xml"].str.contains(termo_busca_xml, case=False, na=False, regex=False)
-        editor_base = editor_base[mask_busca]
-        editor_exibicao = editor_exibicao.loc[editor_base.index]
-        st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
-    elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-        # Pesquisa livre — ver comentário equivalente em
-        # _render_cruzamento_entradas().
-        st.info(
-            "🔎 Digite um termo de busca acima pra ver candidatos — a pesquisa livre não tem "
-            "filtro de código nem de similaridade, então a tabela só aparece depois de buscar."
-        )
-        return
 
-    colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
-    with st.container(key="cruzamento_estoque_tabela"):
-        _aplicar_fonte_dataframe("cruzamento_estoque_tabela", 10)
-        editado = st.data_editor(
-            editor_exibicao,
-            use_container_width=True,
-            hide_index=True,
-            disabled=colunas_travadas,
-            key=f"editor_cruzamento_estoque_{sufixo_criterio}",
-        )
-
-    st.caption(
-        "Marque \"Salvar\" pra confirmar uma combinação na Rubrica; marque \"Desfazer\" pra "
-        "remover uma combinação já salva (coluna \"Observação\")."
-    )
-    if st.button("💾 Salvar na Rubrica do Produto Alvo", key=f"btn_salvar_rubrica_estoque_{sufixo_criterio}"):
-        marcadas_salvar = editado["Salvar"].reindex(editor_base.index).fillna(False)
-        marcadas_desfazer = editado["Desfazer"].reindex(editor_base.index).fillna(False)
-        selecionadas = editor_base.loc[
-            marcadas_salvar & ~marcadas_desfazer, _COLUNAS_BASE_CRUZAMENTO_ESTOQUE_AGRUPADO
-        ]
-        chaves_desfazer = set(zip(
-            editor_base.loc[marcadas_desfazer, "codproddecl"],
-            editor_base.loc[marcadas_desfazer, "desc_xml"],
-        ))
-        chaves_salvar = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
-        universo_chaves = chaves_salvar | chaves_desfazer
-        resultado = loader.salvar_cruzamento_confirmado(
-            escolhido, "estoque", criterio_busca, selecionadas, universo_chaves=universo_chaves,
-        )
-        detalhado_completo, _ = fn_detalhado()
-        mask_universo = [
-            (c, d) in universo_chaves
-            for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
-        ]
-        universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
-        universo_idunicos = _ampliar_universo_idunicos_com_persistido(
-            escolhido, "estoque", universo_chaves, universo_idunicos,
-        )
-        mask_salvar = [
-            (c, d) in chaves_salvar
-            for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
-        ]
-        itens_marcados = detalhado_completo.loc[mask_salvar, ["codproddecl", "desc_xml", "idunico"]]
-        resultado_detalhado = loader.salvar_cruzamento_confirmado_detalhado(
-            escolhido, "estoque", criterio_busca, itens_marcados, universo_idunicos=universo_idunicos,
-        )
-        if "erro" in resultado:
-            st.error(f"Erro: {resultado['erro']}")
-        elif "erro" in resultado_detalhado:
-            st.error(f"Erro ao gravar itens individuais: {resultado_detalhado['erro']}")
-        else:
-            partes = [f"{resultado['total_salvo']} confirmada(s)"]
-            if resultado["total_removido"]:
-                partes.append(f"{resultado['total_removido']} removida(s)")
-            st.success(
-                f"✅ Rubrica atualizada — {', '.join(partes)} "
-                f"({resultado_detalhado['total_salvo']} item(ns) individual(is) gravado(s))."
+    def _render_um_criterio(criterio_busca, fn_detalhado, correspondentes, sufixo_criterio) -> None:
+        if correspondentes.empty:
+            if criterio_busca == loader.CRITERIO_BUSCA1_EAN:
+                st.warning(
+                    f"⚠️ Nenhum candidato com o mesmo EAN de **{escolhido['COD_ITEM']}** encontrado "
+                    "em `estagio8_estoque_agrupado` — o produto (ou o candidato) provavelmente não tem "
+                    "EAN cadastrado no Registro 0200 (Cadastro de Itens) do SPED."
+                )
+            elif criterio_busca == loader.CRITERIO_BUSCA2_MESMO_CODIGO:
+                st.warning(
+                    f"⚠️ Nenhuma combinação encontrada com o mesmo código de **{escolhido['COD_ITEM']}** "
+                    "em `estagio8_estoque_agrupado`, mesmo após normalizar zero à esquerda."
+                )
+            elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
+                st.warning(
+                    "⚠️ `estagio8_estoque_agrupado` está vazio, ou todos os grupos já pertencem a "
+                    "outro alvo — nada disponível pra pesquisa livre."
+                )
+            else:
+                st.warning(
+                    f"⚠️ Nenhum item declarado com o mesmo nome de **{descr_efetiva}** encontrado "
+                    "em `estagio8_estoque_agrupado`."
+                )
+            return
+        if criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
+            st.info(
+                f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
+                "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
             )
-            st.rerun()
+
+        editor_base = correspondentes[_COLUNAS_BASE_CRUZAMENTO_ESTOQUE_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]].copy()
+        editor_base.insert(0, "Salvar", False)
+        editor_base.insert(1, "Desfazer", False)
+        editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
+        # "desc_xml" não aparece na EXIBIÇÃO (Estoque só tem "descrição_decl",
+        # desc_xml é só um alias interno pro esquema de persistência — ver
+        # loader._COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO).
+        editor_exibicao = editor_exibicao.drop(columns=["Descricao XML"], errors="ignore")
+        editor_exibicao.insert(2, "Observação", [
+            "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
+            for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
+        ])
+
+        if termo_busca_xml:
+            mask_busca = editor_base["desc_xml"].str.contains(termo_busca_xml, case=False, na=False, regex=False)
+            editor_base = editor_base[mask_busca]
+            editor_exibicao = editor_exibicao.loc[editor_base.index]
+            st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
+        elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
+            # Pesquisa livre — ver comentário equivalente em
+            # _render_cruzamento_entradas().
+            st.info(
+                "🔎 Digite um termo de busca acima pra ver candidatos — a pesquisa livre não tem "
+                "filtro de código nem de similaridade, então a tabela só aparece depois de buscar."
+            )
+            return
+
+        colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
+        with st.container(key=f"cruzamento_estoque_tabela_{sufixo_criterio}"):
+            _aplicar_fonte_dataframe(f"cruzamento_estoque_tabela_{sufixo_criterio}", 10)
+            editado = st.data_editor(
+                editor_exibicao,
+                use_container_width=True,
+                hide_index=True,
+                disabled=colunas_travadas,
+                key=f"editor_cruzamento_estoque_{sufixo_criterio}",
+            )
+
+        st.caption(
+            "Marque \"Salvar\" pra confirmar uma combinação na Rubrica; marque \"Desfazer\" pra "
+            "remover uma combinação já salva (coluna \"Observação\")."
+        )
+        if st.button("💾 Salvar na Rubrica do Produto Alvo", key=f"btn_salvar_rubrica_estoque_{sufixo_criterio}"):
+            marcadas_salvar = editado["Salvar"].reindex(editor_base.index).fillna(False)
+            marcadas_desfazer = editado["Desfazer"].reindex(editor_base.index).fillna(False)
+            selecionadas = editor_base.loc[
+                marcadas_salvar & ~marcadas_desfazer, _COLUNAS_BASE_CRUZAMENTO_ESTOQUE_AGRUPADO
+            ]
+            chaves_desfazer = set(zip(
+                editor_base.loc[marcadas_desfazer, "codproddecl"],
+                editor_base.loc[marcadas_desfazer, "desc_xml"],
+            ))
+            chaves_salvar = set(zip(selecionadas["codproddecl"], selecionadas["desc_xml"]))
+            universo_chaves = chaves_salvar | chaves_desfazer
+            resultado = loader.salvar_cruzamento_confirmado(
+                escolhido, "estoque", criterio_busca, selecionadas, universo_chaves=universo_chaves,
+            )
+            detalhado_completo, _ = fn_detalhado()
+            mask_universo = [
+                (c, d) in universo_chaves
+                for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
+            ]
+            universo_idunicos = set(detalhado_completo.loc[mask_universo, "idunico"])
+            universo_idunicos = _ampliar_universo_idunicos_com_persistido(
+                escolhido, "estoque", universo_chaves, universo_idunicos,
+            )
+            mask_salvar = [
+                (c, d) in chaves_salvar
+                for c, d in zip(detalhado_completo["codproddecl"], detalhado_completo["desc_xml"])
+            ]
+            itens_marcados = detalhado_completo.loc[mask_salvar, ["codproddecl", "desc_xml", "idunico"]]
+            resultado_detalhado = loader.salvar_cruzamento_confirmado_detalhado(
+                escolhido, "estoque", criterio_busca, itens_marcados, universo_idunicos=universo_idunicos,
+            )
+            if "erro" in resultado:
+                st.error(f"Erro: {resultado['erro']}")
+            elif "erro" in resultado_detalhado:
+                st.error(f"Erro ao gravar itens individuais: {resultado_detalhado['erro']}")
+            else:
+                partes = [f"{resultado['total_salvo']} confirmada(s)"]
+                if resultado["total_removido"]:
+                    partes.append(f"{resultado['total_removido']} removida(s)")
+                st.success(
+                    f"✅ Rubrica atualizada — {', '.join(partes)} "
+                    f"({resultado_detalhado['total_salvo']} item(ns) individual(is) gravado(s))."
+                )
+                st.rerun()
+
+    for criterio_busca, (fn_agrupado, fn_detalhado) in criterios.items():
+        sufixo_criterio = criterio_busca.split(":", 1)[0].replace("Critério de Busca", "").strip()
+        correspondentes, _ = fn_agrupado()
+        n_salvos = 0
+        if not correspondentes.empty and chaves_confirmadas:
+            pares = set(zip(correspondentes["codproddecl"], correspondentes["desc_xml"]))
+            n_salvos = len(pares & chaves_confirmadas)
+        badge = f" — ✅ {n_salvos} já salvo(s)" if n_salvos else ""
+        with st.expander(f"{criterio_busca}{badge}", expanded=False):
+            _render_um_criterio(criterio_busca, fn_detalhado, correspondentes, sufixo_criterio)
 
     st.divider()
     detalhado, total_detalhado = loader.consultar_cruzamento_confirmado_detalhado(
