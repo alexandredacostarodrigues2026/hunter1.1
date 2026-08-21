@@ -5383,8 +5383,6 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         zip(ja_confirmadas_entradas["codproddecl"], ja_confirmadas_entradas["desc_xml"])
     ) if not ja_confirmadas_entradas.empty else set()
 
-    termo_busca_xml = _input_busca_xml_compartilhado("entradas")
-
     def _render_um_criterio(criterio_busca, fn_detalhado, correspondentes, sufixo_criterio) -> None:
         if correspondentes.empty:
             if criterio_busca == loader.CRITERIO_BUSCA1_EAN:
@@ -5416,11 +5414,20 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
                     "em `estagio8_agrupado`."
                 )
             return
+
+        # Campo de busca (2026-08-21, pedido do usuário: "busca somente
+        # aparecer quando selecionado critério 5... deve aparecer abaixo
+        # do critério5") — só o Critério 5 (Pesquisa Livre) tem campo de
+        # busca; os outros 1-4 já filtram por EAN/código/nome, não
+        # precisam de texto livre. Sem termo digitado, sai cedo (antes de
+        # montar a tabela) — sem isso, a tabela inteira (5.091 grupos em
+        # Entradas na geraldo) renderizaria de uma vez, pesado pro
+        # st.data_editor.
+        termo_busca_xml = ""
         if criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-            st.info(
-                f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
-                "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
-            )
+            termo_busca_xml = _input_busca_xml_compartilhado("entradas")
+            if not termo_busca_xml:
+                return
 
         # Separa cada grupo por unidade de produto (2026-08-21, pedido do
         # usuário: "incluir unid de produto nas tabelas... separar linha
@@ -5478,25 +5485,13 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         # filtrado). Aplicado em editor_base E editor_exibicao com a MESMA
         # máscara pra manter os índices alinhados — o botão "Salvar na
         # Rubrica" usa editor_base.index como referência pro que veio do
-        # st.data_editor. `termo_busca_xml` vem de fora (ver docstring da
-        # função externa) — compartilhado entre todos os critérios exibidos.
+        # st.data_editor. `termo_busca_xml` só vem preenchido no Critério 5
+        # (ver acima) — nos demais critérios este bloco não roda.
         if termo_busca_xml:
             mask_busca = editor_base["desc_xml"].str.contains(termo_busca_xml, case=False, na=False, regex=False)
             editor_base = editor_base[mask_busca]
             editor_exibicao = editor_exibicao.loc[editor_base.index]
             st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
-        elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-            # Pesquisa livre (Solicitação Técnica 2026-07-29) não tem filtro
-            # de código nem piso de similaridade — sem um termo de busca, a
-            # tabela renderizaria a base inteira de uma vez (5.091 grupos em
-            # Entradas na geraldo), pesado pro st.data_editor. EXIGE busca
-            # antes de mostrar qualquer linha (reaproveita o MESMO campo de
-            # busca acima, em vez de um segundo widget).
-            st.info(
-                "🔎 Digite um termo de busca acima pra ver candidatos — a pesquisa livre não tem "
-                "filtro de código nem de similaridade, então a tabela só aparece depois de buscar."
-            )
-            return
 
         colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
         with st.container(key=f"cruzamento_entradas_tabela_{sufixo_criterio}"):
@@ -5801,8 +5796,6 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
         zip(ja_confirmadas_saidas["codproddecl"], ja_confirmadas_saidas["desc_xml"])
     ) if not ja_confirmadas_saidas.empty else set()
 
-    termo_busca_xml = _input_busca_xml_compartilhado("saidas")
-
     def _render_um_criterio(criterio_busca, fn_detalhado, correspondentes, sufixo_criterio) -> None:
         if correspondentes.empty:
             if criterio_busca == loader.CRITERIO_BUSCA1_EAN:
@@ -5829,11 +5822,14 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
                     "em `estagio8_saidas_agrupado`."
                 )
             return
+
+        # Campo de busca só no Critério 5 — ver comentário equivalente em
+        # _render_cruzamento_entradas().
+        termo_busca_xml = ""
         if criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-            st.info(
-                f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
-                "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
-            )
+            termo_busca_xml = _input_busca_xml_compartilhado("saidas")
+            if not termo_busca_xml:
+                return
 
         # Separa por unidade de produto + status de tratamento de FM —
         # ver comentário equivalente em _render_cruzamento_entradas().
@@ -5864,14 +5860,6 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
             editor_base = editor_base[mask_busca]
             editor_exibicao = editor_exibicao.loc[editor_base.index]
             st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
-        elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-            # Pesquisa livre — ver comentário equivalente em
-            # _render_cruzamento_entradas().
-            st.info(
-                "🔎 Digite um termo de busca acima pra ver candidatos — a pesquisa livre não tem "
-                "filtro de código nem de similaridade, então a tabela só aparece depois de buscar."
-            )
-            return
 
         colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
         with st.container(key=f"cruzamento_saidas_tabela_{sufixo_criterio}"):
@@ -6098,14 +6086,6 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
         zip(ja_confirmadas_estoque["codproddecl"], ja_confirmadas_estoque["desc_xml"])
     ) if not ja_confirmadas_estoque.empty else set()
 
-    # Busca por descrição do XML — ver comentário equivalente em
-    # _render_cruzamento_entradas(). No Estoque, "desc_xml" é um alias
-    # interno de "descrição_decl" (não existe XML separado no Bloco H,
-    # ver cruzar_produto_escolhido_estoque() em loader.py) — o filtro
-    # funciona igual, mesmo com a coluna "Descricao XML" oculta na
-    # exibição.
-    termo_busca_xml = _input_busca_xml_compartilhado("estoque")
-
     def _render_um_criterio(criterio_busca, fn_detalhado, correspondentes, sufixo_criterio) -> None:
         if correspondentes.empty:
             if criterio_busca == loader.CRITERIO_BUSCA1_EAN:
@@ -6130,11 +6110,18 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
                     "em `estagio8_estoque_agrupado`."
                 )
             return
+
+        # Campo de busca só no Critério 5 — ver comentário equivalente em
+        # _render_cruzamento_entradas(). No Estoque, "desc_xml" é um alias
+        # interno de "descrição_decl" (não existe XML separado no Bloco H,
+        # ver cruzar_produto_escolhido_estoque() em loader.py) — o filtro
+        # funciona igual, mesmo com a coluna "Descricao XML" oculta na
+        # exibição.
+        termo_busca_xml = ""
         if criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-            st.info(
-                f"📚 {len(correspondentes):,} grupo(s) na base (sem filtro de código nem similaridade) "
-                "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
-            )
+            termo_busca_xml = _input_busca_xml_compartilhado("estoque")
+            if not termo_busca_xml:
+                return
 
         # Separa por unidade de produto + status de tratamento de FM —
         # ver comentário equivalente em _render_cruzamento_entradas().
@@ -6168,14 +6155,6 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
             editor_base = editor_base[mask_busca]
             editor_exibicao = editor_exibicao.loc[editor_base.index]
             st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
-        elif criterio_busca == loader.CRITERIO_BUSCA5_PESQUISA_LIVRE:
-            # Pesquisa livre — ver comentário equivalente em
-            # _render_cruzamento_entradas().
-            st.info(
-                "🔎 Digite um termo de busca acima pra ver candidatos — a pesquisa livre não tem "
-                "filtro de código nem de similaridade, então a tabela só aparece depois de buscar."
-            )
-            return
 
         colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
         with st.container(key=f"cruzamento_estoque_tabela_{sufixo_criterio}"):
