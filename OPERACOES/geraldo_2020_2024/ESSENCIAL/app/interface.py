@@ -4202,6 +4202,17 @@ _COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_AGRUPADO = ["codproddecl", "descrição_decl",
 _COLUNAS_BASE_CRUZAMENTO_ESTOQUE_AGRUPADO = ["codproddecl", "desc_xml", "descrição_decl", "qtde_ocorrencias"]
 _COLUNAS_PREVIEW_CRUZAMENTO_ESTOQUE_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
 
+# Ordem de exibição das tabelas de candidatos das 3 abas (2026-08-21,
+# pedido do usuário: "colocar a unid logo após a descrição") — lista
+# única, filtrada por presença em cada `editor_exibicao` (só uma das 2
+# colunas de descrição existe por aba: "Descricao XML" em Entradas/
+# Saídas, "Descricao Declaracao" em Estoque — ver comentário acima).
+_ORDEM_COLUNAS_CRUZAMENTO = [
+    "Salvar", "Desfazer", "Observação", "FM Aplicado",
+    "Cod. Produto Declaracao", "Descricao XML", "Descricao Declaracao",
+    "Unidade do Produto", "Qtde. Ocorrencias", "Similaridade Descricao (%)",
+]
+
 
 def _render_bloco_estagio8(
     *,
@@ -5493,6 +5504,13 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
             editor_exibicao = editor_exibicao.loc[editor_base.index]
             st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
 
+        # Reordena colunas (2026-08-21, pedido do usuário: "colocar a
+        # unid logo após a descrição") — "Unidade do Produto" some pro
+        # logo depois de "Descricao XML"/"Descricao Declaracao" (só uma
+        # das duas existe por aba, ver ORDEM_COLUNAS_CRUZAMENTO), em vez
+        # de ficar como última coluna.
+        editor_exibicao = editor_exibicao[[c for c in _ORDEM_COLUNAS_CRUZAMENTO if c in editor_exibicao.columns]]
+
         colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
         with st.container(key=f"cruzamento_entradas_tabela_{sufixo_criterio}"):
             # Fonte reduzida de 10px pra 8px (2026-08-18, pedido do usuário —
@@ -5861,6 +5879,10 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
             editor_exibicao = editor_exibicao.loc[editor_base.index]
             st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
 
+        # Reordena colunas — ver comentário equivalente em
+        # _render_cruzamento_entradas().
+        editor_exibicao = editor_exibicao[[c for c in _ORDEM_COLUNAS_CRUZAMENTO if c in editor_exibicao.columns]]
+
         colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
         with st.container(key=f"cruzamento_saidas_tabela_{sufixo_criterio}"):
             _aplicar_fonte_dataframe(f"cruzamento_saidas_tabela_{sufixo_criterio}", 10)
@@ -6155,6 +6177,10 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
             editor_base = editor_base[mask_busca]
             editor_exibicao = editor_exibicao.loc[editor_base.index]
             st.caption(f"{len(editor_base)} de {len(correspondentes)} combinação(ões) exibida(s).")
+
+        # Reordena colunas — ver comentário equivalente em
+        # _render_cruzamento_entradas().
+        editor_exibicao = editor_exibicao[[c for c in _ORDEM_COLUNAS_CRUZAMENTO if c in editor_exibicao.columns]]
 
         colunas_travadas = [c for c in editor_exibicao.columns if c not in ("Salvar", "Desfazer")]
         with st.container(key=f"cruzamento_estoque_tabela_{sufixo_criterio}"):
