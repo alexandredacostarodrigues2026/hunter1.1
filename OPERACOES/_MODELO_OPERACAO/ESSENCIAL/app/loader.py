@@ -10125,6 +10125,89 @@ def sinalizar_valor_destoante(df_detalhado: pd.DataFrame, limiar: float = LIMIAR
     return pd.Series(resultado, index=df_detalhado.index, dtype="object")
 
 
+def expandir_candidatos_por_unidade(
+    correspondentes: pd.DataFrame, detalhado_completo: pd.DataFrame, origem: str,
+) -> pd.DataFrame:
+    """Reagrupa `correspondentes` (saída de fn_agrupado() — uma linha por
+    codproddecl+desc_xml[+descrição_decl], ver `_render_cruzamento_
+    entradas/_saidas/_estoque()` em interface.py) por UNIDADE de produto
+    — 2026-08-21, pedido do usuário: "incluir unid de produto nas
+    tabelas... separar linha de acordo com a unidade de produto". Um
+    mesmo grupo pode ter itens com `unid_prod` diferente entre si (achado
+    real que já motiva o Sumário de Unidades) — cada unidade distinta
+    vira sua própria linha, com sua própria `qtde_ocorrencias`.
+
+    `qtde_tratados` conta, dentro de cada subgrupo (código+descrição+
+    unidade), quantos `idunico` já têm Fator Multiplicador aplicado no
+    Diagnóstico de Unidades (`TRATAMENTO='T'`, ver `consultar_
+    tratamento_fm_por_idunico()`/`aplicar_tratamento_fm()`) — "útil pra
+    revisão" (pedido do usuário), NÃO precisa que o item já esteja
+    confirmado na Rubrica: o tratamento é gravado só por `idunico`,
+    independente de produto alvo.
+
+    `detalhado_completo` é o MESMO `fn_detalhado()` já usado pelo botão
+    "Salvar na Rubrica" (interface.py) — usado aqui só pra descobrir os
+    `idunico` de cada grupo via `unid_prod`/tratamento; nenhuma tabela
+    persistida nova, nenhuma mudança em `estagio8_*`.
+
+    Ressalva (documentada, não corrigida aqui): a chave de identidade da
+    Rubrica continua `(codproddecl, desc_xml)`, SEM unidade — salvar UMA
+    linha de um grupo com 2+ unidades marca o grupo INTEIRO como "já
+    salvo" na coluna Observação, mesmo que só uma unidade tenha sido
+    confirmada de fato. Mudar a chave da Rubrica pra incluir unidade é
+    fora de escopo (afetaria `cruzamento_confirmado`/`_detalhado` e toda
+    a cadeia 10/10.1/10.2)."""
+    if correspondentes.empty:
+        vazio = correspondentes.copy()
+        vazio["unid_prod"] = pd.Series(dtype=str)
+        vazio["qtde_tratados"] = pd.Series(dtype=int)
+        return vazio
+
+    # Interseção com detalhado_completo (não só correspondentes) — no
+    # Estoque, "desc_xml" existe no AGRUPADO (correspondentes) mas NÃO no
+    # DETALHADO (_COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_DETALHADO não tem
+    # desc_xml) — usar colunas de só um lado causaria descompasso de
+    # tamanho de tupla entre pares_grupo e a máscara. "desc_xml" (quando
+    # ausente aqui) volta depois via colunas_extra, igual SIMILARIDADE_
+    # DESCRICAO — não varia dentro do grupo, seguro reincorporar.
+    colunas_chave = [
+        c for c in ("codproddecl", "desc_xml", "descrição_decl")
+        if c in correspondentes.columns and c in detalhado_completo.columns
+    ]
+    pares_grupo = set(zip(*[correspondentes[c] for c in colunas_chave]))
+    mask = [
+        tuple(linha) in pares_grupo
+        for linha in zip(*[detalhado_completo[c] for c in colunas_chave])
+    ]
+    itens = detalhado_completo.loc[mask].copy()
+    idunicos = set(itens["idunico"])
+
+    atributos = (
+        consultar_atributos_estoque_estoque_por_idunico(idunicos) if origem == "estoque"
+        else consultar_atributos_estoque_por_idunico(idunicos, origem=origem)
+    )
+    itens = itens.merge(atributos[["ID_UNICO", "unid_prod"]], left_on="idunico", right_on="ID_UNICO", how="left")
+    itens["unid_prod"] = itens["unid_prod"].fillna("(sem unidade)")
+
+    tratamento = consultar_tratamento_fm_por_idunico(idunicos, origem=origem)
+    itens = itens.merge(tratamento[["idunico", "TRATAMENTO"]], on="idunico", how="left")
+    itens["TRATAMENTO"] = itens["TRATAMENTO"].fillna("")
+
+    colunas_grupo = colunas_chave + ["unid_prod"]
+    expandido = itens.groupby(colunas_grupo, as_index=False, dropna=False).agg(
+        qtde_ocorrencias=("idunico", "size"),
+        qtde_tratados=("TRATAMENTO", lambda s: int((s == "T").sum())),
+    )
+    # SIMILARIDADE_DESCRICAO não varia por unidade — reincorpora do grupo original.
+    colunas_extra = [c for c in correspondentes.columns if c not in expandido.columns]
+    if colunas_extra:
+        expandido = expandido.merge(
+            correspondentes[colunas_chave + colunas_extra].drop_duplicates(colunas_chave),
+            on=colunas_chave, how="left",
+        )
+    return expandido.sort_values("qtde_ocorrencias", ascending=False).reset_index(drop=True)
+
+
 def aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tuple:
     """Sumário de Unidades + aplicação de FM/Nova Unidade (Estágio 10) —
     mirror entre Entradas/Saídas/Estoque, extraído em 2026-07-26 (pedido

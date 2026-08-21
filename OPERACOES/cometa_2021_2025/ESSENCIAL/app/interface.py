@@ -4141,7 +4141,15 @@ _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO = ["codproddecl", "desc_xml", "descrição_de
 # cabeçalho/caption da seção, repetir em toda linha é redundante aqui; a
 # tabela detalhada de baixo mantém a coluna) — ver _render_cruzamento_
 # entradas().
-_COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
+# "unid_prod"/"qtde_tratados" (2026-08-21, pedido do usuário: "incluir
+# unid de produto nas tabelas e campo se unid de produto já foi tratada
+# ou não") — vêm de loader.expandir_candidatos_por_unidade(), NÃO de
+# fn_agrupado() diretamente (essas 2 colunas não existem em
+# estagio8_agrupado, que é reagrupado em memória por unidade só nesta
+# tela — ver docstring da função).
+_COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO = (
+    _COLUNAS_PREVIEW_ESTAGIO8_AGRUPADO + ["SIMILARIDADE_DESCRICAO", "unid_prod", "qtde_tratados"]
+)
 
 # Tabela "Itens individuais (com ID Único)" persistida (cruzamento_confirmado_detalhado,
 # 2026-07-23) — ver loader.consultar_cruzamento_confirmado_detalhado(). CHV_NFE +
@@ -4171,7 +4179,11 @@ _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_AGRUPADO = ["codproddecl", "desc_xml", "qtde_oc
 # na saída a auditada é emitente, `desc_xml` JÁ é a "declaração" dela —
 # não existe campo separado pra comparar, por isso Saídas só tem
 # Critério 1 e Critério 3, sem Critério 2).
-_COLUNAS_PREVIEW_CRUZAMENTO_SAIDAS_AGRUPADO = _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]
+# "unid_prod"/"qtde_tratados" — ver comentário equivalente em
+# _COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO.
+_COLUNAS_PREVIEW_CRUZAMENTO_SAIDAS_AGRUPADO = (
+    _COLUNAS_PREVIEW_ESTAGIO8_SAIDAS_AGRUPADO + ["SIMILARIDADE_DESCRICAO", "unid_prod", "qtde_tratados"]
+)
 
 
 _COLUNAS_PREVIEW_ESTAGIO8_ESTOQUE_DETALHADO = ["codproddecl", "descrição_decl", "idunico"]
@@ -5410,6 +5422,16 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
                 "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
             )
 
+        # Separa cada grupo por unidade de produto (2026-08-21, pedido do
+        # usuário: "incluir unid de produto nas tabelas... separar linha
+        # de acordo com a unidade de produto") + status de tratamento de
+        # FM (Diagnóstico de Unidades) — ver loader.expandir_candidatos_
+        # por_unidade(). Não persiste nada novo, só reagrupa em memória.
+        detalhado_para_unidade, _ = fn_detalhado()
+        correspondentes = loader.expandir_candidatos_por_unidade(
+            correspondentes, detalhado_para_unidade, origem="entradas",
+        )
+
         editor_base = correspondentes[_COLUNAS_PREVIEW_CRUZAMENTO_ENTRADAS_AGRUPADO].copy()
         editor_base.insert(0, "Salvar", False)
         # "Desfazer" (2026-07-24, pedido do usuário: "aqui abrir a
@@ -5429,10 +5451,23 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
         # "Descricao Declaracao" sai só da EXIBIÇÃO (2026-07-23: "retire
         # descrição da declaração") — editor_base mantém a coluna crua
         # (descrição_decl), exigida por loader.salvar_cruzamento_confirmado().
-        editor_exibicao = editor_exibicao.drop(columns=["Descricao Declaracao"], errors="ignore")
+        # "qtde_tratados" também sai da EXIBIÇÃO (sem entrada no
+        # dicionário de campos — fica bruta se não removida) — já vira
+        # texto formatado na coluna "FM Aplicado" acima.
+        editor_exibicao = editor_exibicao.drop(columns=["Descricao Declaracao", "qtde_tratados"], errors="ignore")
         editor_exibicao.insert(2, "Observação", [
             "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
             for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
+        ])
+        # "FM Aplicado" (2026-08-21, pedido do usuário: "campo se unid de
+        # produto já foi tratada ou não... se já foi aplicado fator
+        # multiplicador na Diagnóstico de Unidades. Útil para revisão") —
+        # fração de itens do subgrupo (código+descrição+unidade) que já
+        # têm FM aplicado, mesmo padrão de texto direto da "Observação"
+        # (não passa pelo dicionário de campos, célula vazia quando 0).
+        editor_exibicao.insert(3, "FM Aplicado", [
+            f"✅ {t}/{q}" if t else ""
+            for t, q in zip(editor_base["qtde_tratados"], editor_base["qtde_ocorrencias"])
         ])
 
         # Busca por descrição do XML (pedido do usuário: campo no topo da
@@ -5514,6 +5549,9 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
                     "Salvar": st.column_config.Column(width=70),
                     "Desfazer": st.column_config.Column(label="Desfaz.", width=75),
                     "Observação": st.column_config.Column(label="Obs.", width=180),
+                    # "FM Aplicado" (2026-08-21) — ver comentário de inserção
+                    # da coluna acima.
+                    "FM Aplicado": st.column_config.Column(width=90),
                     "Cod. Produto Declaracao": st.column_config.Column(label="Cód. Prod.", width=150),
                     # TextColumn (não Column genérica) + largura maior
                     # (2026-08-18, pedido do usuário): mesmo tipo de coluna
@@ -5524,6 +5562,11 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
                     # Rótulo "SimDescr%" (2026-08-18, pedido do usuário —
                     # renomear "Sim. (%)").
                     "Similaridade Descricao (%)": st.column_config.Column(label="SimDescr%", width=90),
+                    # "Unidade do Produto" (2026-08-21, pedido do usuário:
+                    # "incluir unid de produto nas tabelas") — nome vem do
+                    # dicionário de campos (unid_prod -> "Unidade do
+                    # Produto"), abreviado aqui igual às outras colunas.
+                    "Unidade do Produto": st.column_config.Column(label="Unid.", width=80),
                 },
             )
 
@@ -5792,15 +5835,28 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
                 "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
             )
 
+        # Separa por unidade de produto + status de tratamento de FM —
+        # ver comentário equivalente em _render_cruzamento_entradas().
+        detalhado_para_unidade, _ = fn_detalhado()
+        correspondentes = loader.expandir_candidatos_por_unidade(
+            correspondentes, detalhado_para_unidade, origem="saidas",
+        )
+
         editor_base = correspondentes[_COLUNAS_PREVIEW_CRUZAMENTO_SAIDAS_AGRUPADO].copy()
         editor_base.insert(0, "Salvar", False)
         editor_base.insert(1, "Desfazer", False)
         editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
         # estagio8_saidas_agrupado não tem "descrição_decl" — nada a remover
-        # da exibição aqui (diferente de Entradas).
+        # da exibição aqui (diferente de Entradas). "qtde_tratados" sai da
+        # exibição (vira texto formatado em "FM Aplicado" abaixo).
+        editor_exibicao = editor_exibicao.drop(columns=["qtde_tratados"], errors="ignore")
         editor_exibicao.insert(2, "Observação", [
             "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
             for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
+        ])
+        editor_exibicao.insert(3, "FM Aplicado", [
+            f"✅ {t}/{q}" if t else ""
+            for t, q in zip(editor_base["qtde_tratados"], editor_base["qtde_ocorrencias"])
         ])
 
         if termo_busca_xml:
@@ -6080,17 +6136,31 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
                 "— use a busca abaixo pra encontrar candidatos.".replace(",", ".")
             )
 
-        editor_base = correspondentes[_COLUNAS_BASE_CRUZAMENTO_ESTOQUE_AGRUPADO + ["SIMILARIDADE_DESCRICAO"]].copy()
+        # Separa por unidade de produto + status de tratamento de FM —
+        # ver comentário equivalente em _render_cruzamento_entradas().
+        detalhado_para_unidade, _ = fn_detalhado()
+        correspondentes = loader.expandir_candidatos_por_unidade(
+            correspondentes, detalhado_para_unidade, origem="estoque",
+        )
+
+        editor_base = correspondentes[
+            _COLUNAS_BASE_CRUZAMENTO_ESTOQUE_AGRUPADO + ["SIMILARIDADE_DESCRICAO", "unid_prod", "qtde_tratados"]
+        ].copy()
         editor_base.insert(0, "Salvar", False)
         editor_base.insert(1, "Desfazer", False)
         editor_exibicao = editor_base.rename(columns=loader.carregar_dicionario_campos())
         # "desc_xml" não aparece na EXIBIÇÃO (Estoque só tem "descrição_decl",
         # desc_xml é só um alias interno pro esquema de persistência — ver
-        # loader._COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO).
-        editor_exibicao = editor_exibicao.drop(columns=["Descricao XML"], errors="ignore")
+        # loader._COLUNAS_CRUZAMENTO_ESTOQUE_AGRUPADO). "qtde_tratados" sai
+        # da exibição (vira texto formatado em "FM Aplicado" abaixo).
+        editor_exibicao = editor_exibicao.drop(columns=["Descricao XML", "qtde_tratados"], errors="ignore")
         editor_exibicao.insert(2, "Observação", [
             "✅ Já salvo na Rubrica" if (c, d) in chaves_confirmadas else ""
             for c, d in zip(editor_base["codproddecl"], editor_base["desc_xml"])
+        ])
+        editor_exibicao.insert(3, "FM Aplicado", [
+            f"✅ {t}/{q}" if t else ""
+            for t, q in zip(editor_base["qtde_tratados"], editor_base["qtde_ocorrencias"])
         ])
 
         if termo_busca_xml:
