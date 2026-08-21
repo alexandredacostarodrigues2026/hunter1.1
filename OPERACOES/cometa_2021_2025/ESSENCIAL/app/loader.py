@@ -10205,7 +10205,13 @@ def expandir_candidatos_por_unidade(
             correspondentes[colunas_chave + colunas_extra].drop_duplicates(colunas_chave),
             on=colunas_chave, how="left",
         )
-    return expandido.sort_values("qtde_ocorrencias", ascending=False).reset_index(drop=True)
+    # Ordenação por SIMILARIDADE_DESCRICAO decrescente (2026-08-21, pedido
+    # do usuário: "ordenar salvos por similaridade decrescente") — antes
+    # era só por qtde_ocorrencias; qtde_ocorrencias vira desempate
+    # secundário. SIMILARIDADE_DESCRICAO sempre presente (reincorporada
+    # acima, junto de desc_xml quando aplicável), mas checa por segurança.
+    colunas_ordenacao = ["SIMILARIDADE_DESCRICAO", "qtde_ocorrencias"] if "SIMILARIDADE_DESCRICAO" in expandido.columns else ["qtde_ocorrencias"]
+    return expandido.sort_values(colunas_ordenacao, ascending=False).reset_index(drop=True)
 
 
 def aplicar_tratamento_fm_detalhado(detalhado: pd.DataFrame, origem: str) -> tuple:
