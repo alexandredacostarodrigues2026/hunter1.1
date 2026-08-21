@@ -5264,6 +5264,24 @@ def _input_busca_xml_compartilhado(aba: str) -> str:
     return termo_busca_xml
 
 
+def _fechar_outros_expanders(prefixo_key: str, key_atual: str) -> None:
+    """`on_change` dos `st.expander` de Critério (Entradas/Saídas/Estoque,
+    2026-08-21, pedido do usuário: "abrir um critério por vez") — dá
+    comportamento de acordeão a expanders que, nativamente, são todos
+    independentes (`st.expander(key=...)` só guarda o próprio estado,
+    sem noção de "grupo"). Roda ANTES do rerun (callback de widget),
+    então zerar `st.session_state` aqui já é o valor que os outros
+    expanders leem quando renderizarem nesta mesma passada — fecha
+    QUALQUER outro expander cuja `key` comece com `prefixo_key` (mesma
+    aba), preservando só `key_atual` (o que o usuário acabou de abrir/
+    fechar). Dispara tanto ao ABRIR quanto ao FECHAR um expander — no
+    caso de fechar, os demais já estão fechados mesmo, é um no-op
+    inofensivo."""
+    for chave in list(st.session_state.keys()):
+        if chave.startswith(prefixo_key) and chave != key_atual:
+            st.session_state[chave] = False
+
+
 def _render_cruzamento_entradas(escolhido: dict) -> None:
     """Aba 'Entradas' do cruzamento (Estágio 10): compara o produto
     escolhido com estagio8_agrupado (Entradas) usando o critério
@@ -5665,7 +5683,13 @@ def _render_cruzamento_entradas(escolhido: dict) -> None:
             pares = set(zip(correspondentes["codproddecl"], correspondentes["desc_xml"]))
             n_salvos = len(pares & chaves_confirmadas)
         badge = f" — ✅ {n_salvos} já salvo(s)" if n_salvos else ""
-        with st.expander(f"{criterio_busca}{badge}", expanded=False):
+        # `key`/`on_change` (2026-08-21, "abrir um critério por vez") —
+        # ver _fechar_outros_expanders().
+        chave_expander = f"expander_entradas_{sufixo_criterio}"
+        with st.expander(
+            f"{criterio_busca}{badge}", expanded=False, key=chave_expander,
+            on_change=_fechar_outros_expanders, args=("expander_entradas_", chave_expander),
+        ):
             _render_um_criterio(criterio_busca, fn_detalhado, correspondentes, sufixo_criterio)
 
     # Tabela inferior (2026-07-23, pedido do usuário: "CRIE UMA TABELA
@@ -5952,7 +5976,13 @@ def _render_cruzamento_saidas(escolhido: dict) -> None:
             pares = set(zip(correspondentes["codproddecl"], correspondentes["desc_xml"]))
             n_salvos = len(pares & chaves_confirmadas)
         badge = f" — ✅ {n_salvos} já salvo(s)" if n_salvos else ""
-        with st.expander(f"{criterio_busca}{badge}", expanded=False):
+        # `key`/`on_change` — ver comentário equivalente em
+        # _render_cruzamento_entradas() / _fechar_outros_expanders().
+        chave_expander = f"expander_saidas_{sufixo_criterio}"
+        with st.expander(
+            f"{criterio_busca}{badge}", expanded=False, key=chave_expander,
+            on_change=_fechar_outros_expanders, args=("expander_saidas_", chave_expander),
+        ):
             _render_um_criterio(criterio_busca, fn_detalhado, correspondentes, sufixo_criterio)
 
     st.divider()
@@ -6251,7 +6281,13 @@ def _render_cruzamento_estoque(escolhido: dict) -> None:
             pares = set(zip(correspondentes["codproddecl"], correspondentes["desc_xml"]))
             n_salvos = len(pares & chaves_confirmadas)
         badge = f" — ✅ {n_salvos} já salvo(s)" if n_salvos else ""
-        with st.expander(f"{criterio_busca}{badge}", expanded=False):
+        # `key`/`on_change` — ver comentário equivalente em
+        # _render_cruzamento_entradas() / _fechar_outros_expanders().
+        chave_expander = f"expander_estoque_{sufixo_criterio}"
+        with st.expander(
+            f"{criterio_busca}{badge}", expanded=False, key=chave_expander,
+            on_change=_fechar_outros_expanders, args=("expander_estoque_", chave_expander),
+        ):
             _render_um_criterio(criterio_busca, fn_detalhado, correspondentes, sufixo_criterio)
 
     st.divider()
